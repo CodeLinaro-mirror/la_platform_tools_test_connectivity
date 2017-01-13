@@ -355,9 +355,6 @@ class WifiEnums():
         165: 5825
     }
 
-class WifiTestUtilsError(Exception):
-    pass
-
 
 class WifiChannelBase:
     ALL_2G_FREQUENCIES = []
@@ -465,24 +462,29 @@ def match_networks(target_params, networks):
     """Finds the WiFi networks that match a given set of parameters in a list
     of WiFi networks.
 
-    To be considered a match, a network needs to have all the target parameters
-    and the values of those parameters need to equal to those of the target
-    parameters.
+    To be considered a match, the network should contain every key-value pair
+    of target_params
 
     Args:
-        target_params: The target parameters to match networks against.
+        target_params: A dict with 1 or more key-value pairs representing a Wi-Fi network.
+                       E.g { 'SSID': 'wh_ap1_5g', 'BSSID': '30:b5:c2:33:e4:47' }
         networks: A list of dict objects representing WiFi networks.
 
     Returns:
         The networks that match the target parameters.
     """
     results = []
+    asserts.assert_true(target_params, "Expected networks object 'target_params' is empty")
     for n in networks:
+        add_network = 1
         for k, v in target_params.items():
             if k not in n:
-                continue
+                add_network = 0
+                break
             if n[k] != v:
-                continue
+                add_network = 0
+                break
+        if add_network:
             results.append(n)
     return results
 
@@ -547,9 +549,9 @@ def reset_wifi(ad):
     Args:
         ad: An AndroidDevice object.
 
-    Raises:
-        WifiTestUtilsError is raised if not all networks were removed.
     """
+    # TODO(gmoturu): need to remove wifi_toggle_state() in reset_wifi() when
+    # bug: 32809235 is fixed
     wifi_toggle_state(ad, True)
     networks = ad.droid.wifiGetConfiguredNetworks()
     if not networks:
@@ -562,10 +564,8 @@ def reset_wifi(ad):
         except Empty:
             logging.warning("Could not confirm the removal of network %s.", n)
     # Check again to see if there's any network left.
-    networks = ad.droid.wifiGetConfiguredNetworks()
-    if networks:
-        raise WifiTestUtilsError(
-            "Failed to remove these configured Wi-Fi networks: %s" % networks)
+    asserts.assert_true(not ad.droid.wifiGetConfiguredNetworks(),
+                        "Failed to remove these configured Wi-Fi networks: %s" % networks)
 
 
 def wifi_forget_network(ad, net_ssid):
@@ -575,8 +575,6 @@ def wifi_forget_network(ad, net_ssid):
         ad: android_device object for forget network.
         net_ssid: ssid of network to be forget
 
-    Raises:
-        WifiTestUtilsError is raised if forget network operation failed.
     """
     ad.droid.wifiToggleState(True)
     networks = ad.droid.wifiGetConfiguredNetworks()
@@ -589,7 +587,7 @@ def wifi_forget_network(ad, net_ssid):
                 event = ad.ed.pop_event(wifi_constants.WIFI_FORGET_NW_SUCCESS,
                                      SHORT_TIMEOUT)
             except Empty:
-                raise WifiTestUtilsError("Failed to remove network %s." % n)
+                asserts.fail("Failed to remove network %s." % n)
 
 
 def wifi_test_device_init(ad):
@@ -611,12 +609,9 @@ def wifi_test_device_init(ad):
     asserts.assert_true(not ad.droid.wifiScannerIsAlwaysAvailable(), msg)
     wifi_toggle_state(ad, True)
     reset_wifi(ad)
-    msg = "Failed to clear configured networks."
-    asserts.assert_true(not ad.droid.wifiGetConfiguredNetworks(), msg)
     ad.droid.wifiEnableVerboseLogging(1)
     msg = "Failed to enable WiFi verbose logging."
     asserts.assert_equal(ad.droid.wifiGetVerboseLoggingLevel(), 1, msg)
-    ad.droid.wifiScannerToggleAlwaysAvailable(False)
     # We don't verify the following settings since they are not critical.
     # Set wpa_supplicant log level to EXCESSIVE.
     output = ad.adb.shell("wpa_cli -i wlan0 -p -g@android:wpa_wlan0 IFNAME="
@@ -628,19 +623,6 @@ def wifi_test_device_init(ad):
     # way to check right now.
     ad.adb.shell("halutil -country %s" % WifiEnums.CountryCode.US)
     utils.set_ambient_display(ad, False)
-
-
-def sort_wifi_scan_results(results, key="level"):
-    """Sort wifi scan results by key.
-
-    Args:
-        results: A list of results to sort.
-        key: Name of the field to sort the results by.
-
-    Returns:
-        A list of results in sorted order.
-    """
-    return sorted(results, lambda d: (key not in d, d[key]))
 
 
 def start_wifi_connection_scan(ad):
@@ -859,6 +841,7 @@ def _wifi_connect(ad, network, num_of_tries=1):
                         "Key '%s' must be present in network definition." %
                         WifiEnums.SSID_KEY)
     ad.droid.wifiStartTrackingStateChange()
+    expected_ssid = network[WifiEnums.SSID_KEY]
     try:
         ad.droid.wifiConnectByConfig(network)
         connect_result = None
@@ -871,12 +854,11 @@ def _wifi_connect(ad, network, num_of_tries=1):
                 pass
         asserts.assert_true(connect_result,
                             "Failed to connect to Wi-Fi network %s on %s" %
-                            (network, serial))
+                            (network, ad.serial))
         ad.log.debug("Wi-Fi connection result: %s.", connect_result)
-        expected_ssid = network[WifiEnums.SSID_KEY]
         actual_ssid = connect_result['data'][WifiEnums.SSID_KEY]
         asserts.assert_equal(actual_ssid, expected_ssid,
-                             "Connected to the wrong network on %s." % serial)
+                             "Connected to the wrong network on %s." % ad.serial)
         ad.log.info("Connected to Wi-Fi network %s.", actual_ssid)
     except Exception as error:
          ad.log.error("Failed to connect to %s with error %s", expected_ssid,
@@ -1066,22 +1048,21 @@ def _eap_connect(config, ad, validate_con=True, ping_addr=DEFAULT_PING_ADDR):
         validate_con: If True, validate Internet connection after connecting to
             the network.
     """
-    start_wifi_connection_scan(ad)
     expect_ssid = None
     if WifiEnums.SSID_KEY in config:
         expect_ssid = config[WifiEnums.SSID_KEY]
         ad.log.info("Connecting to %s.", expect_ssid)
     else:
         ad.log.info("Connecting.")
-    ad.droid.wifiEnterpriseConnect(config)
+    ad.droid.wifiConnectByConfig(config)
     try:
-        event = ed.pop_event("WifiManagerEnterpriseConnectOnSuccess", 30)
+        event = ad.ed.pop_event("WifiManagerEnterpriseConnectOnSuccess", 30)
         ad.log.info("Connection started.")
     except Empty:
         asserts.fail("Failed to start connection process to %s on %s" %
                      (config, ad.serial))
     try:
-        event = ed.pop_event(wifi_constants.WIFI_CONNECTED, 60)
+        event = ad.ed.pop_event(wifi_constants.WIFI_CONNECTED, 60)
     except Empty:
         asserts.fail("Failed to connect to %s on %s." % (config, ad.serial))
     logging.debug(event)

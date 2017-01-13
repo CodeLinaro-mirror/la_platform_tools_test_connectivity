@@ -41,6 +41,7 @@ ANDROID_DEVICE_PICK_ALL_TOKEN = "*"
 ANDROID_DEVICE_ADB_LOGCAT_PARAM_KEY = "adb_logcat_param"
 ANDROID_DEVICE_EMPTY_CONFIG_MSG = "Configuration is empty, abort!"
 ANDROID_DEVICE_NOT_LIST_CONFIG_MSG = "Configuration should be a list, abort!"
+CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/rampdumps/")
 
 
 class AndroidDeviceError(signals.ControllerError):
@@ -125,8 +126,11 @@ def _start_services_on_ads(ads):
     running_ads = []
     for ad in ads:
         running_ads.append(ad)
+        if not sl4a_client.is_sl4a_installed(ad.adb):
+            ad.log.warn("Sl4a.apk not installed")
+            ad.skip_sl4a = True
         try:
-            ad.start_services(skip_sl4a=getattr(ad, "skip_sl4a", False))
+            ad.start_services(skip_sl4a=ad.skip_sl4a)
         except:
             ad.log.exception("Failed to start some services, abort!")
             destroy(running_ads)
@@ -144,13 +148,7 @@ def _parse_device_list(device_list_str, key):
     Returns:
         A list of android device serial numbers.
     """
-    clean_lines = str(device_list_str, 'utf-8').strip().split('\n')
-    results = []
-    for line in clean_lines:
-        tokens = line.strip().split('\t')
-        if len(tokens) == 2 and tokens[1] == key:
-            results.append(tokens[0])
-    return results
+    return re.findall(r"(\S+)\t%s" % key, device_list_str)
 
 
 def list_adb_devices():
@@ -344,7 +342,8 @@ class AndroidDevice:
                   via fastboot.
     """
 
-    def __init__(self, serial="", host_port=None, device_port=8080,
+    def __init__(self, serial="", host_port=None,
+                 device_port=sl4a_client.DEFAULT_DEVICE_SIDE_PORT,
                  ssh_connection=None):
         self.serial = serial
         self.h_port = host_port
@@ -365,6 +364,8 @@ class AndroidDevice:
         if not self.is_bootloader:
             self.root_adb()
         self._ssh_connection = ssh_connection
+        self.skip_sl4a = False
+        self.crash_report = None
 
     def clean_up(self):
         """Cleans up the AndroidDevice object and releases any resources it
@@ -437,25 +438,6 @@ class AndroidDevice:
         info["build_type"] = self.adb.getprop("ro.build.type")
         return info
 
-    @property
-    def build_info(self):
-        """Get the build info of this Android device, including build id and
-        build type.
-
-        This is not available if the device is in bootloader mode.
-
-        Returns:
-            A dict with the build info of this Android device, or None if the
-            device is in bootloader mode.
-        """
-        if self.is_bootloader:
-            return
-        info = {}
-        info["build_id"] = self.adb.shell("getprop ro.build.id").decode(
-            "utf-8").strip()
-        info["build_type"] = self.adb.shell("getprop ro.build.type").decode(
-            "utf-8").strip()
-        return info
 
     @property
     def is_bootloader(self):
@@ -468,11 +450,11 @@ class AndroidDevice:
         """True if adb is running as root for this device.
         """
         try:
-            return "0" == self.adb.shell("id -u").decode("utf-8").strip()
+            return "0" == self.adb.shell("id -u")
         except adb.AdbError:
             # Wait a bit and retry to work around adb flakiness for this cmd.
             time.sleep(0.2)
-            return "0" == self.adb.shell("id -u").decode("utf-8").strip()
+            return "0" == self.adb.shell("id -u")
 
     @property
     def model(self):
@@ -483,7 +465,7 @@ class AndroidDevice:
             out = self.fastboot.getvar("product").strip()
             # "out" is never empty because of the "total time" message fastboot
             # writes to stderr.
-            lines = out.decode("utf-8").split('\n', 1)
+            lines = out.split('\n', 1)
             if lines:
                 tokens = lines[0].split(' ')
                 if len(tokens) > 1:
@@ -561,7 +543,8 @@ class AndroidDevice:
             an existing attribute.
         """
         for k, v in config.items():
-            if hasattr(self, k):
+            # skip_sl4a value can be reset from config file
+            if hasattr(self, k) and k != "skip_sl4a":
                 raise AndroidDeviceError(
                     "Attempting to set existing attribute %s on %s" %
                     (k, self.serial))
@@ -606,9 +589,14 @@ class AndroidDevice:
             self.h_port = host_utils.get_available_host_port()
         self.adb.tcp_forward(self.h_port, self.d_port)
 
+        # TODO(bpeake) b/33470152 Fixup SL4A connection code
+        if sl4a_client.is_sl4a_running(self.adb):
+            sl4a_client.stop_sl4a(self.adb)
+        sl4a_client.start_sl4a(self.adb)
         try:
             droid = self.start_new_session()
         except:
+            sl4a_client.stop_sl4a(self.adb)
             sl4a_client.start_sl4a(self.adb)
             droid = self.start_new_session()
 
@@ -735,7 +723,7 @@ class AndroidDevice:
         """
         new_br = True
         try:
-            stdout = self.adb.shell("bugreportz -v").decode("utf-8")
+            stdout = self.adb.shell("bugreportz -v")
             # This check is necessary for builds before N, where adb shell's ret
             # code and stderr are not propagated properly.
             if "not found" in stdout:
@@ -754,7 +742,7 @@ class AndroidDevice:
         self.wait_for_boot_completion()
         self.log.info("Taking bugreport for %s.", test_name)
         if new_br:
-            out = self.adb.shell("bugreportz").decode("utf-8")
+            out = self.adb.shell("bugreportz")
             if not out.startswith("OK"):
                 raise AndroidDeviceError("Failed to take bugreport on %s: %s" %
                                          (self.serial, out))
@@ -764,6 +752,25 @@ class AndroidDevice:
             self.adb.bugreport(" > {}".format(full_out_path))
         self.log.info("Bugreport for %s taken at %s.", test_name,
                       full_out_path)
+
+    def check_crash_report(self, log_crash_report=True):
+        """check crash report on the device.
+        """
+        crash_reports = []
+        crash_log_path = os.path.join(self.log_path, "CrashReports",
+                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
+        for report_path in CRASH_REPORT_PATHS:
+            out = self.adb.shell("ls %s" % report_path, ignore_status=True)
+            if out:
+                reports = out.split('\n')
+                if log_crash_report:
+                    utils.create_dir(crash_log_path)
+                for report in reports:
+                    crash_report = os.path.join(report_path, report)
+                    crash_reports.append(crash_report)
+                    if log_crash_report:
+                        self.adb.pull("%s %s" %(crash_report, crash_log_path))
+        return crash_reports
 
     def start_new_session(self):
         """Start a new session in sl4a.
@@ -858,7 +865,7 @@ class AndroidDevice:
             results: results have data flow information
         """
         out = self.adb.shell("iperf3 -c {} {}".format(server_host, extra_args))
-        clean_out = str(out, 'utf-8').strip().split('\n')
+        clean_out = out.split('\n')
         if "error" in clean_out[0].lower():
             return False, clean_out
         return True, clean_out
@@ -876,7 +883,7 @@ class AndroidDevice:
             results: results have output of command
         """
         out = self.adb.shell("iperf3 -s {}".format(extra_args))
-        clean_out = str(out,'utf-8').strip().split('\n')
+        clean_out = out.split('\n')
         if "error" in clean_out[0].lower():
             return False, clean_out
         return True, clean_out

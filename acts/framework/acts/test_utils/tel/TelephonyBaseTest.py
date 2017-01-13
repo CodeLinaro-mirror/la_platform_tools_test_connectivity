@@ -52,7 +52,6 @@ from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACK
 from acts.test_utils.tel.tel_defines import WIFI_VERBOSE_LOGGING_ENABLED
 from acts.test_utils.tel.tel_defines import WIFI_VERBOSE_LOGGING_DISABLED
 from acts.utils import force_airplane_mode
-from acts.utils import get_current_human_time
 
 
 class _TelephonyTraceLogger():
@@ -93,10 +92,10 @@ class TelephonyBaseTest(BaseTestClass):
     @staticmethod
     def tel_test_wrap(fn):
         def _safe_wrap_test_case(self, *args, **kwargs):
-            current_time = get_current_human_time()
+            current_time = time.strftime("%m-%d-%Y-%H-%M-%S")
             func_name = fn.__name__
             test_id = "{}:{}:{}".format(self.__class__.__name__, func_name,
-                                        current_time.replace(" ", "-"))
+                                        current_time)
             self.test_id = test_id
             self.begin_time = current_time
             self.test_name = func_name
@@ -105,10 +104,18 @@ class TelephonyBaseTest(BaseTestClass):
             try:
                 for ad in self.android_devices:
                     ad.droid.logI("Started " + log_string)
+                    ad.crash_report = ad.check_crash_report(log_crash_report=False)
+                    if ad.crash_report:
+                        ad.log.warn("Crash reports %s before test %s start" % (
+                                ad.crash_report, func_name))
+
                 # TODO: b/19002120 start QXDM Logging
                 result = fn(self, *args, **kwargs)
                 for ad in self.android_devices:
                     ad.droid.logI("Finished " + log_string)
+                    new_crash = ad.check_crash_report()
+                    if new_crash != ad.crash_report:
+                        ad.log.error("Find new crash reports %s" % new_crash)
                 if result is not True and "telephony_auto_rerun" in self.user_params:
                     self.teardown_test()
                     # re-run only once, if re-run pass, mark as pass
@@ -156,6 +163,7 @@ class TelephonyBaseTest(BaseTestClass):
         sim_conf_file = self.user_params["sim_conf_file"]
         # If the sim_conf_file is not a full path, attempt to find it
         # relative to the config file.
+
         if not os.path.isfile(sim_conf_file):
             sim_conf_file = os.path.join(
                 self.user_params[Config.key_config_path], sim_conf_file)
@@ -169,13 +177,25 @@ class TelephonyBaseTest(BaseTestClass):
                 self.register_controller(acts.controllers.diag_logger,
                                          required=False))
         for ad in self.android_devices:
-
+            # Ensure the phone is not in airplane mode before setup_droid_properties
+            toggle_airplane_mode(self.log, ad, False, strict_checking=False)
             setup_droid_properties(self.log, ad, sim_conf_file)
+
+            # Setup VoWiFi MDN for Verizon. b/33187374
+            build_id = ad.build_info["build_id"]
+            if "vzw" in [sub["operator"] for sub in ad.cfg[
+                    "subscription"].values()] and ad.model in (
+                            "marlin", "sailfish") and (build_id.startswith(
+                                    "N2") or build_id.startswith("OR")):
+                ad.log.info("setup VoWiFi MDN for MR2 or OC branch per b/33187374")
+                ad.adb.shell("setprop dbg.vzw.force_wfc_nv_enabled true")
+                ad.adb.shell("am start --ei EXTRA_LAUNCH_CARRIER_APP 0 -n "
+                             "\"com.google.android.wfcactivation/"
+                             ".VzwEmergencyAddressActivity\"")
 
             # Ensure that a test class starts from a consistent state that
             # improves chances of valid network selection and facilitates
             # logging.
-            toggle_airplane_mode(self.log, ad, True)
             if not set_phone_screen_on(self.log, ad):
                 self.log.error("Failed to set phone screen-on time.")
                 return False
@@ -218,7 +238,7 @@ class TelephonyBaseTest(BaseTestClass):
         finally:
             for ad in self.android_devices:
                 try:
-                    toggle_airplane_mode(self.log, ad, True)
+                    toggle_airplane_mode(self.log, ad, True, strict_checking=False)
                 except BrokenPipeError:
                     # Broken Pipe, can not call SL4A API to turn on Airplane Mode.
                     # Use adb command to turn on Airplane Mode.

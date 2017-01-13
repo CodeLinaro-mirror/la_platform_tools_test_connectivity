@@ -133,12 +133,58 @@ class TelTestUtilsError(Exception):
     pass
 
 
-def setup_droid_properties(log, ad, sim_filename):
+def get_phone_number_by_adb(ad):
+    return ad.adb.shell("service call iphonesubinfo 13")
+
+
+def get_iccid_by_adb(ad):
+    return ad.adb.shell("service call iphonesubinfo 11")
+
+
+def get_operator_by_adb(ad):
+    return ad.adb.getprop("gsm.sim.operator.alpha")
+
+
+def get_sub_id_by_adb(ad):
+    return ad.adb.shell("service call iphonesubinfo 5")
+
+
+def setup_droid_properties_by_adb(log, ad, sim_filename=None):
 
     # Check to see if droid already has this property
     if hasattr(ad, 'cfg'):
         return
 
+    sim_data = None
+    if sim_filename:
+        try:
+            sim_data = load_config(sim_filename)
+        except Exception:
+            log.warning("Failed to load {}!".format(sim_filename))
+
+    sub_id = get_sub_id_by_adb(ad)
+    phone_number = get_phone_number_by_adb(ad) or sim_data[iccid]["phone_num"]
+    if not phone_number:
+        raise TelTestUtilsError(
+              "Failed to find valid phone number for {}".format(ad.serial))
+    sim_record = {
+          'phone_num': phone_number_formatter(phone_number),
+          'iccid': get_iccid_by_adb(ad),
+          'operator': get_operator_by_adb(ad)}
+    device_props = {'subscription': {sub_id: sim_record}}
+    log.info("phone_info: <{}:{}>, <subId: {}> <sim_record: {}>".format(
+           ad.model, ad.serial, sub_id, sim_record))
+    setattr(ad, 'cfg', device_props)
+
+
+def setup_droid_properties(log, ad, sim_filename=None):
+
+    # Check to see if droid already has this property
+    if hasattr(ad, 'cfg'):
+        return
+
+    if ad.skip_sl4a:
+        return setup_droid_properties_by_adb(log, ad, sim_filename=sim_filename)
     device_props = {}
     device_props['subscription'] = {}
 
@@ -167,6 +213,9 @@ def setup_droid_properties(log, ad, sim_filename):
             except KeyError:
                 number = ad.droid.telephonyGetLine1NumberForSubscription(
                     sub_id)
+            except Exception as e:
+                log.error("Failed to setup_droid_property with {}".format(e))
+                raise
             if not number or number == "":
                 raise TelTestUtilsError(
                     "Failed to find valid phone number for {}"
@@ -240,18 +289,49 @@ def get_num_active_sims(log, ad):
     return len(valid_sims.keys())
 
 
-def toggle_airplane_mode(log, ad, new_state=None):
+def toggle_airplane_mode_by_adb(log, ad, new_state=None, strict_checking=True):
     """ Toggle the state of airplane mode.
 
     Args:
+        log: log handler.
         ad: android_device object.
         new_state: Airplane mode state to set to.
             If None, opposite of the current state.
+        strict_checking: Whether to turn on strict checking that checks all features.
 
     Returns:
         result: True if operation succeed. False if error happens.
     """
-    return toggle_airplane_mode_msim(log, ad, new_state)
+    cur_state = bool(int(ad.adb.shell("settings get global airplane_mode_on")))
+    if new_state == cur_state:
+        log.info("Airplane mode already {} on {}".format(new_state, ad.serial))
+        return True
+    elif new_state is None:
+        new_state = not cur_state
+
+    ad.adb.shell("settings put global airplane_mode_on %s" % int(new_state))
+    ad.adb.shell("am broadcast -a android.intent.action.AIRPLANE_MODE")
+    return True
+
+
+def toggle_airplane_mode(log, ad, new_state=None, strict_checking=True):
+    """ Toggle the state of airplane mode.
+
+    Args:
+        log: log handler.
+        ad: android_device object.
+        new_state: Airplane mode state to set to.
+            If None, opposite of the current state.
+        strict_checking: Whether to turn on strict checking that checks all features.
+
+    Returns:
+        result: True if operation succeed. False if error happens.
+    """
+    if ad.skip_sl4a:
+        return toggle_airplane_mode_by_adb(log, ad, new_state)
+    else:
+        return toggle_airplane_mode_msim(log, ad, new_state,
+                                         strict_checking=strict_checking)
 
 
 def is_expected_event(event_to_check, events_list):
@@ -357,13 +437,15 @@ def _wait_for_wifi_in_state(log, ad, state, max_wait):
                 state)
 
 
-def toggle_airplane_mode_msim(log, ad, new_state=None):
+def toggle_airplane_mode_msim(log, ad, new_state=None, strict_checking=True):
     """ Toggle the state of airplane mode.
 
     Args:
+        log: log handler.
         ad: android_device object.
         new_state: Airplane mode state to set to.
             If None, opposite of the current state.
+        strict_checking: Whether to turn on strict checking that checks all features.
 
     Returns:
         result: True if operation succeed. False if error happens.
@@ -432,14 +514,18 @@ def toggle_airplane_mode_msim(log, ad, new_state=None):
                 sub_id)
 
     # APM on (new_state=True) will turn off bluetooth but may not turn it on
+    # Work around for https://buganizer.corp.google.com/issues/32341648
     try:
         if new_state and not _wait_for_bluetooth_in_state(
               log, ad, False, timeout_time - time.time()):
             log.error(
                   "Failed waiting for bluetooth during airplane mode toggle on {}".
                   format(ad.serial))
+            if strict_checking: return False
     except Exception as e:
-        log.error("Failed to waiting for bluetooth during airplane mode due to %s" % e)
+        ad.log.error("Failed to check bluetooth state due to {}".format(e))
+        if strict_checking:
+            raise
 
     # APM on (new_state=True) will turn off wifi but may not turn it on
     if new_state and not _wait_for_wifi_in_state(log, ad, False,
@@ -1636,9 +1722,9 @@ def _wait_for_nw_data_connection(
                         format(ad.serial, connection_type))
                     return True
                 elif is_connected and current_type == connection_type:
-                    log.info(
-                        "wait_for_nw_data_connection success: {} data on {}!".
-                        format(ad.serial, connection_type))
+                    ad.log.info(
+                        "wait_for_nw_data_connection success: data on {}!".
+                        format(connection_type))
                     return True
         else:
             log.info("{} current state: {} target: {}".format(
@@ -3582,7 +3668,7 @@ class WifiUtils():
                             WifiUtils.SSID_KEY]))
                     return False
             except Exception as e:
-                log.error("WifiUtils.wifi_connect not connected, no event.")
+                log.error("WifiUtils.wifi_connect failed with {}.".format(e))
                 return False
         except Exception as e:
             log.error("WifiUtils.wifi_connect exception: {}".format(e))

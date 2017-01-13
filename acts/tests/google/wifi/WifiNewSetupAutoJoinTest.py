@@ -18,7 +18,7 @@ import time
 
 from acts import asserts
 from acts import base_test
-from acts.tests.google.wifi import WifiTestConstants
+from acts.test_utils.wifi import wifi_constants
 from acts.test_utils.wifi import wifi_test_utils as wutils
 
 WifiEnums = wutils.WifiEnums
@@ -42,10 +42,7 @@ class WifiNewSetupAutoJoinTest(base_test.BaseTestClass):
                       "test_autojoin_in_Ap2_5gto2g",
                       "test_autojoin_swtich_AP2toAp1",
                       "test_autojoin_Ap1_2gto5g",
-                      "test_autojoin_Ap1_5gto2g",
-                      "test_autojoin_swtich_to_blacklist_AP",
-                      "test_autojoin_in_blacklist_AP",
-                      "test_autojoin_back_from_blacklist_AP", )
+                      "test_autojoin_Ap1_5gto2g", )
 
     def setup_class(self):
         """It will setup the required dependencies from config file and configure
@@ -94,19 +91,19 @@ class WifiNewSetupAutoJoinTest(base_test.BaseTestClass):
                 self.dut.droid.wifiConnectByConfig(self.reference_networks[0][
                     '2g'])
                 connect_result = self.dut.ed.pop_event(
-                    WifiTestConstants.CONNECT_BY_CONFIG_SUCCESS, 1)
+                    wifi_constants.CONNECT_BY_CONFIG_SUCCESS, 1)
                 self.log.info(connect_result)
                 time.sleep(wait_time)
                 if self.ref_ssid_count == 2:  #add 5g network as well
                     self.dut.droid.wifiConnectByConfig(self.reference_networks[
                         0]['5g'])
                     connect_result = self.dut.ed.pop_event(
-                        WifiTestConstants.CONNECT_BY_CONFIG_SUCCESS, 1)
+                        wifi_constants.CONNECT_BY_CONFIG_SUCCESS, 1)
                     self.log.info(connect_result)
                     time.sleep(wait_time)
                 self.dut.droid.wifiConnectByConfig(self.other_network)
                 connect_result = self.dut.ed.pop_event(
-                    WifiTestConstants.CONNECT_BY_CONFIG_SUCCESS)
+                    wifi_constants.CONNECT_BY_CONFIG_SUCCESS)
                 self.log.info(connect_result)
                 wutils.track_connection(self.dut, self.other_network["ssid"], 1)
                 wutils.wifi_forget_network(self.dut, self.other_network["ssid"])

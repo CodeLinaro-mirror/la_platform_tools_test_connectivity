@@ -14,34 +14,24 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-from subprocess import Popen, PIPE
+from acts.libs.proc import job
 
-
-def exe_cmd(*cmds):
-    """Executes commands in a new shell. Directing stderr to PIPE.
-
-    This is fastboot's own exe_cmd because of its peculiar way of writing
-    non-error info to stderr.
-
-    Args:
-        cmds: A sequence of commands and arguments.
-
-    Returns:
-        The output of the command run.
-
-    Raises:
-        Exception is raised if an error occurred during the command execution.
-    """
-    cmd = ' '.join(cmds)
-    proc = Popen(cmd, stdout=PIPE, stderr=PIPE, shell=True)
-    (out, err) = proc.communicate()
-    if not err:
-        return out
-    return err
+import logging
 
 
 class FastbootError(Exception):
     """Raised when there is an error in fastboot operations."""
+
+    def __init__(self, cmd, stdout, stderr, ret_code):
+        self.cmd = cmd
+        self.stdout = stdout
+        self.stderr = stderr
+        self.ret_code = ret_code
+
+    def __str__(self):
+        return ("Error executing fastboot cmd '%s'. ret: %d, stdout: %s,"
+                " stderr: %s") % (self.cmd, self.ret_code, self.stdout,
+                                  self.stderr)
 
 
 class FastbootProxy():
@@ -61,19 +51,26 @@ class FastbootProxy():
             self.fastboot_str = "fastboot"
         self.ssh_connection = ssh_connection
 
-    def _exec_fastboot_cmd(self, name, arg_str):
+    def _exec_fastboot_cmd(self, name, arg_str, ignore_status=False):
         command = ' '.join((self.fastboot_str, name, arg_str))
         if self.ssh_connection:
-            return self.connection.run(command).raw_stdout
-        return exe_cmd(command)
+            result = self.connection.run(command, ignore_status=True)
+        else:
+            result = job.run(command, ignore_status=True)
+        ret, out, err = result.exit_status, result.stdout, result.stderr
+        if ret == 0 or ignore_status:
+            return out
+        else:
+            raise FastbootError(
+                cmd=command, stdout=out, stderr=err, ret_code=ret)
 
     def args(self, *args):
-        return exe_cmd(' '.join((self.fastboot_str, ) + args))
+        return job.run(' '.join((self.fastboot_str,) + args)).stdout
 
     def __getattr__(self, name):
-        def fastboot_call(*args):
+        def fastboot_call(*args, **kwargs):
             clean_name = name.replace('_', '-')
             arg_str = ' '.join(str(elem) for elem in args)
-            return self._exec_fastboot_cmd(clean_name, arg_str)
+            return self._exec_fastboot_cmd(clean_name, arg_str, **kwargs)
 
         return fastboot_call
