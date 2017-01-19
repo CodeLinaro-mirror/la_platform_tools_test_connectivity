@@ -41,7 +41,9 @@ ANDROID_DEVICE_PICK_ALL_TOKEN = "*"
 ANDROID_DEVICE_ADB_LOGCAT_PARAM_KEY = "adb_logcat_param"
 ANDROID_DEVICE_EMPTY_CONFIG_MSG = "Configuration is empty, abort!"
 ANDROID_DEVICE_NOT_LIST_CONFIG_MSG = "Configuration should be a list, abort!"
-CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/rampdumps/")
+CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/ramdumps/", "/data/ramdump/")
+
+PORT_RETRY_COUNT = 3
 
 
 class AndroidDeviceError(signals.ControllerError):
@@ -342,7 +344,9 @@ class AndroidDevice:
                   via fastboot.
     """
 
-    def __init__(self, serial="", host_port=None,
+    def __init__(self,
+                 serial="",
+                 host_port=None,
                  device_port=sl4a_client.DEFAULT_DEVICE_SIDE_PORT,
                  ssh_connection=None):
         self.serial = serial
@@ -360,7 +364,7 @@ class AndroidDevice:
         self.adb_logcat_file_path = None
         self.adb = adb.AdbProxy(serial, ssh_connection=ssh_connection)
         self.fastboot = fastboot.FastbootProxy(
-                serial, ssh_connection=ssh_connection)
+            serial, ssh_connection=ssh_connection)
         if not self.is_bootloader:
             self.root_adb()
         self._ssh_connection = ssh_connection
@@ -377,7 +381,6 @@ class AndroidDevice:
             self.h_port = None
         if self._ssh_connection:
             self._ssh_connection.close()
-
 
     # TODO(angli): This function shall be refactored to accommodate all services
     # and not have hard coded switch for SL4A when b/29157104 is done.
@@ -437,7 +440,6 @@ class AndroidDevice:
         info["build_id"] = self.adb.getprop("ro.build.id")
         info["build_type"] = self.adb.getprop("ro.build.type")
         return info
-
 
     @property
     def is_bootloader(self):
@@ -585,9 +587,20 @@ class AndroidDevice:
             >>> ad = AndroidDevice()
             >>> droid, ed = ad.get_droid()
         """
-        if not self.h_port or not host_utils.is_port_available(self.h_port):
-            self.h_port = host_utils.get_available_host_port()
-        self.adb.tcp_forward(self.h_port, self.d_port)
+        forward_success = False
+        last_error = None
+        for _ in range(PORT_RETRY_COUNT):
+            if not self.h_port or not host_utils.is_port_available(self.h_port):
+                self.h_port = host_utils.get_available_host_port()
+            try:
+                self.adb.tcp_forward(self.h_port, self.d_port)
+                forward_success = True
+                break
+            except adb.AdbError as e:
+                last_error = e
+                pass
+        if not forward_success:
+            raise last_error
 
         # TODO(bpeake) b/33470152 Fixup SL4A connection code
         if sl4a_client.is_sl4a_running(self.adb):
@@ -750,8 +763,7 @@ class AndroidDevice:
             self.adb.pull("%s %s" % (br_out_path, full_out_path))
         else:
             self.adb.bugreport(" > {}".format(full_out_path))
-        self.log.info("Bugreport for %s taken at %s.", test_name,
-                      full_out_path)
+        self.log.info("Bugreport for %s taken at %s.", test_name, full_out_path)
 
     def check_crash_report(self, log_crash_report=True):
         """check crash report on the device.
@@ -769,7 +781,7 @@ class AndroidDevice:
                     crash_report = os.path.join(report_path, report)
                     crash_reports.append(crash_report)
                     if log_crash_report:
-                        self.adb.pull("%s %s" %(crash_report, crash_log_path))
+                        self.adb.pull("%s %s" % (crash_report, crash_log_path))
         return crash_reports
 
     def start_new_session(self):
@@ -949,6 +961,7 @@ class AndroidDevice:
 
 
 class AndroidDeviceLoggerAdapter(logging.LoggerAdapter):
+
     def process(self, msg, kwargs):
         msg = "[AndroidDevice|%s] %s" % (self.extra["serial"], msg)
         return (msg, kwargs)
