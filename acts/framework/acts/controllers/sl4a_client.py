@@ -309,7 +309,7 @@ class Sl4aClient(object):
         Args:
             method: str, The name of the method to execute.
             args: any, The args to send to sl4a.
-            timeout: timeout for the RPC call.
+            kwargs: timeout: timeout for the RPC call.
 
         Returns:
             The result of the rpc.
@@ -318,26 +318,30 @@ class Sl4aClient(object):
             Sl4aProtocolError: Something went wrong with the sl4a protocol.
             Sl4aApiError: The rpc went through, however executed with errors.
         """
+        timeout = kwargs.get("timeout")
         with self._lock:
             apiid = next(self._counter)
-        if kwargs.get("timeout"):
+        if timeout:
             self.conn.settimeout(timeout)
-        else:
-            self.conn.settimeout(self._SOCKET_TIMEOUT)
         data = {'id': apiid, 'method': method, 'params': args}
         request = json.dumps(data)
         self.client.write(request.encode("utf8") + b'\n')
         self.client.flush()
         response = self.client.readline()
         if not response:
+            logging.error("No response for RPC method %s", method)
             raise Sl4aProtocolError(Sl4aProtocolError.NO_RESPONSE_FROM_SERVER)
         result = json.loads(str(response, encoding="utf8"))
-        if kwargs.get("timeout"):
+        if timeout:
             self.conn.settimeout(self._SOCKET_TIMEOUT)
         if result['error']:
+            logging.error("RPC method %s with error %s", method,
+                          result['error'])
             raise Sl4aApiError("RPC call %s failed with error %s" %
                                (method, result['error']))
         if result['id'] != apiid:
+            logging.error("RPC method %s with mismatched api id %s", method,
+                          result['id'])
             raise Sl4aProtocolError(Sl4aProtocolError.MISMATCHED_API_ID)
         return result['result']
 

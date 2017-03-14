@@ -27,6 +27,8 @@ import acts.controllers.diag_logger
 from acts.base_test import BaseTestClass
 from acts.keys import Config
 from acts.signals import TestSignal
+from acts.signals import TestAbortClass
+from acts.signals import TestAbortAll
 from acts import utils
 
 from acts.test_utils.tel.tel_subscription_utils import \
@@ -59,21 +61,29 @@ class _TelephonyTraceLogger():
         self._logger = logger
 
     @staticmethod
-    def _get_trace_info():
+    def _get_trace_info(level=1):
         # we want the stack frame above this and above the error/warning/info
-        stack_frames = inspect.stack()[2]
-        info = inspect.getframeinfo(stack_frames[0])
-
-        return "{}:{}:{}".format(
-            os.path.basename(info.filename), info.function, info.lineno)
+        inspect_stack = inspect.stack()
+        trace_info = ""
+        for i in range(level):
+            stack_frames = inspect_stack[2 + i]
+            info = inspect.getframeinfo(stack_frames[0])
+            trace_info = "%s[%s:%s:%s]" % (trace_info,
+                                           os.path.basename(info.filename),
+                                           info.function, info.lineno)
+        return trace_info
 
     def error(self, msg, *args, **kwargs):
-        trace_info = _TelephonyTraceLogger._get_trace_info()
-        self._logger.error("{} - {}".format(trace_info, msg), *args, **kwargs)
+        trace_info = _TelephonyTraceLogger._get_trace_info(level=3)
+        self._logger.error("%s %s" % (msg, trace_info), *args, **kwargs)
 
     def warning(self, msg, *args, **kwargs):
-        trace_info = _TelephonyTraceLogger._get_trace_info()
-        self._logger.warning("{} - {}".format(trace_info, msg), *args, **kwargs)
+        trace_info = _TelephonyTraceLogger._get_trace_info(level=1)
+        self._logger.warning("%s %s" % (msg, trace_info), *args, **kwargs)
+
+    def info(self, msg, *args, **kwargs):
+        trace_info = _TelephonyTraceLogger._get_trace_info(level=1)
+        self._logger.info("%s %s" % (msg, trace_info), *args, **kwargs)
 
     def __getattr__(self, name):
         return getattr(self._logger, name)
@@ -86,6 +96,11 @@ class TelephonyBaseTest(BaseTestClass):
         self.logger_sessions = []
 
         self.log = _TelephonyTraceLogger(self.log)
+        for ad in self.android_devices:
+            ad.log = _TelephonyTraceLogger(ad.log)
+
+        self.skip_reset_between_cases = self.user_params.get(
+            "skip_reset_between_cases", False)
 
     # Use for logging in the test cases to facilitate
     # faster log lookup and reduce ambiguity in logging.
@@ -94,37 +109,40 @@ class TelephonyBaseTest(BaseTestClass):
         def _safe_wrap_test_case(self, *args, **kwargs):
             current_time = time.strftime("%m-%d-%Y-%H-%M-%S")
             func_name = fn.__name__
-            test_id = "{}:{}:{}".format(self.__class__.__name__, func_name,
-                                        current_time)
+            test_id = "%s:%s:%s" % (self.__class__.__name__, func_name,
+                                    current_time)
             self.test_id = test_id
             self.begin_time = current_time
             self.test_name = func_name
-            log_string = "[Test ID] {}".format(test_id)
+            log_string = "[Test ID] %s" % test_id
             self.log.info(log_string)
             try:
                 for ad in self.android_devices:
-                    ad.droid.logI("Started " + log_string)
-                    ad.crash_report = ad.check_crash_report(log_crash_report=False)
+                    ad.droid.logI("Started %s" % log_string)
+                    ad.crash_report = ad.check_crash_report(
+                        log_crash_report=False)
                     if ad.crash_report:
-                        ad.log.warn("Crash reports %s before test %s start" % (
-                                ad.crash_report, func_name))
+                        ad.log.info("Crash reports %s before test %s start",
+                                    ad.crash_report, func_name)
 
                 # TODO: b/19002120 start QXDM Logging
                 result = fn(self, *args, **kwargs)
                 for ad in self.android_devices:
-                    ad.droid.logI("Finished " + log_string)
+                    ad.droid.logI("Finished %s" % log_string)
                     new_crash = ad.check_crash_report()
-                    if new_crash != ad.crash_report:
-                        ad.log.error("Find new crash reports %s" % new_crash)
+                    crash_diff = set(new_crash).difference(
+                        set(ad.crash_report))
+                    if crash_diff:
+                        ad.log.error("Find new crash reports %s",
+                                     list(crash_diff))
                 if result is not True and "telephony_auto_rerun" in self.user_params:
                     self.teardown_test()
                     # re-run only once, if re-run pass, mark as pass
-                    log_string = "[Rerun Test ID] {}. 1st run failed.".format(
-                        test_id)
+                    log_string = "[Rerun Test ID] %s. 1st run failed." % test_id
                     self.log.info(log_string)
                     self.setup_test()
                     for ad in self.android_devices:
-                        ad.droid.logI("Rerun Started " + log_string)
+                        ad.droid.logI("Rerun Started %s" % log_string)
                     result = fn(self, *args, **kwargs)
                     if result is True:
                         self.log.info("Rerun passed.")
@@ -138,7 +156,7 @@ class TelephonyBaseTest(BaseTestClass):
                         self.log.info("Rerun indeterminate.")
                         result = False
                 return result
-            except TestSignal:
+            except (TestSignal, TestAbortClass, TestAbortAll):
                 raise
             except Exception as e:
                 self.log.error(traceback.format_exc())
@@ -157,28 +175,28 @@ class TelephonyBaseTest(BaseTestClass):
     def setup_class(self):
 
         if not "sim_conf_file" in self.user_params.keys():
-            self.log.error("Missing mandatory user config \"sim_conf_file\"!")
-            return False
-
-        sim_conf_file = self.user_params["sim_conf_file"]
-        # If the sim_conf_file is not a full path, attempt to find it
-        # relative to the config file.
-
-        if not os.path.isfile(sim_conf_file):
-            sim_conf_file = os.path.join(
-                self.user_params[Config.key_config_path], sim_conf_file)
+            self.log.warn("Missing mandatory user config \"sim_conf_file\"!")
+            sim_conf_file = None
+        else:
+            sim_conf_file = self.user_params["sim_conf_file"]
+            # If the sim_conf_file is not a full path, attempt to find it
+            # relative to the config file.
             if not os.path.isfile(sim_conf_file):
-                self.log.error("Unable to load user config " + sim_conf_file +
-                               " from test config file.")
-                return False
+                sim_conf_file = os.path.join(
+                    self.user_params[Config.key_config_path], sim_conf_file)
+                if not os.path.isfile(sim_conf_file):
+                    self.log.error("Unable to load user config %s ",
+                                   sim_conf_file)
+                    return False
 
-        setattr(self,
-                "diag_logger",
-                self.register_controller(acts.controllers.diag_logger,
-                                         required=False))
+        setattr(
+            self,
+            "diag_logger",
+            self.register_controller(
+                acts.controllers.diag_logger, required=False))
+
+        ensure_phones_default_state(self.log, self.android_devices)
         for ad in self.android_devices:
-            # Ensure the phone is not in airplane mode before setup_droid_properties
-            toggle_airplane_mode(self.log, ad, False, strict_checking=False)
             setup_droid_properties(self.log, ad, sim_conf_file)
 
             # Setup VoWiFi MDN for Verizon. b/33187374
@@ -186,7 +204,7 @@ class TelephonyBaseTest(BaseTestClass):
             if "vzw" in [sub["operator"] for sub in ad.cfg[
                     "subscription"].values()] and ad.model in (
                             "marlin", "sailfish") and (build_id.startswith(
-                                    "N2") or build_id.startswith("OR")):
+                                    "N") or build_id.startswith("O")):
                 ad.log.info("setup VoWiFi MDN for MR2 or OC branch per b/33187374")
                 ad.adb.shell("setprop dbg.vzw.force_wfc_nv_enabled true")
                 ad.adb.shell("am start --ei EXTRA_LAUNCH_CARRIER_APP 0 -n "
@@ -196,26 +214,26 @@ class TelephonyBaseTest(BaseTestClass):
             # Ensure that a test class starts from a consistent state that
             # improves chances of valid network selection and facilitates
             # logging.
-            if not set_phone_screen_on(self.log, ad):
-                self.log.error("Failed to set phone screen-on time.")
-                return False
-            if not set_phone_silent_mode(self.log, ad):
-                self.log.error("Failed to set phone silent mode.")
-                return False
+            try:
+                if not set_phone_screen_on(self.log, ad):
+                    self.log.error("Failed to set phone screen-on time.")
+                    return False
+                if not set_phone_silent_mode(self.log, ad):
+                    self.log.error("Failed to set phone silent mode.")
+                    return False
 
-            ad.droid.telephonyAdjustPreciseCallStateListenLevel(
-                PRECISE_CALL_STATE_LISTEN_LEVEL_FOREGROUND, True)
-            ad.droid.telephonyAdjustPreciseCallStateListenLevel(
-                PRECISE_CALL_STATE_LISTEN_LEVEL_RINGING, True)
-            ad.droid.telephonyAdjustPreciseCallStateListenLevel(
-                PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND, True)
+                ad.droid.telephonyAdjustPreciseCallStateListenLevel(
+                    PRECISE_CALL_STATE_LISTEN_LEVEL_FOREGROUND, True)
+                ad.droid.telephonyAdjustPreciseCallStateListenLevel(
+                    PRECISE_CALL_STATE_LISTEN_LEVEL_RINGING, True)
+                ad.droid.telephonyAdjustPreciseCallStateListenLevel(
+                    PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND, True)
 
-            if "enable_wifi_verbose_logging" in self.user_params:
-                ad.droid.wifiEnableVerboseLogging(WIFI_VERBOSE_LOGGING_ENABLED)
-
-            # Reset preferred network type.
-            reset_preferred_network_type_to_allowable_range(self.log, ad)
-
+                if "enable_wifi_verbose_logging" in self.user_params:
+                    ad.droid.wifiEnableVerboseLogging(
+                        WIFI_VERBOSE_LOGGING_ENABLED)
+            except Exception as e:
+                self.log.error("Failure with %s", e)
         # Sub ID setup
         for ad in self.android_devices:
             initial_set_up_for_subid_infomation(self.log, ad)
@@ -237,15 +255,8 @@ class TelephonyBaseTest(BaseTestClass):
                         WIFI_VERBOSE_LOGGING_DISABLED)
         finally:
             for ad in self.android_devices:
-                try:
-                    toggle_airplane_mode(self.log, ad, True, strict_checking=False)
-                except BrokenPipeError:
-                    # Broken Pipe, can not call SL4A API to turn on Airplane Mode.
-                    # Use adb command to turn on Airplane Mode.
-                    if not force_airplane_mode(ad, True):
-                        self.log.error(
-                            "Can not turn on airplane mode on:{}".format(
-                                ad.serial))
+                toggle_airplane_mode(self.log, ad, True, strict_checking=False)
+
         return True
 
     def setup_test(self):
@@ -254,10 +265,11 @@ class TelephonyBaseTest(BaseTestClass):
 
         if getattr(self, "diag_logger", None):
             for logger in self.diag_logger:
-                self.log.info("Starting a diagnostic session {}".format(
-                    logger))
+                self.log.info("Starting a diagnostic session %s", logger)
                 self.logger_sessions.append((logger, logger.start()))
 
+        if self.skip_reset_between_cases:
+            return True
         return ensure_phones_default_state(self.log, self.android_devices)
 
     def teardown_test(self):
@@ -265,8 +277,8 @@ class TelephonyBaseTest(BaseTestClass):
 
     def _cleanup_logger_sessions(self):
         for (logger, session) in self.logger_sessions:
-            self.log.info("Resetting a diagnostic session {},{}".format(
-                logger, session))
+            self.log.info("Resetting a diagnostic session %s, %s", logger,
+                          session)
             logger.reset()
         self.logger_sessions = []
 
@@ -285,7 +297,7 @@ class TelephonyBaseTest(BaseTestClass):
 
     def _pull_diag_logs(self, test_name, begin_time):
         for (logger, session) in self.logger_sessions:
-            self.log.info("Pulling diagnostic session {}".format(logger))
+            self.log.info("Pulling diagnostic session %s", logger)
             logger.stop(session)
             diag_path = os.path.join(self.log_path, begin_time)
             utils.create_dir(diag_path)
@@ -305,20 +317,13 @@ class TelephonyBaseTest(BaseTestClass):
                     ad.log_path, "BugReports",
                     "{},{}".format(begin_time, ad.serial).replace(' ', '_'))
                 utils.create_dir(tombstone_path)
-                ad.adb.pull('/data/tombstones/', tombstone_path)
+                ad.adb.pull('/data/tombstones/', tombstone_path, timeout=1200)
             except:
-                ad.log.error("Failed to take a bug report for {}, {}"
-                             .format(ad.serial, test_name))
+                ad.log.error("Failed to take a bug report for %s", test_name)
 
     def get_stress_test_number(self):
         """Gets the stress_test_number param from user params.
 
-        Gets the stress_test_number param. If absent, returns None
-        and logs a warning.
+        Gets the stress_test_number param. If absent, returns default 100.
         """
-
-        number = self.user_params.get("stress_test_number")
-        if number is None:
-            self.log.warning("stress_test_number is not set.")
-            return None
-        return int(number)
+        return int(self.user_params.get("stress_test_number", 100))

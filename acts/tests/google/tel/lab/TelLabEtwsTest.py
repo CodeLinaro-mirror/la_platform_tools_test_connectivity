@@ -16,6 +16,8 @@
 """
 Sanity tests for voice tests in telephony
 """
+import time
+
 from acts.controllers.anritsu_lib._anritsu_utils import AnritsuError
 from acts.controllers.anritsu_lib.md8475a import MD8475A
 from acts.controllers.anritsu_lib.md8475a import CBCHSetup
@@ -44,6 +46,8 @@ from acts.test_utils.tel.tel_test_utils import ensure_phones_idle
 from acts.test_utils.tel.tel_test_utils import toggle_airplane_mode
 from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 
+WAIT_TIME_BETWEEN_REG_AND_MSG = 15  # default 15 sec
+
 
 class TelLabEtwsTest(TelephonyBaseTest):
     SERIAL_NO = cb_serial_number()
@@ -55,8 +59,13 @@ class TelLabEtwsTest(TelephonyBaseTest):
         self.ad = self.android_devices[0]
         self.md8475a_ip_address = self.user_params[
             "anritsu_md8475a_ip_address"]
+        self.ad.adb.shell("settings put secure cmas_additional_broadcast_pkg "
+                          "com.googlecode.android_scripting")
+        self.wait_time_between_reg_and_msg = self.user_params.get(
+            "wait_time_between_reg_and_msg", WAIT_TIME_BETWEEN_REG_AND_MSG)
 
     def setup_class(self):
+        super(TelLabEmergencyCallTest, self).setup_class()
         try:
             self.anritsu = MD8475A(self.md8475a_ip_address, self.log)
         except AnritsuError:
@@ -107,17 +116,21 @@ class TelLabEtwsTest(TelephonyBaseTest):
                 self.log.error("No valid RAT provided for ETWS test.")
                 return False
 
-            if not ensure_network_rat(self.log,
-                                      self.ad,
-                                      preferred_network_setting,
-                                      rat_family,
-                                      toggle_apm_after_setting=True):
+            if not ensure_network_rat(
+                    self.log,
+                    self.ad,
+                    preferred_network_setting,
+                    rat_family,
+                    toggle_apm_after_setting=True):
                 self.log.error(
                     "Failed to set rat family {}, preferred network:{}".format(
                         rat_family, preferred_network_setting))
                 return False
 
             self.anritsu.wait_for_registration_state()
+            # GSM takes little long for IDLE b/36104585
+            if rat == RAT_GSM:
+                time.sleep(self.wait_time_between_reg_and_msg)
             if not etws_receive_verify_message_lte_wcdma(
                     self.log, self.ad, self.anritsu,
                     next(TelLabEtwsTest.SERIAL_NO), message_id,
