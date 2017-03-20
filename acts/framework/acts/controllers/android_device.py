@@ -42,8 +42,10 @@ ANDROID_DEVICE_ADB_LOGCAT_PARAM_KEY = "adb_logcat_param"
 ANDROID_DEVICE_EMPTY_CONFIG_MSG = "Configuration is empty, abort!"
 ANDROID_DEVICE_NOT_LIST_CONFIG_MSG = "Configuration should be a list, abort!"
 CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/ramdumps/", "/data/ramdump/")
+CRASH_REPORT_SKIPS = ("RAMDUMP_RESERVED", "RAMDUMP_STATUS")
 BUG_REPORT_TIMEOUT = 1200
 PORT_RETRY_COUNT = 3
+IPERF_TIMEOUT = 60
 
 
 class AndroidDeviceError(signals.ControllerError):
@@ -784,6 +786,8 @@ class AndroidDevice:
                 if log_crash_report:
                     utils.create_dir(crash_log_path)
                 for report in reports:
+                    if report in CRASH_REPORT_SKIPS:
+                        continue
                     crash_report = os.path.join(report_path, report)
                     crash_reports.append(crash_report)
                     if log_crash_report:
@@ -869,7 +873,10 @@ class AndroidDevice:
                 self.adb.remove_tcp_forward(self.h_port)
                 self.h_port = None
 
-    def run_iperf_client(self, server_host, extra_args=""):
+    def run_iperf_client(self,
+                         server_host,
+                         extra_args="",
+                         timeout=IPERF_TIMEOUT):
         """Start iperf client on the device.
 
         Return status as true if iperf client start successfully.
@@ -884,7 +891,8 @@ class AndroidDevice:
             status: true if iperf client start successfully.
             results: results have data flow information
         """
-        out = self.adb.shell("iperf3 -c {} {}".format(server_host, extra_args))
+        out = self.adb.shell(
+            "iperf3 -c {} {}".format(server_host, extra_args), timeout=timeout)
         clean_out = out.split('\n')
         if "error" in clean_out[0].lower():
             return False, clean_out

@@ -122,8 +122,8 @@ class TelephonyBaseTest(BaseTestClass):
                     ad.crash_report = ad.check_crash_report(
                         log_crash_report=False)
                     if ad.crash_report:
-                        ad.log.info("Crash reports %s before test %s start",
-                                    ad.crash_report, func_name)
+                        ad.log.info("Found crash reports %s before test start",
+                                    ad.crash_report)
 
                 # TODO: b/19002120 start QXDM Logging
                 result = fn(self, *args, **kwargs)
@@ -135,7 +135,7 @@ class TelephonyBaseTest(BaseTestClass):
                     if crash_diff:
                         ad.log.error("Find new crash reports %s",
                                      list(crash_diff))
-                if result is not True and "telephony_auto_rerun" in self.user_params:
+                if not result and self.user_params.get("telephony_auto_rerun"):
                     self.teardown_test()
                     # re-run only once, if re-run pass, mark as pass
                     log_string = "[Rerun Test ID] %s. 1st run failed." % test_id
@@ -253,9 +253,8 @@ class TelephonyBaseTest(BaseTestClass):
                 if "enable_wifi_verbose_logging" in self.user_params:
                     ad.droid.wifiEnableVerboseLogging(
                         WIFI_VERBOSE_LOGGING_DISABLED)
-        finally:
-            for ad in self.android_devices:
-                toggle_airplane_mode(self.log, ad, True, strict_checking=False)
+        except Exception as e:
+            self.log.error("Failure with %s", e)
 
         return True
 
@@ -318,8 +317,10 @@ class TelephonyBaseTest(BaseTestClass):
                     "{},{}".format(begin_time, ad.serial).replace(' ', '_'))
                 utils.create_dir(tombstone_path)
                 ad.adb.pull('/data/tombstones/', tombstone_path, timeout=1200)
-            except:
-                ad.log.error("Failed to take a bug report for %s", test_name)
+            except Exception as e:
+                ad.log.error(
+                    "Failed to take a bug report for %s with error %s",
+                    test_name, e)
 
     def get_stress_test_number(self):
         """Gets the stress_test_number param from user params.

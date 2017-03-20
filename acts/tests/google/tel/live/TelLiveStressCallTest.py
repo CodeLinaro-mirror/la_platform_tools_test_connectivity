@@ -23,6 +23,7 @@ from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 from acts.test_utils.tel.tel_defines import WFC_MODE_WIFI_PREFERRED
 from acts.test_utils.tel.tel_test_utils import call_setup_teardown
 from acts.test_utils.tel.tel_test_utils import ensure_phone_default_state
+from acts.test_utils.tel.tel_test_utils import ensure_phone_subscription
 from acts.test_utils.tel.tel_test_utils import ensure_phones_idle
 from acts.test_utils.tel.tel_test_utils import ensure_wifi_connected
 from acts.test_utils.tel.tel_test_utils import hangup_call
@@ -41,26 +42,25 @@ from acts.test_utils.tel.tel_voice_utils import phone_setup_voice_2g
 from acts.test_utils.tel.tel_voice_utils import phone_setup_volte
 from acts.utils import rand_ascii_str
 
-class TelLiveStressCallTest(TelephonyBaseTest):
-    def __init__(self, controllers):
-        TelephonyBaseTest.__init__(self, controllers)
 
+class TelLiveStressCallTest(TelephonyBaseTest):
     def setup_class(self):
-        super().setup_class()
+        super(TelLiveStressCallTest, self).setup_class()
         self.caller = self.android_devices[0]
         self.callee = self.android_devices[1]
+        self.user_params["telephony_auto_rerun"] = False
         self.wifi_network_ssid = self.user_params.get(
             "wifi_network_ssid") or self.user_params.get(
                 "wifi_network_ssid_2g")
         self.wifi_network_pass = self.user_params.get(
             "wifi_network_pass") or self.user_params.get(
                 "wifi_network_pass_2g")
-        self.phone_call_iteration = int(self.user_params.get(
-            "phone_call_iteration", 500))
-        self.phone_call_duration = int(self.user_params.get(
-            "phone_call_duration", 60))
-        self.sleep_time_between_test_iterations = int(self.user_params.get(
-            "sleep_time_between_test_iterations", 0))
+        self.phone_call_iteration = int(
+            self.user_params.get("phone_call_iteration", 500))
+        self.phone_call_duration = int(
+            self.user_params.get("phone_call_duration", 60))
+        self.sleep_time_between_test_iterations = int(
+            self.user_params.get("sleep_time_between_test_iterations", 0))
 
         return True
 
@@ -129,7 +129,14 @@ class TelLiveStressCallTest(TelephonyBaseTest):
         for ad in self.android_devices:
             hangup_call(self.log, ad)
 
-    def stress_test(self, setup_func=None, network_check_func=None, test_sms=False):
+    def stress_test(self,
+                    setup_func=None,
+                    network_check_func=None,
+                    test_sms=False):
+        for ad in self.android_devices:
+            #check for sim and service
+            ensure_phone_subscription(self.log, ad)
+
         if setup_func and not setup_func():
             self.log.error("Test setup %s failed", setup_func.__name__)
             return False
@@ -144,49 +151,50 @@ class TelLiveStressCallTest(TelephonyBaseTest):
                 fail_count["dialing"] += 1
                 iteration_result = False
                 self.log.error("%s call dialing failure.", msg)
+            else:
+                if network_check_func and not network_check_func(self.log,
+                                                                 self.caller):
+                    fail_count["caller_network_check"] += 1
+                    iteration_result = False
+                    self.log.error("%s network check %s failure.", msg,
+                                   network_check_func.__name__)
 
-            if network_check_func and not network_check_func(self.log,
-                                                             self.caller):
-                fail_count["caller_network_check"] += 1
-                iteration_result = False
-                self.log.error("%s network check %s failure.", msg,
-                               network_check_func.__name__)
+                if network_check_func and not network_check_func(self.log,
+                                                                 self.callee):
+                    fail_count["callee_network_check"] += 1
+                    iteration_result = False
+                    self.log.error("%s network check failure.", msg)
 
-            if network_check_func and not network_check_func(self.log,
-                                                             self.callee):
-                fail_count["callee_network_check"] += 1
-                iteration_result = False
-                self.log.error("%s network check failure.", msg)
+                time.sleep(self.phone_call_duration)
 
-            time.sleep(self.phone_call_duration)
+                if not verify_incall_state(self.log, [self.caller, self.callee],
+                                           True):
+                    self.log.error("%s call dropped.", msg)
+                    iteration_result = False
+                    fail_count["drop"] += 1
 
-            if not verify_incall_state(self.log, [self.caller, self.callee],
-                                       True):
-                self.log.error("%s call dropped.", msg)
-                iteration_result = False
-                fail_count["drop"] += 1
-
-            self._hangup_call()
+                self._hangup_call()
 
             if test_sms and not sms_send_receive_verify(
                     self.log, self.caller, self.callee, [rand_ascii_str(180)]):
                 fail_count["sms"] += 1
 
-            self.log.info("%s %s" % (msg, str(iteration_result)))
+            self.log.info("%s %s", msg, iteration_result)
             if not iteration_result:
-                self._take_bug_report("%s_%s" % (self.test_name, i), self.begin_time)
+                self._take_bug_report("%s_%s" % (self.test_name, i),
+                                      self.begin_time)
 
             if self.sleep_time_between_test_iterations:
                 self.caller.droid.goToSleepNow()
                 self.callee.droid.goToSleepNow()
                 time.sleep(self.sleep_time_between_test_iterations)
 
-
         test_result = True
         for failure, count in fail_count.items():
             if count:
-                self.log.error("%s: %s %s failures in %s iterations".format(
-                    self.test_name, count, failure, self.phone_call_iteration))
+                self.log.error("%s: %s %s failures in %s iterations",
+                               self.test_name, count, failure,
+                               self.phone_call_iteration)
                 test_result = False
         return test_result
 
@@ -334,4 +342,3 @@ class TelLiveStressCallTest(TelephonyBaseTest):
             setup_func=self._setup_2g, network_check_func=is_phone_in_call_2g)
 
     """ Tests End """
-
