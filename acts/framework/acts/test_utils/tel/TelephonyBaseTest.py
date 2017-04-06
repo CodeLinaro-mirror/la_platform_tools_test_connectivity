@@ -40,6 +40,7 @@ from acts.test_utils.tel.tel_subscription_utils import \
     set_subid_for_message
 from acts.test_utils.tel.tel_subscription_utils import \
     set_subid_for_outgoing_call
+from acts.test_utils.tel.tel_test_utils import abort_all_tests
 from acts.test_utils.tel.tel_test_utils import toggle_airplane_mode
 from acts.test_utils.tel.tel_test_utils import ensure_phones_default_state
 from acts.test_utils.tel.tel_test_utils import \
@@ -98,6 +99,20 @@ class TelephonyBaseTest(BaseTestClass):
         self.log = _TelephonyTraceLogger(self.log)
         for ad in self.android_devices:
             ad.log = _TelephonyTraceLogger(ad.log)
+            #The puk and pin should be provided in testbed config file.
+            #"AndroidDevice": [{"serial": "84B5T15A29018214",
+            #                   "adb_logcat_param": "-b all",
+            #                   "puk": "12345678",
+            #                   "puk_pin": "1234"}]
+            if hasattr(ad, 'puk'):
+                if not hasattr(ad, 'puk_pin'):
+                    abort_all_tests(ad.log, "puk_pin is not provided")
+                ad.log.info("Enter PUK code and pin")
+                if not ad.droid.telephonySupplyPuk(ad.puk, ad.puk_pin):
+                    abort_all_tests(
+                        ad.log,
+                        "Puk and puk_pin provided in testbed config do NOT work"
+                    )
 
         self.skip_reset_between_cases = self.user_params.get(
             "skip_reset_between_cases", False)
@@ -173,12 +188,10 @@ class TelephonyBaseTest(BaseTestClass):
         return _safe_wrap_test_case
 
     def setup_class(self):
-
-        if not "sim_conf_file" in self.user_params.keys():
-            self.log.warn("Missing mandatory user config \"sim_conf_file\"!")
-            sim_conf_file = None
+        sim_conf_file = self.user_params.get("sim_conf_file")
+        if not sim_conf_file:
+            self.log.info("\"sim_conf_file\" is not provided test bed config!")
         else:
-            sim_conf_file = self.user_params["sim_conf_file"]
             # If the sim_conf_file is not a full path, attempt to find it
             # relative to the config file.
             if not os.path.isfile(sim_conf_file):
@@ -189,11 +202,9 @@ class TelephonyBaseTest(BaseTestClass):
                                    sim_conf_file)
                     return False
 
-        setattr(
-            self,
-            "diag_logger",
-            self.register_controller(
-                acts.controllers.diag_logger, required=False))
+        setattr(self, "diag_logger",
+                self.register_controller(
+                    acts.controllers.diag_logger, required=False))
 
         ensure_phones_default_state(self.log, self.android_devices)
         for ad in self.android_devices:
@@ -259,9 +270,6 @@ class TelephonyBaseTest(BaseTestClass):
         return True
 
     def setup_test(self):
-        for ad in self.android_devices:
-            refresh_droid_config(self.log, ad)
-
         if getattr(self, "diag_logger", None):
             for logger in self.diag_logger:
                 self.log.info("Starting a diagnostic session %s", logger)
