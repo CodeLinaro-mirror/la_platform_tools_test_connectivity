@@ -1513,8 +1513,8 @@ def phone_number_formatter(input_string, formatter=None):
     """
     # make sure input_string is 10 digital
     # Remove white spaces, dashes, dots
-    input_string = input_string.replace(" ", "").replace(
-        "-", "").replace(".", "").strip("0")
+    input_string = input_string.replace(" ", "").replace("-", "").replace(
+        ".", "").strip("0")
     if not formatter:
         return input_string
     # Remove "1"  or "+1"from front
@@ -1632,7 +1632,7 @@ def _check_file_existance(ad, file_name, out_path, expected_file_size=None):
         return False
 
 
-def active_data_transfer_task(log, ad):
+def active_data_transfer_task(log, ad, file_name="5MB"):
     curl_capable = True
     try:
         out = ad.adb.shell("curl --version")
@@ -1646,15 +1646,28 @@ def active_data_transfer_task(log, ad):
         # files available for download on the same website:
         # 1GB.zip, 512MB.zip, 200MB.zip, 50MB.zip, 20MB.zip, 10MB.zip, 5MB.zip
         # download file by adb command, as phone call will use sl4a
-        url = "http://download.thinkbroadband.com/5MB.zip"
-        file_size = 5000000
-        output_path = "/sdcard/Download/5MB.zip"
-        return (http_file_download_by_adb,
-                (log, ad, url, output_path, file_size))
+        url = "http://download.thinkbroadband.com/" + file_name + ".zip"
+        file_map_dict = {
+            '5MB': 5000000,
+            '10MB': 10000000,
+            '20MB': 20000000,
+            '50MB': 50000000,
+            '200MB': 200000000,
+            '512MB': 512000000,
+            '1GB': 1000000000
+        }
+        if file_name in file_map_dict:
+            file_size = file_map_dict[file_name]
+        else:
+            ad.log.warning("file_size provided for DL is not available")
+            return False
+        output_path = "/sdcard/Download/" + file_name + ".zip"
+        return (http_file_download_by_adb, (log, ad, url, output_path,
+                                            file_size))
 
 
-def active_data_transfer_test(log, ad):
-    task = active_data_transfer_task(log, ad)
+def active_data_transfer_test(log, ad, file_name="5MB"):
+    task = active_data_transfer_task(log, ad, file_name)
     return task[0](*task[1])
 
 
@@ -1697,80 +1710,14 @@ def iperf_test_by_adb(log,
         return False
 
 
-def parse_ping_ouput(log, ad, count, out, loss_tolerance=20):
-    """Ping Parsing util.
-
-    Args:
-        log: log object
-        ad: Android Device Object.
-        count: Number of ICMP packets sent
-        out: shell output text of ping operation
-        loss_tolerance: Threshold after which flag test as false
-    Returns:
-        False: if packet loss is more than loss_tolerance%
-        True: if all good
-    """
-    out = out.split('\n')[-3:]
-    stats = out[1].split(',')
-    # For failure case, line of interest becomes the last line
-    if len(stats) != 4:
-        stats = out[2].split(',')
-    packet_loss = float(stats[2].split('%')[0])
-    packet_xmit = int(stats[0].split()[0])
-    packet_rcvd = int(stats[1].split()[0])
-    min_packet_xmit_rcvd = (100 - loss_tolerance) * 0.01
-
-    if (packet_loss >= loss_tolerance or
-            packet_xmit < count * min_packet_xmit_rcvd or
-            packet_rcvd < count * min_packet_xmit_rcvd):
-        ad.log.error(
-            "More than %d %% packet loss seen, Expected Packet_count %d \
-            Packet loss %.2f%% Packets_xmitted %d Packets_rcvd %d",
-            loss_tolerance, count, packet_loss, packet_xmit, packet_rcvd)
-        return False
-    ad.log.info("Pkt_count %d Pkt_loss %.2f%% Pkt_xmit %d Pkt_rcvd %d", count,
-                packet_loss, packet_xmit, packet_rcvd)
-    return True
-
-
-def adb_shell_ping(log, ad, count=120, dest_ip="www.google.com", timeout=200):
-    """Ping utility using adb shell.
-
-    Args:
-        log: log object
-        ad: Android Device Object.
-        count: Number of ICMP packets to send
-        dest_ip: hostname or IP address
-                 default www.google.com
-        timeout: timeout for icmp pings to complete.
-    """
-    ping_cmd = "ping -W 1"
-    if count:
-        ping_cmd += " -c %d" % count
-    if dest_ip:
-        ping_cmd += " %s | tee /data/ping.txt" % dest_ip
-    try:
-        ad.log.info("Starting ping test to %s using adb command %s", dest_ip,
-                    ping_cmd)
-        out = ad.adb.shell(ping_cmd, timeout=timeout)
-        if not parse_ping_ouput(log, ad, count, out):
-            return False
-        return True
-    except Exception as e:
-        ad.log.warn("Ping Test to %s failed with exception %s", dest_ip, e)
-        return False
-    finally:
-        ad.adb.shell("rm /data/ping.txt", timeout=10, ignore_status=True)
-
-
 def http_file_download_by_adb(log,
                               ad,
                               url,
                               out_path=None,
                               expected_file_size=None,
                               remove_file_after_check=True,
-                              timeout=300,
-                              limit_rate=50000,
+                              timeout=900,
+                              limit_rate=None,
                               retry=3):
     """Download http file by adb curl.
 
@@ -1871,8 +1818,7 @@ def _connection_state_change(_event, target_state, connection_type):
                 connection_type, connection_type_string_in_event, cur_type)
             return False
 
-    if 'isConnected' in _event['data'] and _event['data'][
-            'isConnected'] == target_state:
+    if 'isConnected' in _event['data'] and _event['data']['isConnected'] == target_state:
         return True
     return False
 
@@ -1899,8 +1845,8 @@ def wait_for_cell_data_connection(
         False if failed.
     """
     sub_id = get_default_data_sub_id(ad)
-    return wait_for_cell_data_connection_for_subscription(log, ad, sub_id,
-                                                          state, timeout_value)
+    return wait_for_cell_data_connection_for_subscription(
+        log, ad, sub_id, state, timeout_value)
 
 
 def _is_data_connection_state_match(log, ad, expected_data_connection_state):
@@ -2066,7 +2012,7 @@ def _wait_for_nw_data_connection(
         cur_data_connection_state = ad.droid.connectivityNetworkIsConnected()
         if is_connected == cur_data_connection_state:
             current_type = get_internet_connection_type(log, ad)
-            ad.log.info("current datat connection type: %s", current_type)
+            ad.log.info("current data connection type: %s", current_type)
             if not connection_type:
                 return True
             else:
@@ -3279,8 +3225,9 @@ def ensure_network_generation_for_subscription(
         log, ad, sub_id, generation, max_wait_time, voice_or_data)
 
     ad.log.info(
-        "Setting to %s, Expecting %s %s. Current: voice: %s(family: %s), "
-        "data: %s(family: %s)", network_preference, generation, voice_or_data,
+        "Ensure network %s %s %s. With network preference %s, "
+        "current: voice: %s(family: %s), data: %s(family: %s)", generation,
+        voice_or_data, result, network_preference,
         ad.droid.telephonyGetCurrentVoiceNetworkTypeForSubscription(sub_id),
         rat_generation_from_rat(
             ad.droid.telephonyGetCurrentVoiceNetworkTypeForSubscription(
@@ -3468,13 +3415,16 @@ def is_droid_in_network_generation_for_subscription(log, ad, sub_id, nw_gen,
 
     for service in service_list:
         nw_rat = get_network_rat_for_subscription(log, ad, sub_id, service)
-
+        ad.log.info("network rat for %s is %s", service, nw_rat)
         if nw_rat == RAT_UNKNOWN or not is_valid_rat(nw_rat):
             continue
 
         if rat_generation_from_rat(nw_rat) == nw_gen:
+            ad.log.info("network rat %s is expected %s", nw_rat, nw_gen)
             return True
         else:
+            ad.log.info("network rat %s is %s, expecting %s", nw_rat,
+                        rat_generation_from_rat(nw_rat), nw_gen)
             return False
 
     return False
@@ -3692,8 +3642,7 @@ def check_is_wifi_connected(log, ad, wifi_ssid):
         False if wifi is not connected to wifi_ssid
     """
     wifi_info = ad.droid.wifiGetConnectionInfo()
-    if wifi_info["supplicant_state"] == "completed" and wifi_info[
-            "SSID"] == wifi_ssid:
+    if wifi_info["supplicant_state"] == "completed" and wifi_info["SSID"] == wifi_ssid:
         ad.log.info("Wifi is connected to %s", wifi_ssid)
         return True
     else:
@@ -4131,8 +4080,8 @@ def is_network_call_back_event_match(event, network_callback_id,
     try:
         return (
             (network_callback_id == event['data'][NetworkCallbackContainer.ID])
-            and (network_callback_event == event['data'][
-                NetworkCallbackContainer.NETWORK_CALLBACK_EVENT]))
+            and (network_callback_event == event['data']
+                 [NetworkCallbackContainer.NETWORK_CALLBACK_EVENT]))
     except KeyError:
         return False
 
