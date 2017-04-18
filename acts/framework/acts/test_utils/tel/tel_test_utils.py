@@ -91,6 +91,7 @@ from acts.test_utils.tel.tel_defines import EventDataSmsReceived
 from acts.test_utils.tel.tel_defines import EventMessageWaitingIndicatorChanged
 from acts.test_utils.tel.tel_defines import EventServiceStateChanged
 from acts.test_utils.tel.tel_defines import EventMmsSentSuccess
+from acts.test_utils.tel.tel_defines import EventMmsDownloaded
 from acts.test_utils.tel.tel_defines import EventSmsReceived
 from acts.test_utils.tel.tel_defines import EventSmsSentSuccess
 from acts.test_utils.tel.tel_defines import CallStateContainer
@@ -157,8 +158,7 @@ def setup_droid_properties(log, ad, sim_filename):
                 sim_serial = ad.droid.telephonyGetSimSerialNumberForSubscription(
                     sub_id)
                 if not sim_serial:
-                    log.error("Unable to find ICC-ID for SIM on {}!".format(
-                        ad.serial))
+                    ad.log.error("Unable to find ICC-ID for SIM.")
                 if sim_data is not None:
                     number = sim_data[sim_serial]["phone_num"]
                 else:
@@ -166,6 +166,9 @@ def setup_droid_properties(log, ad, sim_filename):
             except KeyError:
                 number = ad.droid.telephonyGetLine1NumberForSubscription(
                     sub_id)
+            except Exception as e:
+                log.error("Failed to setup_droid_property with {}".format(e))
+                raise
             if not number or number == "":
                 raise TelTestUtilsError(
                     "Failed to find valid phone number for {}"
@@ -181,7 +184,7 @@ def setup_droid_properties(log, ad, sim_filename):
                     telephonyGetSimSerialNumberForSubscription(sub_id)))
 
     if found_sims == 0:
-        log.warning("No Valid SIMs found in device {}".format(ad.serial))
+        ad.log.warning("No Valid SIMs found in device")
 
     setattr(ad, 'cfg', device_props)
 
@@ -239,18 +242,21 @@ def get_num_active_sims(log, ad):
     return len(valid_sims.keys())
 
 
-def toggle_airplane_mode(log, ad, new_state=None):
+def toggle_airplane_mode(log, ad, new_state=None, strict_checking=True):
     """ Toggle the state of airplane mode.
 
     Args:
+        log: log handler.
         ad: android_device object.
         new_state: Airplane mode state to set to.
             If None, opposite of the current state.
+        strict_checking: Whether to turn on strict checking that checks all features.
 
     Returns:
         result: True if operation succeed. False if error happens.
     """
-    return toggle_airplane_mode_msim(log, ad, new_state)
+    return toggle_airplane_mode_msim(log, ad, new_state,
+                                     strict_checking=strict_checking)
 
 
 def is_expected_event(event_to_check, events_list):
@@ -336,8 +342,10 @@ def _wait_for_bluetooth_in_state(log, ad, state, max_wait):
                       format(bt_state, state))
             return False
 
-        event = {False: _BLUETOOTH_STATE_OFF_EVENT,
-                 True: _BLUETOOTH_STATE_ON_EVENT}[state]
+        event = {
+            False: _BLUETOOTH_STATE_OFF_EVENT,
+            True: _BLUETOOTH_STATE_ON_EVENT
+        }[state]
         ad.ed.pop_event(event, max_wait)
         return True
     except Empty:
@@ -356,13 +364,15 @@ def _wait_for_wifi_in_state(log, ad, state, max_wait):
                 state)
 
 
-def toggle_airplane_mode_msim(log, ad, new_state=None):
+def toggle_airplane_mode_msim(log, ad, new_state=None, strict_checking=True):
     """ Toggle the state of airplane mode.
 
     Args:
+        log: log handler.
         ad: android_device object.
         new_state: Airplane mode state to set to.
             If None, opposite of the current state.
+        strict_checking: Whether to turn on strict checking that checks all features.
 
     Returns:
         result: True if operation succeed. False if error happens.
@@ -377,8 +387,7 @@ def toggle_airplane_mode_msim(log, ad, new_state=None):
 
     cur_state = ad.droid.connectivityCheckAirplaneMode()
     if cur_state == new_state:
-        log.info("Airplane mode already <{}> on {}".format(new_state,
-                                                           ad.serial))
+        ad.log.info("Airplane mode already <{}>".format(new_state))
         return True
     elif new_state is None:
         log.info("Current State {} New state {}".format(cur_state, new_state))
@@ -389,7 +398,7 @@ def toggle_airplane_mode_msim(log, ad, new_state=None):
     service_state_list = []
     if new_state:
         service_state_list.append(SERVICE_STATE_POWER_OFF)
-        log.info("Turn on airplane mode on {}".format(ad.serial))
+        ad.log.info("Turn on airplane mode")
 
     else:
         # If either one of these 3 events show up, it should be OK.
@@ -398,7 +407,7 @@ def toggle_airplane_mode_msim(log, ad, new_state=None):
         # NO SIM, or Dead SIM, or no Roaming coverage.
         service_state_list.append(SERVICE_STATE_OUT_OF_SERVICE)
         service_state_list.append(SERVICE_STATE_EMERGENCY_ONLY)
-        log.info("Turn off airplane mode on {}.".format(ad.serial))
+        ad.log.info("Turn off airplane mode.")
 
     for sub_id in sub_id_list:
         ad.droid.telephonyStartTrackingServiceStateChangeForSubscription(
@@ -420,34 +429,37 @@ def toggle_airplane_mode_msim(log, ad, new_state=None):
         except Empty:
             pass
         if event is None:
-            log.error("Did not get expected service state {} on {}".format(
-                service_state_list, ad.serial))
+            ad.log.error("Did not get expected service state {}".format(
+                service_state_list))
             return False
         else:
-            log.info("Received event: {} on {}".format(event, ad.serial))
+            ad.log.info("Received event: {}".format(event))
     finally:
         for sub_id in sub_id_list:
             ad.droid.telephonyStopTrackingServiceStateChangeForSubscription(
                 sub_id)
 
     # APM on (new_state=True) will turn off bluetooth but may not turn it on
-    if new_state and not _wait_for_bluetooth_in_state(
-            log, ad, False, timeout_time - time.time()):
-        log.error(
-            "Failed waiting for bluetooth during airplane mode toggle on {}".
-            format(ad.serial))
-        return False
+    try:
+        if new_state and not _wait_for_bluetooth_in_state(
+                log, ad, False, timeout_time - time.time()):
+            log.error(
+                "Failed waiting for bluetooth during airplane mode toggle on {}".
+                format(ad.serial))
+            if strict_checking: return False
+    except Exception as e:
+        log.error("Failed to check bluetooth state due to {}".format(e))
+        if strict_checking:
+            raise
 
     # APM on (new_state=True) will turn off wifi but may not turn it on
     if new_state and not _wait_for_wifi_in_state(log, ad, False,
                                                  timeout_time - time.time()):
-        log.error("Failed waiting for wifi during airplane mode toggle on {}.".
-                  format(ad.serial))
+        ad.log.error("Failed waiting for wifi during airplane mode toggle.")
         return False
 
     if ad.droid.connectivityCheckAirplaneMode() != new_state:
-        log.error("Airplane mode {} failed on {}".format("ON" if new_state else
-                                                         "OFF", ad.serial))
+        ad.log.error("Airplane mode {} failed".format("ON" if new_state else "OFF"))
         return False
     return True
 
@@ -1559,7 +1571,7 @@ def wait_for_wifi_data_connection(
         True if success.
         False if failed.
     """
-    log.info("{} wait_for_wifi_data_connection".format(ad.serial))
+    ad.log.info("wait_for_wifi_data_connection")
     return _wait_for_nw_data_connection(
         log, ad, state, NETWORK_CONNECTION_TYPE_WIFI, timeout_value)
 
@@ -1628,17 +1640,17 @@ def _wait_for_nw_data_connection(
                 return True
             else:
                 if not is_connected and current_type != connection_type:
-                    log.info(
-                        "wait_for_nw_data_connection success: {} data not on {}!".
-                        format(ad.serial, connection_type))
+                    ad.log.info(
+                        "wait_for_nw_data_connection success: data not on {}!".
+                        format(connection_type))
                     return True
                 elif is_connected and current_type == connection_type:
-                    log.info(
-                        "wait_for_nw_data_connection success: {} data on {}!".
-                        format(ad.serial, connection_type))
+                    ad.log.info(
+                        "wait_for_nw_data_connection success: data on {}!".
+                        format(connection_type))
                     return True
         else:
-            log.info("{} current state: {} target: {}".format(
+            ad.log.info("{} current state: {} target: {}".format(
                 ad.serial, cur_data_connection_state, is_connected))
 
         try:
@@ -2396,6 +2408,48 @@ def wait_for_matching_sms(log,
             return False
 
 
+def is_mms_match(event, phonenumber_tx, text):
+    """Return True if 'text' equals to event['data']['Text']
+        and phone number match.
+
+    Args:
+        event: Event object to verify.
+        phonenumber_tx: phone number for sender.
+        text: text string to verify.
+
+    Returns:
+        Return True if 'text' equals to event['data']['Text']
+            and phone number match.
+    """
+    #TODO:  add mms matching after mms message parser is added in sl4a. b/34276948
+    return True
+
+
+def wait_for_matching_mms(log, ad_rx, phonenumber_tx, text):
+    """Wait for matching incoming SMS.
+
+    Args:
+        log: Log object.
+        ad_rx: Receiver's Android Device Object
+        phonenumber_tx: Sender's phone number.
+        text: SMS content string.
+        allow_multi_part_long_sms: is long SMS allowed to be received as
+            multiple short SMS. This is optional, default value is True.
+
+    Returns:
+        True if matching incoming SMS is received.
+    """
+    try:
+        #TODO: add mms matching after mms message parser is added in sl4a. b/34276948
+        ad_rx.ed.wait_for_event(EventMmsDownloaded, is_mms_match,
+                                MAX_WAIT_TIME_SMS_RECEIVE, phonenumber_tx,
+                                text)
+        return True
+    except Empty:
+        log.warn("No matched MMS downloaded event.")
+        return False
+
+
 def sms_send_receive_verify_for_subscription(log, ad_tx, ad_rx, subid_tx,
                                              subid_rx, array_message):
     """Send SMS, receive SMS, and verify content and sender's number.
@@ -2444,10 +2498,10 @@ def sms_send_receive_verify_for_subscription(log, ad_tx, ad_rx, subid_tx,
 
 
 def mms_send_receive_verify(log, ad_tx, ad_rx, array_message):
-    """Send SMS, receive SMS, and verify content and sender's number.
+    """Send MMS, receive MMS, and verify content and sender's number.
 
-        Send (several) SMS from droid_tx to droid_rx.
-        Verify SMS is sent, delivered and received.
+        Send (several) MMS from droid_tx to droid_rx.
+        Verify MMS is sent, delivered and received.
         Verify received content and sender's number are correct.
 
     Args:
@@ -2461,13 +2515,13 @@ def mms_send_receive_verify(log, ad_tx, ad_rx, array_message):
         get_incoming_message_sub_id(ad_rx), array_message)
 
 
-#TODO: b/21569494 This function is still a WIP and is disabled
+#TODO: add mms matching after mms message parser is added in sl4a. b/34276948
 def mms_send_receive_verify_for_subscription(log, ad_tx, ad_rx, subid_tx,
                                              subid_rx, array_payload):
-    """Send SMS, receive SMS, and verify content and sender's number.
+    """Send MMS, receive MMS, and verify content and sender's number.
 
-        Send (several) SMS from droid_tx to droid_rx.
-        Verify SMS is sent, delivered and received.
+        Send (several) MMS from droid_tx to droid_rx.
+        Verify MMS is sent, delivered and received.
         Verify received content and sender's number are correct.
 
     Args:
@@ -2479,49 +2533,91 @@ def mms_send_receive_verify_for_subscription(log, ad_tx, ad_rx, subid_tx,
         array_message: the array of message to send/receive
     """
 
-    log.error("Function is non-working: b/21569494")
-    return False
+    phonenumber_tx = ad_tx.cfg['subscription'][subid_tx]['phone_num']
+    phonenumber_rx = ad_rx.cfg['subscription'][subid_rx]['phone_num']
+    for subject, message, filename in array_payload:
+        log.info(
+            "Sending MMS {} to {}, subject: {}, message: {}, file: {}.".format(
+                phonenumber_tx, phonenumber_rx, subject, message, filename))
+        result = False
+        ad_rx.ed.clear_all_events()
+        ad_rx.droid.smsStartTrackingIncomingMmsMessage()
+        try:
+            ad_tx.droid.smsSendMultimediaMessage(
+                phonenumber_rx, subject, message, phonenumber_tx, filename)
+            try:
+                ad_tx.ed.pop_event(EventMmsSentSuccess,
+                                   MAX_WAIT_TIME_SMS_SENT_SUCCESS)
+            except Empty:
+                log.warn("No sent_success event.")
+                return False
+
+            if not wait_for_matching_mms(log, ad_rx, phonenumber_tx, message):
+                return False
+        finally:
+            ad_rx.droid.smsStopTrackingIncomingMmsMessage()
+    return True
+
+
+def mms_receive_verify_after_call_hangup(log, ad_tx, ad_rx, array_message):
+    """Verify the suspanded MMS during call will send out after call release.
+
+        Hangup call from droid_tx to droid_rx.
+        Verify MMS is sent, delivered and received.
+        Verify received content and sender's number are correct.
+
+    Args:
+        log: Log object.
+        ad_tx: Sender's Android Device Object
+        ad_rx: Receiver's Android Device Object
+        array_message: the array of message to send/receive
+    """
+    return mms_receive_verify_after_call_hangup_for_subscription(
+        log, ad_tx, ad_rx, get_outgoing_message_sub_id(ad_tx),
+        get_incoming_message_sub_id(ad_rx), array_message)
+
+
+#TODO: add mms matching after mms message parser is added in sl4a. b/34276948
+def mms_receive_verify_after_call_hangup_for_subscription(
+        log, ad_tx, ad_rx, subid_tx, subid_rx, array_payload):
+    """Verify the suspanded MMS during call will send out after call release.
+
+        Hangup call from droid_tx to droid_rx.
+        Verify MMS is sent, delivered and received.
+        Verify received content and sender's number are correct.
+
+    Args:
+        log: Log object.
+        ad_tx: Sender's Android Device Object..
+        ad_rx: Receiver's Android Device Object.
+        subid_tx: Sender's subsciption ID to be used for SMS
+        subid_rx: Receiver's subsciption ID to be used for SMS
+        array_message: the array of message to send/receive
+    """
 
     phonenumber_tx = ad_tx.cfg['subscription'][subid_tx]['phone_num']
     phonenumber_rx = ad_rx.cfg['subscription'][subid_rx]['phone_num']
     for subject, message, filename in array_payload:
-        log.info("Sending MMS {} to {}, subject: {}, message: {}.".format(
-            phonenumber_tx, phonenumber_rx, subject, message))
+        log.info(
+            "Waiting MMS {} to {}, subject: {}, message: {}, file: {}.".format(
+                phonenumber_tx, phonenumber_rx, subject, message, filename))
         result = False
         ad_rx.ed.clear_all_events()
         ad_rx.droid.smsStartTrackingIncomingMmsMessage()
-        ad_rx.droid.smsStartTrackingIncomingSmsMessage()
+        time.sleep(5)
         try:
-            ad_tx.droid.smsSendMultimediaMessage(
-                phonenumber_rx, subject, message, phonenumber_tx, filename)
+            hangup_call(log, ad_tx)
+            hangup_call(log, ad_rx)
+            try:
+                ad_tx.ed.pop_event(EventMmsSentSuccess,
+                                   MAX_WAIT_TIME_SMS_SENT_SUCCESS)
+            except Empty:
+                log.warn("No sent_success event.")
+                return False
 
-            ad_tx.ed.pop_event(EventMmsSentSuccess,
-                               MAX_WAIT_TIME_SMS_SENT_SUCCESS)
-
-            start_time = time.time()
-            remaining_time = MAX_WAIT_TIME_SMS_RECEIVE
-            while remaining_time > 0:
-                event = ad_rx.ed.pop_event(EventSmsReceived, remaining_time)
-                if check_phone_number_match(event['data']['Sender'],
-                                            phonenumber_tx):
-                    log.debug("Received SMS Indication")
-                    while remaining_time > 0:
-                        event = ad_rx.ed.pop_event(EventDataSmsReceived,
-                                                   remaining_time)
-                        if check_phone_number_match(event['data']['Sender'],
-                                                    phonenumber_tx):
-                            result = True
-                            break
-                        remaining_time = time.time() - start_time
-                remaining_time = time.time() - start_time
-
-            if not result:
-                log.info("Expected sender:" + phonenumber_tx)
-                log.error("Received sender:" + event['data']['Sender'])
-                log.error("Failed in verify receiving MMS.")
+            if not wait_for_matching_mms(log, ad_rx, phonenumber_tx, message):
                 return False
         finally:
-            ad_rx.droid.smsStopTrackingIncomingSmsMessage()
             ad_rx.droid.smsStopTrackingIncomingMmsMessage()
     return True
 
@@ -2763,7 +2859,8 @@ def wait_for_not_network_rat_for_subscription(
         voice_or_data=None):
     return _wait_for_droid_in_state_for_subscription(
         log, ad, sub_id, max_wait_time,
-        lambda log, ad, sub_id, *args, **kwargs: not is_droid_in_rat_family_for_subscription(log, ad, sub_id, rat_family, voice_or_data))
+        lambda log, ad, sub_id, * args, ** kwargs: not is_droid_in_rat_family_for_subscription(log, ad, sub_id, rat_family, voice_or_data)
+    )
 
 
 def wait_for_preferred_network(log,
@@ -3584,7 +3681,7 @@ class WifiUtils():
                             WifiUtils.SSID_KEY]))
                     return False
             except Exception as e:
-                log.error("WifiUtils.wifi_connect not connected, no event.")
+                log.error("WifiUtils.wifi_connect failed with {}.".format(e))
                 return False
         except Exception as e:
             log.error("WifiUtils.wifi_connect exception: {}".format(e))
@@ -3605,10 +3702,11 @@ class WifiUtils():
             boolean success (True) or failure (False)
         """
         try:
-            return WifiUtils._start_wifi_tethering(ad, ssid, password, ap_band)
+            WifiUtils._start_wifi_tethering(ad, ssid, password, ap_band)
         except Exception as e:
             log.error("WifiUtils.start_wifi_tethering exception: {}".format(e))
             return False
+        return True
 
     @staticmethod
     def stop_wifi_tethering(log, ad):
