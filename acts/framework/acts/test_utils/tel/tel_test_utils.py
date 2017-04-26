@@ -136,6 +136,7 @@ from acts.test_utils.tel.tel_subscription_utils import \
     get_incoming_message_sub_id
 from acts.test_utils.wifi import wifi_test_utils
 from acts.test_utils.wifi import wifi_constants
+from acts.utils import adb_shell_ping
 from acts.utils import load_config
 
 WIFI_SSID_KEY = wifi_test_utils.WifiEnums.SSID_KEY
@@ -1671,11 +1672,25 @@ def active_data_transfer_test(log, ad, file_name="5MB"):
     return task[0](*task[1])
 
 
+def verify_internet_connection(log, ad):
+    """Verify internet connection by ping test.
+
+    Args:
+        log: log object
+        ad: Android Device Object.
+
+    """
+    ad.log.info("Verify internet connection")
+    return adb_shell_ping(ad, count=5, timeout=60, loss_tolerance=40)
+
+
 def iperf_test_by_adb(log,
                       ad,
                       iperf_server,
+                      port_num=None,
+                      reverse=False,
                       timeout=180,
-                      limit_rate=100000,
+                      limit_rate=None,
                       omit=10,
                       ipv6=False):
     """Iperf test by adb.
@@ -1683,14 +1698,17 @@ def iperf_test_by_adb(log,
     Args:
         log: log object
         ad: Android Device Object.
-        url: The iperf host url".
+        iperf_Server: The iperf host url".
+        port_num: TCP/UDP server port
         timeout: timeout for file download to complete.
         limit_rate: iperf bandwidth option. None by default
         omit: the omit option provided in iperf command.
     """
     iperf_option = "-t %s -O %s -J" % (timeout, omit)
     if limit_rate: iperf_option += " -b %s" % limit_rate
+    if port_num: iperf_option += " -p %s" % port_num
     if ipv6: iperf_option += " -6"
+    if reverse: iperf_option += " -R"
     try:
         ad.log.info("Running adb iperf test with server %s", iperf_server)
         result, data = ad.run_iperf_client(
@@ -3677,9 +3695,10 @@ def ensure_wifi_connected(log, ad, wifi_ssid, wifi_pwd=None, retries=3):
             return True
         else:
             ad.log.info("Connecting to wifi %s", wifi_ssid)
-            wifi_test_utils.wifi_connect(ad, network, 1, assert_on_fail=False)
+            ad.droid.wifiConnectByConfig(network)
             time.sleep(20)
             if check_is_wifi_connected(log, ad, wifi_ssid):
+                ad.log.info("Coneected to Wifi %s", wifi_ssid)
                 return True
     ad.log.info("Fail to connected to wifi %s", wifi_ssid)
     return False
