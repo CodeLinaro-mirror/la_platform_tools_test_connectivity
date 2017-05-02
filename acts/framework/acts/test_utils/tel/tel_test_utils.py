@@ -815,7 +815,7 @@ def wait_and_answer_call_for_subscription(
         ad.log.info("Accept the ring call")
         ad.droid.telecomAcceptRingingCall()
 
-        if wait_for_call_offhook_event(
+        if ad.droid.telecomIsInCall() or wait_for_call_offhook_event(
                 log, ad, sub_id, event_tracking_started=True,
                 timeout=timeout) or ad.droid.telecomIsInCall():
             ad.log.info("Call answered successfully.")
@@ -1659,12 +1659,13 @@ def active_data_transfer_task(log, ad, file_name="5MB"):
         }
         if file_name in file_map_dict:
             file_size = file_map_dict[file_name]
+            timeout = file_size / 100000
         else:
             ad.log.warning("file_size provided for DL is not available")
             return False
         output_path = "/sdcard/Download/" + file_name + ".zip"
         return (http_file_download_by_adb, (log, ad, url, output_path,
-                                            file_size))
+                                            file_size, True, timeout))
 
 
 def active_data_transfer_test(log, ad, file_name="5MB"):
@@ -1905,6 +1906,9 @@ def wait_for_cell_data_connection_for_subscription(
         False: DATA_STATE_DISCONNECTED
     }[state]
 
+    data_state = ad.droid.telephonyGetDataConnectionState()
+    if not state and ad.droid.telephonyGetDataConnectionState() == state_str:
+        return True
     ad.ed.clear_all_events()
     ad.droid.telephonyStartTrackingDataConnectionStateChangeForSubscription(
         sub_id)
@@ -3588,7 +3592,7 @@ def ensure_phone_subscription(log, ad):
     return True
 
 
-def ensure_phone_default_state(log, ad):
+def ensure_phone_default_state(log, ad, check_subscription=True):
     """Ensure ad in default state.
     Phone not in call.
     Phone have no stored WiFi network and WiFi disconnected.
@@ -3598,6 +3602,7 @@ def ensure_phone_default_state(log, ad):
 
     try:
         ad.droid.telephonyFactoryReset()
+        ad.droid.imsFactoryReset()
         if ad.droid.telecomIsInCall():
             ad.droid.telecomEndCall()
         if not wait_for_droid_not_in_call(log, ad):
@@ -3606,11 +3611,11 @@ def ensure_phone_default_state(log, ad):
         ad.log.error("Failure %s, toggle APM instead", e)
         toggle_airplane_mode(log, ad, True, False)
         ad.droid.telephonyToggleDataConnection(True)
+        set_wfc_mode(log, ad, WFC_MODE_DISABLED)
 
     if not toggle_airplane_mode(log, ad, False, False):
         ad.log.error("Fail to turn off airplane mode")
         result = False
-    set_wfc_mode(log, ad, WFC_MODE_DISABLED)
     set_wifi_to_default(log, ad)
 
     if not wait_for_not_network_rat(
@@ -3621,14 +3626,14 @@ def ensure_phone_default_state(log, ad):
     if getattr(ad, 'data_roaming', False):
         ad.log.info("Enable cell data roaming")
         toggle_cell_data_roaming(ad, True)
-    if not ensure_phone_subscription(log, ad):
+    if check_subscription and not ensure_phone_subscription(log, ad):
         ad.log.error("Unable to find a valid subscription!")
         result = False
 
     return result
 
 
-def ensure_phones_default_state(log, ads):
+def ensure_phones_default_state(log, ads, check_subscription=True):
     """Ensure ads in default state.
     Phone not in call.
     Phone have no stored WiFi network and WiFi disconnected.
@@ -3640,7 +3645,8 @@ def ensure_phones_default_state(log, ads):
     """
     tasks = []
     for ad in ads:
-        tasks.append((ensure_phone_default_state, (log, ad)))
+        tasks.append((ensure_phone_default_state, (log, ad,
+                                                   check_subscription)))
     if not multithread_func(log, tasks):
         log.error("Ensure_phones_default_state Fail.")
         return False
@@ -3698,7 +3704,7 @@ def ensure_wifi_connected(log, ad, wifi_ssid, wifi_pwd=None, retries=3):
             ad.droid.wifiConnectByConfig(network)
             time.sleep(20)
             if check_is_wifi_connected(log, ad, wifi_ssid):
-                ad.log.info("Coneected to Wifi %s", wifi_ssid)
+                ad.log.info("Connected to Wifi %s", wifi_ssid)
                 return True
     ad.log.info("Fail to connected to wifi %s", wifi_ssid)
     return False
