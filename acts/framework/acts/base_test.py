@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import os
+import time
 import traceback
 
 from acts import asserts
@@ -22,6 +23,7 @@ from acts import keys
 from acts import logger
 from acts import records
 from acts import signals
+from acts import tracelogger
 from acts import utils
 
 # Macro strings for test result reporting
@@ -65,6 +67,12 @@ class BaseTestClass(object):
             setattr(self, name, value)
         self.results = records.TestResult()
         self.current_test_name = None
+        self.log = tracelogger.TraceLogger(self.log)
+        if 'self.android_devices' in self.__dict__:
+            for ad in self.android_devices:
+                if ad.droid:
+                    utils.set_location_service(ad, False)
+                    utils.sync_device_time(ad)
 
     def __enter__(self):
         return self
@@ -121,6 +129,21 @@ class BaseTestClass(object):
             else:
                 self.log.warning(("Missing optional user param '%s' in "
                                   "configuration, continue."), name)
+
+        capablity_of_devices = utils.CapablityPerDevice
+        if "additional_energy_info_models" in self.user_params:
+            self.energy_info_models = (capablity_of_devices.energy_info_models
+                                       + self.additional_energy_info_models)
+        else:
+            self.energy_info_models = capablity_of_devices.energy_info_models
+        self.user_params["energy_info_models"] = self.energy_info_models
+
+        if "additional_tdls_models" in self.user_params:
+            self.tdls_models = (capablity_of_devices.energy_info_models +
+                                self.additional_tdls_models)
+        else:
+            self.tdls_models = capablity_of_devices.energy_info_models
+        self.user_params["tdls_models"] = self.tdls_models
 
     def _setup_class(self):
         """Proxy function to guarantee the base implementation of setup_class
@@ -565,12 +588,15 @@ class BaseTestClass(object):
         if not test_name.startswith("test_"):
             raise Error(("Test case name %s does not follow naming "
                          "convention test_*, abort.") % test_name)
-
         try:
             return test_name, getattr(self, test_name)
         except:
-            raise Error("%s does not have test case %s." % (self.TAG,
-                                                            test_name))
+
+            def test_skip_func(*args, **kwargs):
+                raise signals.TestSkip("Test %s does not exist" % test_name)
+
+            self.log.info("Test case %s not found in %s.", test_name, self.TAG)
+            return test_name, test_skip_func
 
     def _block_all_test_cases(self, tests):
         """
@@ -588,7 +614,7 @@ class BaseTestClass(object):
             self.results.add_record(record)
             self._on_blocked(record)
 
-    def run(self, test_names=None):
+    def run(self, test_names=None, test_case_iterations=1):
         """Runs test cases within a test class by the order they appear in the
         execution list.
 
@@ -634,7 +660,8 @@ class BaseTestClass(object):
         # Run tests in order.
         try:
             for test_name, test_func in tests:
-                self.exec_one_testcase(test_name, test_func, self.cli_args)
+                for _ in range(test_case_iterations):
+                    self.exec_one_testcase(test_name, test_func, self.cli_args)
             return self.results
         except signals.TestAbortClass:
             return self.results
@@ -655,3 +682,42 @@ class BaseTestClass(object):
         This function should clean up objects initialized in the constructor by
         user.
         """
+
+    def _take_bug_report(self, test_name, begin_time):
+        if "no_bug_report_on_fail" in self.user_params:
+            return
+
+        # magical sleep to ensure the runtime restart or reboot begins
+        time.sleep(1)
+        for ad in self.android_devices:
+            try:
+                ad.adb.wait_for_device()
+                ad.take_bug_report(test_name, begin_time)
+                tombstone_path = os.path.join(
+                    ad.log_path, "BugReports", "{},{}".format(
+                        begin_time, ad.serial).replace(' ', '_'))
+                utils.create_dir(tombstone_path)
+                ad.adb.pull('/data/tombstones/', tombstone_path, timeout=1200)
+            except Exception as e:
+                ad.log.error(
+                    "Failed to take a bug report for %s with error %s",
+                    test_name, e)
+
+    def _reboot_device(self, ad):
+        ad.log.info("Rebooting device.")
+        ad = ad.reboot()
+
+    def _cleanup_logger_sessions(self):
+        for (logger, session) in self.logger_sessions:
+            self.log.info("Resetting a diagnostic session %s, %s", logger,
+                          session)
+            logger.reset()
+        self.logger_sessions = []
+
+    def _pull_diag_logs(self, test_name, begin_time):
+        for (logger, session) in self.logger_sessions:
+            self.log.info("Pulling diagnostic session %s", logger)
+            logger.stop(session)
+            diag_path = os.path.join(self.log_path, begin_time)
+            utils.create_dir(diag_path)
+            logger.pull(session, diag_path)
