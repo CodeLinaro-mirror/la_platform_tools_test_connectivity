@@ -19,6 +19,7 @@
 
 import time
 from queue import Empty
+from acts.test_decorators import test_tracker_info
 from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 from acts.test_utils.tel.tel_atten_utils import set_rssi
 from acts.test_utils.tel.tel_defines import CELL_STRONG_RSSI_VALUE
@@ -87,8 +88,10 @@ from acts.test_utils.tel.tel_voice_utils import phone_idle_not_iwlan
 from acts.test_utils.tel.tel_voice_utils import phone_idle_volte
 
 # Attenuator name
-ATTEN_NAME_FOR_WIFI = 'wifi0'
-ATTEN_NAME_FOR_CELL = 'cell0'
+ATTEN_NAME_FOR_WIFI_2G = 'wifi0'
+ATTEN_NAME_FOR_WIFI_5G = 'wifi1'
+ATTEN_NAME_FOR_CELL_3G = 'cell0'
+ATTEN_NAME_FOR_CELL_4G = 'cell1'
 
 # WiFi RSSI settings for ROVE_IN test
 WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN = -60
@@ -111,146 +114,6 @@ WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT = -85
 class TelWifiVoiceTest(TelephonyBaseTest):
     def __init__(self, controllers):
         TelephonyBaseTest.__init__(self, controllers)
-        self.tests = (
-            # WFC Call Routing tests.
-            # epdg, WFC, APM, WiFi strong
-            "test_call_epdg_wfc_wifi_only_wifi_strong_apm",
-            "test_call_epdg_wfc_wifi_preferred_wifi_strong_apm",
-            "test_call_epdg_wfc_cellular_preferred_wifi_strong_apm",
-
-            # epdg, WFC, APM, WiFi Absent
-            "test_call_epdg_wfc_wifi_only_wifi_absent_apm",
-            "test_call_epdg_wfc_wifi_preferred_wifi_absent_apm",
-            "test_call_epdg_wfc_cellular_preferred_wifi_absent_apm",
-
-            # epdg, WFC, APM, WiFi Disabled
-            "test_call_epdg_wfc_wifi_only_wifi_disabled_apm",
-            "test_call_epdg_wfc_wifi_preferred_wifi_disabled_apm",
-            "test_call_epdg_wfc_cellular_preferred_wifi_disabled_apm",
-
-            # epdg, WFC, cellular strong, WiFi strong
-            "test_call_epdg_wfc_wifi_preferred_wifi_strong_cellular_strong",
-            "test_call_epdg_wfc_cellular_preferred_wifi_strong_cellular_strong",
-
-            # epdg, WFC, cellular strong, WiFi weak
-            "test_call_epdg_wfc_wifi_preferred_wifi_weak_cellular_strong",
-            "test_call_epdg_wfc_cellular_preferred_wifi_weak_cellular_strong",
-
-            # epdg, WFC, cellular strong, WiFi Absent
-            "test_call_epdg_wfc_wifi_preferred_wifi_absent_cellular_strong",
-            "test_call_epdg_wfc_cellular_preferred_wifi_absent_cellular_strong",
-
-            # epdg, WFC, cellular strong, WiFi Disabled
-            "test_call_epdg_wfc_wifi_preferred_wifi_disabled_cellular_strong",
-            "test_call_epdg_wfc_cellular_preferred_wifi_disabled_cellular_strong",
-
-            # epdg, WFC, cellular weak, WiFi strong
-            "test_call_epdg_wfc_wifi_preferred_wifi_strong_cellular_weak",
-
-            # epdg, WFC, cellular weak, WiFi Absent=
-            "test_call_epdg_wfc_wifi_preferred_wifi_absent_cellular_weak",
-            "test_call_epdg_wfc_cellular_preferred_wifi_absent_cellular_weak",
-
-            # epdg, WFC, cellular weak, WiFi Disabled
-            "test_call_epdg_wfc_wifi_preferred_wifi_disabled_cellular_weak",
-            "test_call_epdg_wfc_cellular_preferred_wifi_disabled_cellular_weak",
-
-            # epdg, WiFI strong, WFC disabled
-            "test_call_epdg_wfc_disabled_wifi_strong_apm",
-            "test_call_epdg_wfc_disabled_wifi_strong_cellular_strong",
-            "test_call_epdg_wfc_disabled_wifi_strong_cellular_weak",
-
-            # WFC Idle-Mode Mobility
-            # Rove-in, Rove-out test
-            "test_rove_in_lte_wifi_preferred",
-            "test_rove_in_lte_wifi_only",
-            "test_rove_in_wcdma_wifi_preferred",
-            "test_rove_in_wcdma_wifi_only",
-            "test_rove_out_lte_wifi_preferred",
-            "test_rove_out_lte_wifi_only",
-            "test_rove_out_wcdma_wifi_preferred",
-            "test_rove_out_wcdma_wifi_only",
-            "test_rove_out_in_stress",
-
-            # WFC Active-Mode Mobility
-            # Hand-in, Hand-out test
-            "test_hand_out_wifi_only",
-            "test_hand_out_wifi_preferred",
-            "test_hand_out_in_wifi_preferred",
-            "test_hand_in_wifi_preferred",
-            "test_hand_in_out_wifi_preferred",
-            "test_hand_out_in_stress",
-
-            # WFC test with E4G disabled
-            "test_call_epdg_wfc_wifi_preferred_e4g_disabled",
-            "test_call_epdg_wfc_wifi_preferred_e4g_disabled_wifi_not_connected",
-            "test_call_epdg_wfc_wifi_preferred_e4g_disabled_leave_wifi_coverage",
-
-            # ePDG Active-Mode Mobility: Hand-in, Hand-out test
-            "test_hand_out_cellular_preferred",
-            "test_hand_in_cellular_preferred",
-
-            # epdg, WFC, cellular weak, WiFi strong
-            "test_call_epdg_wfc_wifi_only_wifi_strong_cellular_weak",
-            "test_call_epdg_wfc_cellular_preferred_wifi_strong_cellular_weak",
-
-            # epdg, WFC, cellular weak, WiFi weak
-            "test_call_epdg_wfc_wifi_only_wifi_weak_cellular_weak",
-            "test_call_epdg_wfc_wifi_preferred_wifi_weak_cellular_weak",
-            "test_call_epdg_wfc_cellular_preferred_wifi_weak_cellular_weak",
-
-            # epdg, WFC, cellular weak, WiFi Absent
-            "test_call_epdg_wfc_wifi_only_wifi_absent_cellular_weak",
-
-            # epdg, WFC, cellular weak, WiFi Disabled
-            "test_call_epdg_wfc_wifi_only_wifi_disabled_cellular_weak",
-
-            # epdg, WFC, cellular absent, WiFi strong
-            "test_call_epdg_wfc_wifi_only_wifi_strong_cellular_absent",
-            "test_call_epdg_wfc_wifi_preferred_wifi_strong_cellular_absent",
-            "test_call_epdg_wfc_cellular_preferred_wifi_strong_cellular_absent",
-
-            # epdg, WFC, cellular absent, WiFi weak
-            "test_call_epdg_wfc_wifi_only_wifi_weak_cellular_absent",
-            "test_call_epdg_wfc_wifi_preferred_wifi_weak_cellular_absent",
-            "test_call_epdg_wfc_cellular_preferred_wifi_weak_cellular_absent",
-
-            # epdg, WFC, cellular absent, WiFi Absent
-            "test_call_epdg_wfc_wifi_only_wifi_absent_cellular_absent",
-            "test_call_epdg_wfc_wifi_preferred_wifi_absent_cellular_absent",
-            "test_call_epdg_wfc_cellular_preferred_wifi_absent_cellular_absent",
-
-            # epdg, WFC, cellular absent, WiFi Disabled
-            "test_call_epdg_wfc_wifi_only_wifi_disabled_cellular_absent",
-            "test_call_epdg_wfc_wifi_preferred_wifi_disabled_cellular_absent",
-            "test_call_epdg_wfc_cellular_preferred_wifi_disabled_cellular_absent",
-
-            # epdg, WiFI strong, WFC disabled
-            "test_call_epdg_wfc_disabled_wifi_strong_cellular_absent",
-
-            # Below test fail now, because:
-            # 1. wifi weak not working now. (phone don't rove-in)
-            # 2. wifi-only mode not working now.
-            # epdg, WFC, APM, WiFi weak
-            "test_call_epdg_wfc_wifi_only_wifi_weak_apm",
-            "test_call_epdg_wfc_wifi_preferred_wifi_weak_apm",
-            "test_call_epdg_wfc_cellular_preferred_wifi_weak_apm",
-
-            # epdg, WFC, cellular strong, WiFi strong
-            "test_call_epdg_wfc_wifi_only_wifi_strong_cellular_strong",
-
-            # epdg, WFC, cellular strong, WiFi weak
-            "test_call_epdg_wfc_wifi_only_wifi_weak_cellular_strong",
-
-            # epdg, WFC, cellular strong, WiFi Absent
-            "test_call_epdg_wfc_wifi_only_wifi_absent_cellular_strong",
-
-            # epdg, WFC, cellular strong, WiFi Disabled
-            "test_call_epdg_wfc_wifi_only_wifi_disabled_cellular_strong",
-
-            # RSSI monitoring
-            "test_rssi_monitoring", )
-
         self.stress_test_number = self.get_stress_test_number()
         self.live_network_ssid = self.user_params["wifi_network_ssid"]
 
@@ -274,10 +137,15 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             0].droid.telephonyStartTrackingSignalStrengthChange()
 
         # Do WiFi RSSI calibration.
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI], 0,
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
                  MAX_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL], 0,
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
                  MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+
         if not ensure_network_generation(
                 self.log,
                 self.android_devices[0],
@@ -335,10 +203,13 @@ class TelWifiVoiceTest(TelephonyBaseTest):
     def teardown_test(self):
 
         super().teardown_test()
-
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI], 0,
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
                  MAX_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL], 0,
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
                  MAX_RSSI_RESERVED_VALUE)
         return True
 
@@ -584,6 +455,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_phone_setup_cellular_absent(self, wfc_mode):
         is_exception_happened = False
+        time.sleep(60)
         try:
             if not toggle_airplane_mode(self.log, self.android_devices[0],
                                         False):
@@ -683,7 +555,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
         if ensure_wifi_connected(self.log, self.android_devices[0],
                                  self.live_network_ssid,
-                                 self.live_network_pwd):
+                                 self.live_network_pwd, 1):
             self.log.error("{} connect WiFI succeed, expected not succeed".
                            format(self.android_devices[0].serial))
             return False
@@ -691,6 +563,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_phone_setup_cellular_absent_wifi_absent(self, wfc_mode):
         is_exception_happened = False
+        time.sleep(60)
         try:
             if not toggle_airplane_mode(self.log, self.android_devices[0],
                                         False):
@@ -721,7 +594,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
         if ensure_wifi_connected(self.log, self.android_devices[0],
                                  self.live_network_ssid,
-                                 self.live_network_pwd):
+                                 self.live_network_pwd, 1):
             self.log.error("{} connect WiFI succeed, expected not succeed".
                            format(self.android_devices[0].serial))
             return False
@@ -787,6 +660,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_phone_setup_cellular_absent_wifi_disabled(self, wfc_mode):
         is_exception_happened = False
+        time.sleep(60)
         try:
             if not toggle_airplane_mode(self.log, self.android_devices[0],
                                         False):
@@ -855,78 +729,115 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_set_wifi_strong_cell_strong(self):
         self.log.info("--->Setting WiFi strong cell strong<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
-                 self.wifi_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
-                 self.cell_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
         return True
 
     def _wfc_set_wifi_strong_cell_weak(self):
         self.log.info("--->Setting WiFi strong cell weak<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
-                 self.wifi_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
                  self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
         return True
 
     def _wfc_set_wifi_strong_cell_absent(self):
         self.log.info("--->Setting WiFi strong cell absent<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
-                 self.wifi_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
-                 self.cell_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
         return True
 
     def _wfc_set_wifi_weak_cell_strong(self):
         self.log.info("--->Setting WiFi weak cell strong<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
                  self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
-                 self.cell_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
         return True
 
     def _wfc_set_wifi_weak_cell_weak(self):
         self.log.info("--->Setting WiFi weak cell weak<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
-                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
                  self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
         return True
 
     def _wfc_set_wifi_weak_cell_absent(self):
         self.log.info("--->Setting WiFi weak cell absent<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
                  self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
-                 self.cell_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
         return True
 
     def _wfc_set_wifi_absent_cell_strong(self):
         self.log.info("--->Setting WiFi absent cell strong<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
-                 self.wifi_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
-                 self.cell_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
+                 MAX_RSSI_RESERVED_VALUE)
         return True
 
     def _wfc_set_wifi_absent_cell_weak(self):
         self.log.info("--->Setting WiFi absent cell weak<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
-                 self.wifi_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
                  self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
         return True
 
     def _wfc_set_wifi_absent_cell_absent(self):
         self.log.info("--->Setting WiFi absent cell absent<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
-                 self.wifi_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
-                 self.cell_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
+                 MIN_RSSI_RESERVED_VALUE)
         return True
 
     """ Tests Begin """
 
+    @test_tracker_info(uuid="a9a369bc-b8cc-467b-a847-82d004db851d")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_strong_apm(self):
         """ Test WFC MO MT, WiFI only mode, WIFI Strong, Phone in APM
@@ -957,6 +868,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="c88999d7-7fe7-4163-9430-4aee88852e7b")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_strong_apm(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI Strong, Phone in APM
@@ -987,6 +899,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="a4464c2c-753e-4702-b4fc-73d7bb6265da")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_strong_apm(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI Strong, Phone in APM
@@ -1017,6 +930,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="797ad987-db48-456e-b092-d27be110b7ff")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_weak_apm(self):
         """ Test WFC MO MT, WiFI only mode, WIFI weak, Phone in APM
@@ -1047,6 +961,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="00000f11-1749-47e9-a9b3-d67a43f97470")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_weak_apm(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI weak, Phone in APM
@@ -1077,6 +992,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="db3e96f4-bbb6-48f8-9eb6-71f489987f8f")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_weak_apm(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI weak, Phone in APM
@@ -1107,6 +1023,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="121574c3-4c58-4fd5-abbb-c626c5f777c8")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_absent_apm(self):
         """ Test WFC MO MT, WiFI only mode, WIFI absent, Phone in APM
@@ -1138,6 +1055,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="bccff410-ada3-407a-8b50-c84b0064bd8a")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_absent_apm(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI absent, Phone in APM
@@ -1169,6 +1087,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="a9722c73-5b6e-46d0-962c-e612df84b7b7")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_absent_apm(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI absent, Phone in APM
@@ -1200,6 +1119,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="6ed1be09-b825-43a4-8317-822070023329")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_disabled_apm(self):
         """ Test WFC MO MT, WiFI only mode, WIFI disabled, Phone in APM
@@ -1231,6 +1151,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="c4059ea2-732c-4a22-943c-f19ad65d5fe9")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_disabled_apm(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI disabled, Phone in APM
@@ -1262,6 +1183,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="a4c000a1-b3cd-4fe2-8d82-d857fb3b2d62")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_disabled_apm(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI disabled, Phone in APM
@@ -1293,6 +1215,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="d37909d3-40b4-4989-a444-fca60bd355cf")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_strong_cellular_strong(self):
         """ Test WFC MO MT, WiFI only mode, WIFI strong, Cellular strong
@@ -1306,7 +1229,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1323,6 +1245,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="bba0d159-ec45-43ea-9c1f-94f6e3a0cff8")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_strong_cellular_strong(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI strong, Cellular strong
@@ -1352,6 +1275,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="39d6808c-37f3-4ae1-babb-2218a4827da9")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_strong_cellular_strong(
             self):
@@ -1384,6 +1308,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="ccc4973b-254f-4f12-a101-324c17e114d1")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_weak_cellular_strong(self):
         """ Test WFC MO MT, WiFI only mode, WIFI weak, Cellular strong
@@ -1397,7 +1322,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1414,6 +1338,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="cdbfca5e-06a3-4fd4-87a7-cc8028335c94")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_weak_cellular_strong(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI weak, Cellular strong
@@ -1443,6 +1368,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="dbcbc77a-8551-4a40-88c3-3493d7c4d506")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_weak_cellular_strong(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI strong, Cellular strong
@@ -1474,6 +1400,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="2a52dbf7-b63b-42d9-8406-09d168878041")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_absent_cellular_strong(self):
         """ Test WFC MO MT, WiFI only mode, WIFI absent, Cellular strong
@@ -1505,6 +1432,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="31ae1aee-977c-45ec-abfc-24121fcd2fe9")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_absent_cellular_strong(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI absent, Cellular strong
@@ -1536,6 +1464,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="314bf912-0fef-4047-bdeb-5cae2e89bbe6")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_absent_cellular_strong(
             self):
@@ -1568,6 +1497,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="27516aa7-0f28-4cf6-9562-4f0ad7378f64")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_disabled_cellular_strong(self):
         """ Test WFC MO MT, WiFI only mode, WIFI disabled, Cellular strong
@@ -1599,6 +1529,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="e031a0f4-6896-454a-af70-8472a9805432")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_disabled_cellular_strong(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI disabled, Cellular strong
@@ -1630,6 +1561,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="1aff2cb3-fcbe-425e-be46-2cd693b1d239")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_disabled_cellular_strong(
             self):
@@ -1662,6 +1594,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="fb24722e-3c11-4443-a65e-3bc64cff55ef")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_strong_cellular_weak(self):
         """ Test WFC MO MT, WiFI only mode, WIFI strong, Cellular weak
@@ -1675,7 +1608,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1692,6 +1624,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="5b649c6d-1fa2-4044-b487-79cb897a803f")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_strong_cellular_weak(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI strong, Cellular weak
@@ -1721,6 +1654,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="225cc438-620f-45c4-9682-ae5f13c81b03")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_strong_cellular_weak(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI strong, Cellular weak
@@ -1734,7 +1668,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1751,6 +1684,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="837de903-06f2-4a60-a623-b3478a5d6639")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_weak_cellular_weak(self):
         """ Test WFC MO MT, WiFI only mode, WIFI weak, Cellular weak
@@ -1764,7 +1698,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1779,6 +1712,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="57f70488-19ec-4ca9-9837-e6acec2494ae")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_weak_cellular_weak(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI weak, Cellular weak
@@ -1792,7 +1726,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1809,6 +1742,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="845a62ba-3457-42ed-8a74-0f7fdde44011")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_weak_cellular_weak(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI weak, Cellular weak
@@ -1822,7 +1756,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1841,6 +1774,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="298f92e5-c509-42d7-bd85-d29337e391df")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_absent_cellular_weak(self):
         """ Test WFC MO MT, WiFI only mode, WIFI absent, Cellular weak
@@ -1854,7 +1788,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1873,6 +1806,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="845278c5-1442-4a3a-93cd-c661190a5574")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_absent_cellular_weak(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI absent, Cellular weak
@@ -1904,6 +1838,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="63319009-aaef-424a-bfb1-da56d3f9a2b2")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_absent_cellular_weak(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI absent, Cellular weak
@@ -1935,6 +1870,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="ff3f474c-5d7a-4440-b2d4-a99ccb5d2dd7")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_disabled_cellular_weak(self):
         """ Test WFC MO MT, WiFI only mode, WIFI disabled, Cellular weak
@@ -1948,7 +1884,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -1967,6 +1902,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="7ad6d6e3-1113-4304-96fa-961983380207")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_disabled_cellular_weak(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI disabled, Cellular weak
@@ -1998,6 +1934,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="3062d062-17f1-4265-8dec-ed75d5d275ee")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_disabled_cellular_weak(
             self):
@@ -2030,6 +1967,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="0f40d344-25b4-459e-a21e-79c84bb5db41")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_strong_cellular_absent(self):
         """ Test WFC MO MT, WiFI only mode, WIFI strong, Cellular absent
@@ -2043,7 +1981,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2060,6 +1997,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="62c0e1c7-9fd7-4d98-87c8-a2d8df69cbd6")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_strong_cellular_absent(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI strong, Cellular absent
@@ -2073,7 +2011,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2090,6 +2027,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="2b13f862-71e4-4b33-be0b-e83a61e3f443")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_strong_cellular_absent(
             self):
@@ -2104,7 +2042,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2121,6 +2058,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="49aa09d1-afd5-4b8a-9155-b351b1cecd83")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_weak_cellular_absent(self):
         """ Test WFC MO MT, WiFI only mode, WIFI weak, Cellular absent
@@ -2134,7 +2072,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2151,6 +2088,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="29e20d21-33bd-444f-ba51-487332e8bcbb")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_weak_cellular_absent(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI weak, Cellular absent
@@ -2164,7 +2102,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2181,6 +2118,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="f1aae6c2-0b40-4ee5-a8a9-f0036130dcf1")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_weak_cellular_absent(self):
         """ Test WFC MO MT, cellular preferred mode, WIFI weak, Cellular absent
@@ -2194,7 +2132,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2211,6 +2148,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="7be33498-8f1c-4462-909b-09cd9abab053")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_absent_cellular_absent(self):
         """ Test WFC MO MT, WiFI only mode, WIFI absent, Cellular absent
@@ -2224,7 +2162,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2243,6 +2180,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="406c86cc-f3bb-4356-9ce7-6ae336e164f3")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_absent_cellular_absent(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI absent, Cellular absent
@@ -2256,7 +2194,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2275,6 +2212,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="e172082b-5e88-4229-9da9-e16a74da8fbb")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_absent_cellular_absent(
             self):
@@ -2289,7 +2227,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2308,6 +2245,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="f4a93a88-4a20-4e4a-9168-a7b1f1ad5462")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_only_wifi_disabled_cellular_absent(self):
         """ Test WFC MO MT, WiFI only mode, WIFI strong, Cellular absent
@@ -2321,7 +2259,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2340,6 +2277,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="c8f62254-2dba-4c54-a9d1-5741b6c05f10")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_wifi_disabled_cellular_absent(self):
         """ Test WFC MO MT, WiFI preferred mode, WIFI strong, Cellular absent
@@ -2353,7 +2291,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2372,6 +2309,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="1c593836-fbdd-415c-a997-5835303069ad")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_cellular_preferred_wifi_disabled_cellular_absent(
             self):
@@ -2386,7 +2324,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2405,6 +2342,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="41ec5080-810a-47f0-93c6-281fc19c4d12")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_disabled_wifi_strong_cellular_strong(self):
         """ Test WFC MO MT, WFC disabled, WIFI strong, Cellular strong
@@ -2434,6 +2372,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="8c9dd7a3-c840-474d-b929-07e557428648")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_disabled_wifi_strong_cellular_weak(self):
         """ Test WFC MO MT, WFC disabled, WIFI strong, Cellular weak
@@ -2463,6 +2402,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="ddb3372d-23d2-492c-881a-e509e7ac4c8d")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_disabled_wifi_strong_cellular_absent(self):
         """ Test WFC MO MT, WFC disabled, WIFI strong, Cellular absent
@@ -2476,7 +2416,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         ads = [self.android_devices[0], self.android_devices[1]]
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
@@ -2495,6 +2434,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
         return ((mo_result is True) and (mt_result is True))
 
+    @test_tracker_info(uuid="91232d7e-ccb5-4581-8093-1ab42eca3815")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_disabled_wifi_strong_apm(self):
         """ Test WFC MO MT, WFC disabled, WIFI strong, Phone in APM
@@ -2554,13 +2494,16 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
         if ensure_wifi_connected(self.log, self.android_devices[0],
                                  self.live_network_ssid,
-                                 self.live_network_pwd):
+                                 self.live_network_pwd, 1):
             self.log.error("{} connect WiFI succeed, expected not succeed".
                            format(self.android_devices[0].serial))
             return False
 
         # set up wifi to WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_NOT_ROVE_IN in 10 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_NOT_ROVE_IN, 5, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_NOT_ROVE_IN, 5, 1)
         if (not wait_for_wifi_data_connection(self.log,
@@ -2575,7 +2518,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
 
         # set up wifi to WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN in 10 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN, 1, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN, 1, 1)
         if not self._phone_idle_iwlan():
@@ -2601,10 +2547,15 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Make a call.
         """
         # set up cell strong
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
                  self.cell_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE)
         # set up wifi WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_INITIAL_STATE
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_INITIAL_STATE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_INITIAL_STATE)
         # ensure cellular rat, wfc mode, wifi associated
@@ -2639,7 +2590,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
 
         # set up wifi to WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_NOT_ROVE_OUT in 10 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_NOT_ROVE_OUT, 1, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_NOT_ROVE_OUT, 1, 1)
         if (not wait_for_wifi_data_connection(self.log,
@@ -2653,7 +2607,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
 
         # set up wifi to WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT in 10 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT, 2, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT, 2, 1)
         if (not wait_for_wifi_data_connection(self.log,
@@ -2688,6 +2645,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         else:
             return False
 
+    @test_tracker_info(uuid="7f9779c1-75c6-413e-9e3b-7e4d9896379a")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_out_in_stress(self):
         """WiFi Calling Rove out/in stress test.
@@ -2729,7 +2687,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
                 current_iteration, total_iteration))
 
             # set up wifi to WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT in 10 seconds
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT, 2, 1)
             if (not wait_for_wifi_data_connection(
@@ -2744,7 +2705,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
                 break
             self.log.info("Rove-out succeed.")
             # set up wifi to WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN in 10 seconds
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN, 2, 1)
             if (not wait_for_wifi_data_connection(
@@ -2769,6 +2733,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         else:
             return True
 
+    @test_tracker_info(uuid="3ba22f37-a9fd-4890-9805-941d80f5600d")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_in_out_stress(self):
         """WiFi Calling Rove in/out stress test.
@@ -2802,7 +2767,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
                 current_iteration, total_iteration))
 
             # set up wifi to WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN in 10 seconds
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_ROVE_IN_TEST_PHONE_ROVE_IN, 2, 1)
             if (not wait_for_wifi_data_connection(
@@ -2818,7 +2786,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             self.log.info("Rove-in succeed.")
 
             # set up wifi to WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT in 10 seconds
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_ROVE_OUT_TEST_PHONE_ROVE_OUT, 2, 1)
             if (not wait_for_wifi_data_connection(
@@ -2843,6 +2814,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         else:
             return True
 
+    @test_tracker_info(uuid="791bce68-d875-41cd-addd-355ff61773b9")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_in_lte_wifi_preferred(self):
         """ Test WFC rove-in features.
@@ -2861,6 +2833,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         """
         return self._rove_in_test(GEN_4G, WFC_MODE_WIFI_PREFERRED)
 
+    @test_tracker_info(uuid="f4b70fbb-cc44-4e7c-805e-c5f28c78e2dd")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_in_lte_wifi_only(self):
         """ Test WFC rove-in features.
@@ -2877,9 +2850,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         return self._rove_in_test(GEN_4G, WFC_MODE_WIFI_ONLY)
 
+    @test_tracker_info(uuid="b9f3648e-7168-4c82-aec5-f4a7cc77ad99")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_in_wcdma_wifi_preferred(self):
         """ Test WFC rove-in features.
@@ -2898,6 +2871,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         """
         return self._rove_in_test(GEN_3G, WFC_MODE_WIFI_PREFERRED)
 
+    @test_tracker_info(uuid="8ce03ae7-0b21-49e4-828f-cf8dcd54ba35")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_in_wcdma_wifi_only(self):
         """ Test WFC rove-in features.
@@ -2914,9 +2888,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         return self._rove_in_test(GEN_3G, WFC_MODE_WIFI_ONLY)
 
+    @test_tracker_info(uuid="7784923f-10f1-4dca-bdc1-8de55b7b9d40")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_out_lte_wifi_preferred(self):
         """ Test WFC rove-out features.
@@ -2935,6 +2909,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         """
         return self._rove_out_test(GEN_4G, WFC_MODE_WIFI_PREFERRED)
 
+    @test_tracker_info(uuid="6bb42ab2-02bd-4637-b3b6-3ce4cffffda8")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_out_lte_wifi_only(self):
         """ Test WFC rove-out features.
@@ -2951,9 +2926,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         return self._rove_out_test(GEN_4G, WFC_MODE_WIFI_ONLY)
 
+    @test_tracker_info(uuid="3261b432-01de-4dd9-a309-ff53059df521")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_out_wcdma_wifi_preferred(self):
         """ Test WFC rove-out features.
@@ -2972,6 +2947,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         """
         return self._rove_out_test(GEN_3G, WFC_MODE_WIFI_PREFERRED)
 
+    @test_tracker_info(uuid="89fac8bf-b8e1-443a-8be7-f21f306c0d6c")
     @TelephonyBaseTest.tel_test_wrap
     def test_rove_out_wcdma_wifi_only(self):
         """ Test WFC rove-out features.
@@ -2988,7 +2964,6 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        ###########
         return self._rove_out_test(GEN_3G, WFC_MODE_WIFI_ONLY)
 
     def _increase_wifi_rssi_check_phone_hand_in(self):
@@ -3002,7 +2977,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         PhoneA call should remain active.
         """
         # Increase WiFI RSSI to WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_NOT_HAND_IN in 10s
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_NOT_HAND_IN, 5, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_NOT_HAND_IN, 5, 1)
         # Make sure WiFI connected and data OK.
@@ -3016,7 +2994,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             self.log.error("Phone hand-in to wfc.")
             return False
         # Increase WiFI RSSI to WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN in 10s
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN, 2, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN, 2, 1)
         # Make sure phone hand in to iwlan.
@@ -3028,6 +3009,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
         return True
 
+    @test_tracker_info(uuid="e8ba5d0f-afc5-42c2-b7f0-9f5d06774556")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_in_wifi_preferred(self):
         """WiFi Hand-In Threshold - WiFi Preferred
@@ -3056,6 +3038,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
         return True
 
+    @test_tracker_info(uuid="2a20d499-80e1-4d4f-beca-05763863fbdb")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_in_out_wifi_preferred(self):
         """WiFi Hand-In-Out Threshold - WiFi Preferred
@@ -3093,7 +3076,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         PhoneA should either drop or hands over to 3g/2g.
         """
         # Decrease LTE RSSI to CELL_WEAK_RSSI_VALUE in 30 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE, 1, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
                  self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE, 1, 1)
         # Make sure phone not hand in to iwlan.
         if self._phone_wait_for_wfc():
@@ -3108,6 +3093,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return True
         return False
 
+    @test_tracker_info(uuid="a83734c1-db91-4ea2-9d79-02d7f803905a")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_in_cellular_preferred(self):
         """WiFi Hand-In Not Attempted - Cellular Preferred
@@ -3138,7 +3124,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         """
         # Decrease WiFi RSSI to WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT
         # in 10 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT, 2, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT, 2, 1)
         # Make sure WiFi still connected and have data.
@@ -3157,7 +3146,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
         # Decrease WiFi RSSI to WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT
         # in 10 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten,
+                 WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
                  WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
         # Make sure WiFi still connected and have data.
@@ -3176,6 +3168,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
         return True
 
+    @test_tracker_info(uuid="03fbc3b1-06df-4076-a91b-903a31ae3dae")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_out_wifi_preferred(self):
         """WiFi Hand-Out Threshold - WiFi Preferred
@@ -3204,6 +3197,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
         return True
 
+    @test_tracker_info(uuid="59fc0104-5f4c-4aa5-b58b-e50d94fb90fe")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_out_in_wifi_preferred(self):
         """WiFi Hand-Out Threshold - WiFi Preferred
@@ -3249,7 +3243,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             # Decrease WiFi RSSI to WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT
             # in 10 seconds
             self.log.info("Decrease WiFi RSSI to hand out.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
             # Make sure WiFi still connected and have data.
@@ -3269,7 +3266,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
                 break
             # Increase WiFI RSSI to WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN in 10s
             self.log.info("Increase WiFi RSSI to hand in.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN, 2, 1)
             # Make sure WiFi still connected and have data.
@@ -3297,6 +3297,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         else:
             return True
 
+    @test_tracker_info(uuid="330ef8d7-3bbb-4492-84d0-43fdfe3fe78b")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_out_in_stress(self):
         """WiFi Calling Hand out/in stress test.
@@ -3338,7 +3339,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             # Increase WiFi RSSI to WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN
             # in 10 seconds
             self.log.info("Increase WiFi RSSI to hand in.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN, 2, 1)
             # Make sure WiFi still connected and have data.
@@ -3358,7 +3362,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
             # Decrease WiFI RSSI to WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT in 10s
             self.log.info("Decrease WiFi RSSI to hand out.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
             # Make sure WiFi still connected and have data.
@@ -3387,6 +3394,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         else:
             return True
 
+    @test_tracker_info(uuid="97ae2018-935c-4dfc-bf5a-747777201ae4")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_in_out_stress(self):
         """WiFi Calling Hand in/out stress test.
@@ -3421,7 +3429,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         PhoneA should have data on WiFi.
         """
         # Increase Cellular RSSI to CELL_STRONG_RSSI_VALUE in 30 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_STRONG_RSSI_VALUE, 1, 1)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
                  self.cell_rssi_with_no_atten, CELL_STRONG_RSSI_VALUE, 1, 1)
         # Make sure phone hand-out, not drop call
         if not self._phone_wait_for_not_wfc():
@@ -3438,6 +3448,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
         return True
 
+    @test_tracker_info(uuid="2242aa49-474c-496b-be1b-ccd900523a54")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_out_cellular_preferred(self):
         """WiFi Hand-Out Threshold - Cellular Preferred
@@ -3464,7 +3475,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         PhoneA data should be on LTE.
         """
         # Decrease WiFi RSSI to <-100dBm in 30 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
         # Make sure PhoneA data is on LTE.
         if (not wait_for_cell_data_connection(self.log,
@@ -3485,6 +3498,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
         return True
 
+    @test_tracker_info(uuid="40aa17a5-d9e0-4cff-9ca8-c187d7ae3ad1")
     @TelephonyBaseTest.tel_test_wrap
     def test_hand_out_wifi_only(self):
         """WiFi Hand-Out Not Attempted - WiFi Only
@@ -3503,6 +3517,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             self._is_phone_in_call_iwlan,
             self._decrease_wifi_rssi_check_phone_not_hand_out, True)
 
+    @test_tracker_info(uuid="75a0ae08-3e17-4011-8201-2634026a1fb5")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_e4g_disabled(self):
         """WiFi Calling with E4G disabled.
@@ -3517,6 +3532,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             self._wfc_phone_setup_wifi_preferred_e4g_disabled,
             self._phone_idle_iwlan, self._is_phone_in_call_iwlan, None, True)
 
+    @test_tracker_info(uuid="b6b4b423-e7bd-480d-b460-6260556ce73b")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_e4g_disabled_wifi_not_connected(
             self):
@@ -3539,7 +3555,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         Decrease WiFi RSSI to make sure WiFI not connected. Call should Drop.
         """
         # Decrease WiFi RSSI to <-100dBm in 30 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten, MIN_RSSI_RESERVED_VALUE)
         # Make sure PhoneA data is on cellular.
         if (not wait_for_cell_data_connection(self.log,
@@ -3554,6 +3572,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
             return False
         return True
 
+    @test_tracker_info(uuid="0de1cf4f-9ae3-4da6-8f0c-666b3968009b")
     @TelephonyBaseTest.tel_test_wrap
     def test_call_epdg_wfc_wifi_preferred_e4g_disabled_leave_wifi_coverage(
             self):
@@ -3602,7 +3621,9 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
         ad = self.android_devices[0]
 
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten, INITIAL_RSSI)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten, INITIAL_RSSI)
         if not ensure_wifi_connected(self.log, ad, self.live_network_ssid,
                                      self.live_network_pwd):
@@ -3631,7 +3652,12 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
             self.log.info("Set RSSI to HIGHER_RSSI_THRESHOLD+5,"
                           "rssi_monitoring_id_higher should be available.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     HIGHER_RSSI_THRESHOLD + RSSI_THRESHOLD_MARGIN,
+                     WIFI_RSSI_CHANGE_STEP_SIZE,
+                     WIFI_RSSI_CHANGE_DELAY_PER_STEP)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      HIGHER_RSSI_THRESHOLD + RSSI_THRESHOLD_MARGIN,
                      WIFI_RSSI_CHANGE_STEP_SIZE,
@@ -3650,7 +3676,12 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
             self.log.info("Set RSSI to HIGHER_RSSI_THRESHOLD-5,"
                           "rssi_monitoring_id_higher should be lost.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     HIGHER_RSSI_THRESHOLD - RSSI_THRESHOLD_MARGIN,
+                     WIFI_RSSI_CHANGE_STEP_SIZE,
+                     WIFI_RSSI_CHANGE_DELAY_PER_STEP)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      HIGHER_RSSI_THRESHOLD - RSSI_THRESHOLD_MARGIN,
                      WIFI_RSSI_CHANGE_STEP_SIZE,
@@ -3669,7 +3700,12 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
             self.log.info("Set RSSI to LOWER_RSSI_THRESHOLD-5,"
                           "rssi_monitoring_id_lower should be lost.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     LOWER_RSSI_THRESHOLD - RSSI_THRESHOLD_MARGIN,
+                     WIFI_RSSI_CHANGE_STEP_SIZE,
+                     WIFI_RSSI_CHANGE_DELAY_PER_STEP)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      LOWER_RSSI_THRESHOLD - RSSI_THRESHOLD_MARGIN,
                      WIFI_RSSI_CHANGE_STEP_SIZE,
@@ -3688,7 +3724,12 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
             self.log.info("Set RSSI to LOWER_RSSI_THRESHOLD+5,"
                           "rssi_monitoring_id_lower should be available.")
-            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI],
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                     self.wifi_rssi_with_no_atten,
+                     LOWER_RSSI_THRESHOLD + RSSI_THRESHOLD_MARGIN,
+                     WIFI_RSSI_CHANGE_STEP_SIZE,
+                     WIFI_RSSI_CHANGE_DELAY_PER_STEP)
+            set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                      self.wifi_rssi_with_no_atten,
                      LOWER_RSSI_THRESHOLD + RSSI_THRESHOLD_MARGIN,
                      WIFI_RSSI_CHANGE_STEP_SIZE,
