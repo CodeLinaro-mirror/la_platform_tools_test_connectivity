@@ -1515,7 +1515,7 @@ def phone_number_formatter(input_string, formatter=None):
     # make sure input_string is 10 digital
     # Remove white spaces, dashes, dots
     input_string = input_string.replace(" ", "").replace("-", "").replace(
-        ".", "").strip("0")
+        ".", "").lstrip("0")
     if not formatter:
         return input_string
     # Remove "1"  or "+1"from front
@@ -1693,7 +1693,8 @@ def iperf_test_by_adb(log,
                       timeout=180,
                       limit_rate=None,
                       omit=10,
-                      ipv6=False):
+                      ipv6=False,
+                      rate_dict=None):
     """Iperf test by adb.
 
     Args:
@@ -1723,6 +1724,9 @@ def iperf_test_by_adb(log,
             ad.log.info(
                 'iPerf3 upload speed is %sbps, download speed is %sbps',
                 tx_rate, rx_rate)
+            if rate_dict is not None:
+                rate_dict["Uplink"] = tx_rate
+                rate_dict["Downlink"] = rx_rate
         return result
     except Exception as e:
         ad.log.warning("Fail to run iperf test with exception %s", e)
