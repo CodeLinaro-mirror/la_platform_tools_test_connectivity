@@ -22,7 +22,7 @@ import random
 import time
 from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 from acts.test_utils.tel.tel_defines import WFC_MODE_WIFI_PREFERRED
-from acts.test_utils.tel.tel_test_utils import active_data_transfer_test
+from acts.test_utils.tel.tel_test_utils import active_file_download_test
 from acts.test_utils.tel.tel_test_utils import call_setup_teardown
 from acts.test_utils.tel.tel_test_utils import ensure_phone_default_state
 from acts.test_utils.tel.tel_test_utils import ensure_phone_subscription
@@ -62,9 +62,11 @@ class TelLiveStressTest(TelephonyBaseTest):
         self.max_phone_call_duration = int(
             self.user_params.get("max_phone_call_duration", 600))
         self.max_sleep_time = int(self.user_params.get("max_sleep_time", 120))
-        self.max_run_time = int(self.user_params.get("max_run_time", 1800))
+        self.max_run_time = int(self.user_params.get("max_run_time", 18000))
         self.max_sms_length = int(self.user_params.get("max_sms_length", 1000))
         self.max_mms_length = int(self.user_params.get("max_mms_length", 160))
+        self.crash_check_interval = int(
+            self.user_params.get("crash_check_interval", 300))
 
         return True
 
@@ -157,11 +159,33 @@ class TelLiveStressTest(TelephonyBaseTest):
         ads[0].log.info("Setup call successfully.")
         return True
 
-    def _transfer_data(self):
+    def _download_file(self):
         file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB", "1GB"]
         selection = random.randrange(0, 7)
-        return active_data_transfer_test(self.log, self.dut,
+        return active_file_download_test(self.log, self.dut,
                                          file_names[selection])
+
+    def check_crash(self):
+        new_crash = self.dut.check_crash_report()
+        crash_diff = set(new_crash).difference(set(self.dut.crash_report))
+        self.dut.crash_report = new_crash
+        if crash_diff:
+            self.dut.log.error("Find new crash reports %s", list(crash_diff))
+            self.dut.pull_files(list(crash_diff))
+            return False
+        return True
+
+    def crash_check_test(self):
+        failure = 0
+        while time.time() < self.finishing_time:
+            if not self.check_crash():
+                failure += 1
+                self.log.error("Crash found count: %s", failure)
+                self._take_bug_report("%s_crash_found" % self.test_name,
+                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
+            self.dut.droid.goToSleepNow()
+            time.sleep(self.crash_check_interval)
+        return failure
 
     def call_test(self):
         failure = 0
@@ -170,6 +194,9 @@ class TelLiveStressTest(TelephonyBaseTest):
             random.shuffle(ads)
             if not self._make_phone_call(ads):
                 failure += 1
+                self.log.error("Call test failure count: %s", failure)
+                self._take_bug_report("%s_call_failure" % self.test_name,
+                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
             self.dut.droid.goToSleepNow()
             time.sleep(random.randrange(0, self.max_sleep_time))
         return failure
@@ -181,6 +208,9 @@ class TelLiveStressTest(TelephonyBaseTest):
             random.shuffle(ads)
             if not self._send_message(ads):
                 failure += 1
+                self.log.error("Messaging test failure count: %s", failure)
+                self._take_bug_report("%s_messaging_failure" % self.test_name,
+                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
             self.dut.droid.goToSleepNow()
             time.sleep(random.randrange(0, self.max_sleep_time))
         return failure
@@ -188,8 +218,11 @@ class TelLiveStressTest(TelephonyBaseTest):
     def data_test(self):
         failure = 0
         while time.time() < self.finishing_time:
-            if not self._transfer_data():
+            if not self._download_file():
                 failure += 1
+                self.log.error("File download test failure count: %s", failure)
+                self._take_bug_report("%s_download_failure" % self.test_name,
+                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
             self.dut.droid.goToSleepNow()
             time.sleep(random.randrange(0, self.max_sleep_time))
         return failure
@@ -200,10 +233,12 @@ class TelLiveStressTest(TelephonyBaseTest):
             return False
         self.finishing_time = time.time() + self.max_run_time
         results = run_multithread_func(self.log, [(self.call_test, []), (
-            self.message_test, []), (self.data_test, [])])
+            self.message_test, []), (self.data_test, []),
+                                                  (self.crash_check_test, [])])
         self.log.info("Call failures: %s", results[0])
-        self.log.info("Message failures: %s", results[1])
+        self.log.info("Messaging failures: %s", results[1])
         self.log.info("Data failures: %s", results[2])
+        self.log.info("Crash failures: %s", results[3])
         for result in results:
             if result: return False
 
