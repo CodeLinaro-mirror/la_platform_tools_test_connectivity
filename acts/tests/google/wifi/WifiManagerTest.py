@@ -25,6 +25,8 @@ import acts.test_utils.wifi.wifi_test_utils as wutils
 import acts.utils
 
 from acts import asserts
+from acts.test_decorators import test_tracker_info
+from acts.test_utils.wifi.WifiBaseTest import WifiBaseTest
 
 WifiEnums = wutils.WifiEnums
 # Default timeout used for reboot, toggle WiFi and Airplane mode,
@@ -34,7 +36,7 @@ BAND_2GHZ = 0
 BAND_5GHZ = 1
 
 
-class WifiManagerTest(acts.base_test.BaseTestClass):
+class WifiManagerTest(WifiBaseTest):
     """Tests for APIs in Android's WifiManager class.
 
     Test Bed Requirement:
@@ -42,6 +44,9 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
     * Several Wi-Fi networks visible to the device, including an open Wi-Fi
       network.
     """
+
+    def __init__(self, controllers):
+        WifiBaseTest.__init__(self, controllers)
 
     def setup_class(self):
         self.dut = self.android_devices[0]
@@ -51,25 +56,17 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
         if getattr(self, "attenuators", []):
             for a in self.attenuators:
                 a.set_atten(0)
-        req_params = ("iot_networks", "open_network", "config_store_networks",
-                      "iperf_server_address", "reference_networks")
-        opt_param = ("additional_energy_info_models", "additional_tdls_models")
+        req_params = []
+        opt_param = [
+            "additional_energy_info_models", "additional_tdls_models",
+            "iot_networks", "open_network", "config_store_networks",
+            "reference_networks", "iperf_server_address"
+        ]
         self.unpack_userparams(
             req_param_names=req_params, opt_param_names=opt_param)
-        capablity_of_devices = acts.utils.CapablityPerDevice
-        if "additional_energy_info_models" in self.user_params:
-            self.energy_info_models = (capablity_of_devices.energy_info_models
-                                       + self.additional_energy_info_models)
-        else:
-            self.energy_info_models = capablity_of_devices.energy_info_models
-        self.user_params["energy_info_models"] = self.energy_info_models
 
-        if "additional_tdls_models" in self.user_params:
-            self.tdls_models = (capablity_of_devices.energy_info_models +
-                                self.additional_tdls_models)
-        else:
-            self.tdls_models = capablity_of_devices.energy_info_models
-        self.user_params["tdls_models"] = self.tdls_models
+        if "AccessPoint" in self.user_params:
+            self.legacy_configure_ap_and_start()
 
         asserts.assert_true(
             len(self.reference_networks) > 0,
@@ -79,7 +76,8 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             "Need at least one iot network with psk.")
         wutils.wifi_toggle_state(self.dut, True)
         self.iot_networks = self.iot_networks + [self.open_network]
-        self.iperf_server = self.iperf_servers[0]
+        if "iperf_server_address" in self.user_params:
+            self.iperf_server = self.iperf_servers[0]
         self.iot_test_prefix = "test_connection_to-"
         self.wpapsk_2g = self.reference_networks[0]["2g"]
         self.wpapsk_5g = self.reference_networks[0]["5g"]
@@ -88,16 +86,19 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
         self.dut.droid.wakeLockAcquireBright()
         self.dut.droid.wakeUpNow()
         if self.iot_test_prefix in self.current_test_name:
-            self.iperf_server.start()
+            if "iperf_server_address" in self.user_params:
+                self.iperf_server.start()
 
     def teardown_test(self):
         self.dut.droid.wakeLockRelease()
         self.dut.droid.goToSleepNow()
         wutils.reset_wifi(self.dut)
-        if self.current_test_name and self.iot_test_prefix in self.current_test_name:
-            self.iperf_server.stop()
+        if self.iot_test_prefix in self.current_test_name:
+            if "iperf_server_address" in self.user_params:
+                self.iperf_server.stop()
 
     def on_fail(self, test_name, begin_time):
+        self.dut.take_bug_report(test_name, begin_time)
         self.dut.cat_adb_log(test_name, begin_time)
 
     """Helper Functions"""
@@ -223,8 +224,9 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
         self.dut.ed.clear_all_events()
         wutils.start_wifi_connection_scan(self.dut)
         scan_results = self.dut.droid.wifiGetScanResults()
-        wutils.assert_network_in_list({WifiEnums.SSID_KEY: network_ssid},
-                                      scan_results)
+        wutils.assert_network_in_list({
+            WifiEnums.SSID_KEY: network_ssid
+        }, scan_results)
         wutils.wifi_connect_by_id(self.dut, network_id)
         connect_data = self.dut.droid.wifiGetConnectionInfo()
         connect_ssid = connect_data[WifiEnums.SSID_KEY]
@@ -240,16 +242,17 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
         Args:
             params: A tuple of network info and AndroidDevice object.
         """
-        wait_time = 5
-        network, ad = params
-        SSID = network[WifiEnums.SSID_KEY]
-        self.log.info("Starting iperf traffic through {}".format(SSID))
-        time.sleep(wait_time)
-        port_arg = "-p {}".format(self.iperf_server.port)
-        success, data = ad.run_iperf_client(self.iperf_server_address,
-                                            port_arg)
-        self.log.debug(pprint.pformat(data))
-        asserts.assert_true(success, "Error occurred in iPerf traffic.")
+        if "iperf_server_address" in self.user_params:
+            wait_time = 5
+            network, ad = params
+            SSID = network[WifiEnums.SSID_KEY]
+            self.log.info("Starting iperf traffic through {}".format(SSID))
+            time.sleep(wait_time)
+            port_arg = "-p {}".format(self.iperf_server.port)
+            success, data = ad.run_iperf_client(self.iperf_server_address,
+                                                port_arg)
+            self.log.debug(pprint.pformat(data))
+            asserts.assert_true(success, "Error occurred in iPerf traffic.")
 
     def connect_to_wifi_network_and_run_iperf(self, params):
         """Connection logic for open and psk wifi networks.
@@ -305,6 +308,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
 
     """Tests"""
 
+    @test_tracker_info(uuid="525fc5e3-afba-4bfd-9a02-5834119e3c66")
     def test_toggle_state(self):
         """Test toggling wifi"""
         self.log.debug("Going from on to off.")
@@ -312,6 +316,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
         self.log.debug("Going from off to on.")
         wutils.wifi_toggle_state(self.dut, True)
 
+    @test_tracker_info(uuid="e9d11563-2bbe-4c96-87eb-ec919b51435b")
     def test_toggle_with_screen(self):
         """Test toggling wifi with screen on/off"""
         wait_time = 5
@@ -330,6 +335,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             time.sleep(wait_time)
             self.dut.droid.goToSleepNow()
 
+    @test_tracker_info(uuid="71556e06-7fb1-4e2b-9338-b01f1f8e286e")
     def test_scan(self):
         """Test wifi connection scan can start and find expected networks."""
         wutils.wifi_toggle_state(self.dut, True)
@@ -340,6 +346,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
         ssid = self.open_network[WifiEnums.SSID_KEY]
         wutils.assert_network_in_list({WifiEnums.SSID_KEY: ssid}, wifi_results)
 
+    @test_tracker_info(uuid="a4ad9930-a8fa-4868-81ed-a79c7483e502")
     def test_add_network(self):
         """Test wifi connection scan."""
         ssid = self.open_network[WifiEnums.SSID_KEY]
@@ -352,6 +359,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             WifiEnums.SSID_KEY: ssid
         }, configured_networks)
 
+    @test_tracker_info(uuid="aca85551-10ba-4007-90d9-08bcdeb16a60")
     def test_forget_network(self):
         self.test_add_network()
         ssid = self.open_network[WifiEnums.SSID_KEY]
@@ -362,6 +370,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
                 nw[WifiEnums.BSSID_KEY] != ssid,
                 "Found forgotten network %s in configured networks." % ssid)
 
+    @test_tracker_info(uuid="b306d65c-6df3-4eb5-a178-6278bdc76c3e")
     def test_reconnect_to_connected_network(self):
         """Connect to a network and immediately issue reconnect.
 
@@ -387,6 +396,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             raise signals.TestFailure("Device did not connect to the correct"
                                       " 5GHz network.")
 
+    @test_tracker_info(uuid="3cff17f6-b684-4a95-a438-8272c2ad441d")
     def test_reconnect_to_previously_connected(self):
         """Connect to multiple networks and reconnect to the previous network.
 
@@ -412,6 +422,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             raise signals.TestFailure("Device did not connect to the correct"
                                       " 5GHz network.")
 
+    @test_tracker_info(uuid="334175c3-d26a-4c87-a8ab-8eb220b2d80f")
     def test_reconnect_toggle_wifi(self):
         """Connect to multiple networks, turn off/on wifi, then reconnect to
            a previously connected network.
@@ -435,6 +446,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             raise signals.TestFailure("Device did not connect to the correct"
                                       " network after toggling WiFi.")
 
+    @test_tracker_info(uuid="8e6e6c21-fefb-4fe8-9fb1-f09b1182b76d")
     def test_reconnect_toggle_airplane(self):
         """Connect to multiple networks, turn on/off Airplane moce, then
            reconnect a previously connected network.
@@ -458,6 +470,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             raise signals.TestFailure("Device did not connect to the correct"
                                       " network after toggling Airplane mode.")
 
+    @test_tracker_info(uuid="3d041c12-05e2-46a7-ab9b-e3f60cc735db")
     def test_reboot_configstore_reconnect(self):
         """Connect to multiple networks, reboot then reconnect to previously
            connected network.
@@ -486,6 +499,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
                 "Device failed to reconnect to the correct"
                 " network after reboot.")
 
+    @test_tracker_info(uuid="26d94dfa-1349-4c8b-aea0-475eb73bb521")
     def test_toggle_wifi_reboot_configstore_reconnect(self):
         """Connect to multiple networks, disable WiFi, reboot, then
            reconnect to previously connected network.
@@ -520,6 +534,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
                    " toggling WiFi and rebooting.")
             raise signals.TestFailure(msg)
 
+    @test_tracker_info(uuid="4fce017b-b443-40dc-a598-51d59d3bb38f")
     def test_toggle_airplane_reboot_configstore_reconnect(self):
         """Connect to multiple networks, enable Airplane mode, reboot, then
            reconnect to previously connected network.
@@ -558,6 +573,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
                    " toggling Airplane mode and rebooting.")
             raise signals.TestFailure(msg)
 
+    @test_tracker_info(uuid="cfc0084d-8fe4-4d19-8af2-6c9a8d1e2b6b")
     @acts.signals.generated_test
     def test_iot_with_password(self):
         params = list(
@@ -569,6 +585,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             name_func=name_gen)
         asserts.assert_true(not failed, "Failed ones: {}".format(failed))
 
+    @test_tracker_info(uuid="117b1d1c-963d-40f1-bf50-7cbc8b5e1c69")
     @acts.signals.generated_test
     def test_config_store(self):
         params = list(
@@ -585,6 +602,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             name_func=name_gen)
         asserts.assert_false(failed, "Failed ones: {}".format(failed))
 
+    @test_tracker_info(uuid="b9fbc13a-47b4-4f64-bd2c-e5a3cb24ab2f")
     def test_tdls_supported(self):
         model = acts.utils.trim_model_name(self.dut.model)
         self.log.debug("Model is %s" % model)
@@ -597,6 +615,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
                 "TDLS should not be supported on %s, but device "
                 "is reporting supported.") % model)
 
+    @test_tracker_info(uuid="50637d40-ea59-4f4b-9fc1-e6641d64074c")
     def test_energy_info(self):
         """Verify the WiFi energy info reporting feature.
 
@@ -639,6 +658,7 @@ class WifiManagerTest(acts.base_test.BaseTestClass):
             idle_time = new_idle_time
             wutils.start_wifi_connection_scan(self.dut)
 
+    @test_tracker_info(uuid="1f1cf549-53eb-4f36-9f33-ce06c9158efc")
     def test_energy_info_connected(self):
         """Verify the WiFi energy info reporting feature when connected.
 

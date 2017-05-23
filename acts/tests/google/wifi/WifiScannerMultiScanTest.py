@@ -19,6 +19,8 @@ import time
 
 from acts import asserts
 from acts import base_test
+from acts import signals
+from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi import wifi_test_utils as wutils
 
 WifiChannelUS = wutils.WifiChannelUS
@@ -128,6 +130,47 @@ class WifiScanResultEvents():
         5. The time gap between two consecutive scan results should be
            approximately equal to the scan interval specified by the scan
            setting.
+        A scan result looks like this:
+        {
+          'data':
+           {
+             'Type': 'onResults',
+             'ResultElapsedRealtime': 4280931,
+             'Index': 10,
+             'Results': [
+                         {
+                          'Flags': 0,
+                          'Id': 4,
+                          'ScanResults':[
+                                          {
+                                           'is80211McRTTResponder': False,
+                                           'channelWidth': 0,
+                                           'numUsage': 0,
+                                           'SSID': '"wh_ap1_2g"',
+                                           'timestamp': 4280078660,
+                                           'numConnection': 0,
+                                           'BSSID': '30:b5:c2:33:f9:05',
+                                           'frequency': 2412,
+                                           'numIpConfigFailures': 0,
+                                           'distanceSdCm': 0,
+                                           'distanceCm': 0,
+                                           'centerFreq1': 0,
+                                           'centerFreq0': 0,
+                                           'blackListTimestamp': 0,
+                                           'venueName': '',
+                                           'seen': 0,
+                                           'operatorFriendlyName': '',
+                                           'level': -31,
+                                           'passpointNetwork': False,
+                                           'untrusted': False
+                                          }
+                                        ]
+                         }
+                        ]
+            },
+          'time': 1491744576383,
+          'name': 'WifiScannerScan10onResults'
+        }
         """
         num_of_events = len(self.results_events)
         asserts.assert_true(
@@ -137,6 +180,9 @@ class WifiScanResultEvents():
         for event_idx in range(num_of_events):
             batches = self.results_events[event_idx]["data"]["Results"]
             actual_num_of_batches = len(batches)
+            if not actual_num_of_batches:
+                raise signals.TestFailure("Scan returned empty Results list %s "
+                                          "% batches")
             # For batch scan results.
             report_type = self.scan_setting['reportEvents']
             if not (report_type & WifiEnums.REPORT_EVENT_AFTER_EACH_SCAN):
@@ -148,8 +194,13 @@ class WifiScanResultEvents():
                     "Expected to get at most %d batches in event No.%d, got %d."
                     % (expected_num_of_batches, event_idx,
                        actual_num_of_batches))
-                # Check the results within each event of batch scan
-                for batch_idx in range(1, actual_num_of_batches):
+            # Check the results within each event of batch scan
+            for batch_idx in range(actual_num_of_batches):
+                if not len(batches[batch_idx]["ScanResults"]):
+                    raise signals.TestFailure("Scan event %d returned empty"
+                    " scan results in batch %d" % (event_idx, batch_idx))
+                # Start checking interval from the second batch.
+                if batch_idx >=1:
                     self.check_interval(
                         batches[batch_idx - 1]["ScanResults"][0],
                         batches[batch_idx]["ScanResults"][0])
@@ -336,6 +387,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
     """ Helper Functions End """
     """ Tests Begin """
 
+    @test_tracker_info(uuid="d490b146-5fc3-4fc3-9958-78ba0ad63211")
     def test_wifi_two_scans_at_same_interval(self):
         """Perform two WifiScanner background scans, one at 2.4GHz and the other
         at 5GHz, the same interval and number of BSSIDs per scan.
@@ -364,6 +416,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
 
         self.scan_and_validate_results(scan_settings)
 
+    @test_tracker_info(uuid="0ec9a554-f942-41a9-8096-6b0b400f60b0")
     def test_wifi_two_scans_at_different_interval(self):
         """Perform two WifiScanner background scans, one at 2.4GHz and the other
         at 5GHz, different interval and number of BSSIDs per scan.
@@ -392,6 +445,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
 
         self.scan_and_validate_results(scan_settings)
 
+    @test_tracker_info(uuid="0d616591-0d32-4be6-8fd4-e4a5e9ccdce0")
     def test_wifi_scans_24GHz_and_both(self):
         """Perform two WifiScanner background scans, one at 2.4GHz and
            the other at both 2.4GHz and 5GHz
@@ -420,6 +474,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
 
         self.scan_and_validate_results(scan_settings)
 
+    @test_tracker_info(uuid="ddcf959e-512a-4e86-b3d3-18cebd0b22a0")
     def test_wifi_scans_5GHz_and_both(self):
         """Perform two WifiScanner scans, one at 5GHz and the other at both
            2.4GHz and 5GHz
@@ -448,6 +503,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
 
         self.scan_and_validate_results(scan_settings)
 
+    @test_tracker_info(uuid="060469f1-fc6b-4255-ab6e-b1d5b54db53d")
     def test_wifi_scans_24GHz_5GHz_and_DFS(self):
         """Perform three WifiScanner scans, one at 5GHz, one at 2.4GHz and the
         other at just 5GHz DFS channels
@@ -480,6 +536,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
 
         self.scan_and_validate_results(scan_settings)
 
+    @test_tracker_info(uuid="14104e98-27a0-43d5-9525-b36b65ac3957")
     def test_wifi_scans_batch_and_24GHz(self):
         """Perform two WifiScanner background scans, one in batch mode for both
         bands and the other in periodic mode at 2.4GHz
@@ -510,6 +567,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
 
         self.scan_and_validate_results(scan_settings)
 
+    @test_tracker_info(uuid="cd6064b5-840b-4334-8cd4-8320a6cda52f")
     def test_wifi_scans_batch_and_5GHz(self):
         """Perform two WifiScanner background scans, one in batch mode for both
         bands and the other in periodic mode at 5GHz
@@ -540,6 +598,7 @@ class WifiScannerMultiScanTest(base_test.BaseTestClass):
 
         self.scan_and_validate_results(scan_settings)
 
+    @test_tracker_info(uuid="9f48cb0c-de87-4cd2-9e50-857579d44079")
     def test_wifi_scans_24GHz_5GHz_full_result(self):
         """Perform two WifiScanner background scans, one at 2.4GHz and
            the other at 5GHz. Report full scan results.

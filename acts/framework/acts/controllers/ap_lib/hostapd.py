@@ -14,6 +14,7 @@
 
 import collections
 import itertools
+import logging
 import os
 import time
 
@@ -77,10 +78,10 @@ class Hostapd(object):
 
         self.config = config
 
-        self._write_configs(additional_parameters=additional_parameters)
-
         self._shell.delete_file(self._ctrl_file)
         self._shell.delete_file(self._log_file)
+        self._shell.delete_file(self._config_file)
+        self._write_configs(additional_parameters=additional_parameters)
 
         hostapd_command = '%s -dd -t "%s"' % (self.PROGRAM_FILE,
                                               self._config_file)
@@ -191,5 +192,10 @@ class Hostapd(object):
             pairs = itertools.chain(pairs, config_pairs)
 
         hostapd_conf = '\n'.join(pairs)
+
+        logging.info('Writing %s' % self._config_file)
+        logging.debug('******************Start*******************')
+        logging.debug('\n%s' % hostapd_conf)
+        logging.debug('*******************End********************')
 
         self._shell.write_file(self._config_file, hostapd_conf)

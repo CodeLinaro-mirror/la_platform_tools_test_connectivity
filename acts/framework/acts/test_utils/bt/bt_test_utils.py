@@ -70,6 +70,19 @@ bluetooth_on = "BluetoothStateChangedOn"
 mtu_changed = "GattConnect{}onMtuChanged"
 bluetooth_profile_connection_state_changed = \
     "BluetoothProfileConnectionStateChanged"
+advertising_set_started = "AdvertisingSet{}onAdvertisingSetStarted"
+advertising_set_on_own_address_read = "AdvertisingSet{}onOwnAddressRead"
+advertising_set_stopped = "AdvertisingSet{}onAdvertisingSetStopped"
+advertising_set_enabled = "AdvertisingSet{}onAdvertisingEnabled"
+advertising_set_data_set = "AdvertisingSet{}onAdvertisingDataSet"
+advertising_set_scan_response_set = "AdvertisingSet{}onScanResponseDataSet"
+advertising_set_parameters_update = \
+    "AdvertisingSet{}onAdvertisingParametersUpdated"
+advertising_set_periodic_parameters_updated = \
+    "AdvertisingSet{}onPeriodicAdvertisingParametersUpdated"
+advertising_set_periodic_data_set = \
+    "AdvertisingSet{}onPeriodicAdvertisingDataSet"
+advertising_set_periodic_enable = "AdvertisingSet{}onPeriodicAdvertisingEnable"
 
 # rfcomm test uuids
 rfcomm_secure_uuid = "fa87c0d0-afac-11de-8a39-0800200c9a66"
@@ -248,7 +261,7 @@ def setup_multiple_devices_for_bt_test(android_devices):
                 a.log.info("Removing bond for device {}".format(b['address']))
                 d.bluetoothUnbond(b['address'])
         for a in android_devices:
-            if not a.droid.bluetoothConfigHciSnoopLog(True):
+            if not a.adb.shell("setprop persist.bluetooth.btsnoopenable true"):
                 a.log.warning("Failed to enable Bluetooth Hci Snoop Logging.")
     except Exception as err:
         log.error("Something went wrong in multi device setup: {}".format(err))
