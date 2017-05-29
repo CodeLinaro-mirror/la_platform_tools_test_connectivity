@@ -33,7 +33,8 @@ from acts.test_utils.tel.anritsu_utils import set_system_model_lte_lte
 from acts.test_utils.tel.anritsu_utils import set_system_model_lte_wcdma
 from acts.test_utils.tel.anritsu_utils import set_system_model_wcdma
 from acts.test_utils.tel.anritsu_utils import set_system_model_wcdma_gsm
-from acts.test_utils.tel.anritsu_utils import  set_system_model_wcdma_wcdma
+from acts.test_utils.tel.anritsu_utils import set_system_model_wcdma_wcdma
+from acts.test_utils.tel.anritsu_utils import set_usim_parameters
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_CDMA
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_GSM_ONLY
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_GSM_UMTS
@@ -44,56 +45,57 @@ from acts.test_utils.tel.tel_defines import RAT_FAMILY_LTE
 from acts.test_utils.tel.tel_defines import RAT_FAMILY_UMTS
 from acts.test_utils.tel.tel_test_utils import ensure_network_rat
 from acts.test_utils.tel.tel_test_utils import ensure_phones_idle
+from acts.test_utils.tel.tel_test_utils import toggle_airplane_mode
 from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band850_ch128_fr869_cid58_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band850_ch251_fr893_cid59_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band1900_ch512_fr1930_cid51_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band1900_ch512_fr1930_cid52_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band1900_ch512_fr1930_cid53_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band1900_ch512_fr1930_cid54_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band1900_ch640_fr1955_cid56_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     gsm_band1900_ch750_fr1977_cid57_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band2_ch900_fr1960_pcid9_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band4_ch2000_fr2115_pcid1_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band4_ch2000_fr2115_pcid2_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band4_ch2000_fr2115_pcid3_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band4_ch2000_fr2115_pcid4_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band4_ch2050_fr2120_pcid7_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band4_ch2050_fr2120_pcid7_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band4_ch2250_fr2140_pcid8_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     lte_band12_ch5095_fr737_pcid10_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band1_ch10700_fr2140_cid31_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band1_ch10700_fr2140_cid32_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band1_ch10700_fr2140_cid33_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band1_ch10700_fr2140_cid34_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band1_ch10575_fr2115_cid36_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band1_ch10800_fr2160_cid37_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band2_ch9800_fr1960_cid38_cell
-from acts.framework.acts.controllers.anritsu_lib.cell_configurations import \
+from acts.controllers.anritsu_lib.cell_configurations import \
     wcdma_band2_ch9900_fr1980_cid39_cell
 
 
@@ -150,18 +152,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
     def __init__(self, controllers):
         TelephonyBaseTest.__init__(self, controllers)
         self.ad = self.android_devices[0]
+        self.ad.sim_card = getattr(self.ad, "sim_card", None)
         self.md8475a_ip_address = self.user_params[
             "anritsu_md8475a_ip_address"]
         self.mg3710a_ip_address = self.user_params[
             "anritsu_mg3710a_ip_address"]
+        self.wlan_option = self.user_params.get("anritsu_wlan_option", False)
 
         if "lte_rssi_offset" in self.user_params:
-            self._LTE_RSSI_OFFSET = int(self.user_param["lte_rssi_offset"])
+            self._LTE_RSSI_OFFSET = int(self.user_params["lte_rssi_offset"])
         if "wcdma_rssi_offset" in self.user_params:
-            self._WCDMA_RSSI_OFFSET = int(self.user_param["wcdma_rssi_offset"])
+            self._WCDMA_RSSI_OFFSET = int(self.user_params[
+                "wcdma_rssi_offset"])
         if "gsm_rssi_offset" in self.user_params:
-            self._GSM_RSSI_OFFSET = int(self.user_param["gsm_rssi_offset"])
-
+            self._GSM_RSSI_OFFSET = int(self.user_params["gsm_rssi_offset"])
 
     def setup_class(self):
         self.md8475a = None
@@ -193,12 +197,14 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         self.ad.droid.telephonySetPreferredNetworkTypes(
             NETWORK_MODE_LTE_GSM_WCDMA)
         ensure_phones_idle(self.log, self.android_devices)
-        self.ad.droid.connectivityToggleAirplaneMode(True)
+        toggle_airplane_mode(self.log, self.ad, True)
         self.ad.droid.telephonyToggleDataConnection(True)
+        self.ad.adb.shell("setprop net.lte.ims.volte.provisioned 1",
+                          ignore_status=True)
         return True
 
     def teardown_test(self):
-        self.ad.droid.connectivityToggleAirplaneMode(True)
+        toggle_airplane_mode(self.log, self.ad, True)
         self.turn_off_3710a_sg(1)
         self.turn_off_3710a_sg(2)
         self.log.info("Stopping Simulation")
@@ -321,8 +327,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 equal in expected_cell_info and input_cell_info
             False otherwise.
         """
-        for key in [self.CID, self.PCID, self.RAT, self.PSC,
-                    self.IS_REGISTERED]:
+        for key in [
+                self.CID, self.PCID, self.RAT, self.PSC, self.IS_REGISTERED
+        ]:
             if key in expected_cell_info:
                 if key not in input_cell_info:
                     return False
@@ -341,8 +348,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
             unique id (string)
         """
         unique_id = ""
-        for key in [self.CID, self.PCID, self.RAT, self.PSC,
-                    self.IS_REGISTERED]:
+        for key in [
+                self.CID, self.PCID, self.RAT, self.PSC, self.IS_REGISTERED
+        ]:
             if key in input_cell_info:
                 if input_cell_info[key] != self.INVALID_VALUE:
                     unique_id += key + ":" + str(input_cell_info[key]) + ":"
@@ -360,14 +368,15 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         rat_to_rssi_tbl = {
             'lte': 'rsrp',
             'wcdma': 'signal_strength',
-            'gsm':  'signal_strength'
+            'gsm': 'signal_strength'
         }
         try:
             return cell_info[rat_to_rssi_tbl[cell_info[self.RAT]]]
         except KeyError:
             return None
 
-    def _is_rssi_in_expected_range(self, actual_rssi, expected_rssi, max_error):
+    def _is_rssi_in_expected_range(self, actual_rssi, expected_rssi,
+                                   max_error):
         """Return if actual_rssi is within expected range.
 
         Args:
@@ -381,14 +390,17 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         """
         if abs(actual_rssi - expected_rssi) > max_error:
             self.log.error(
-                "Expected RSSI: {}, max error: {}, reported RSSI: {}".
-                format(expected_rssi, max_error, actual_rssi))
+                "Expected RSSI: {}, max error: {}, reported RSSI: {}".format(
+                    expected_rssi, max_error, actual_rssi))
             return False
         else:
             return True
 
-    def _verify_cell_info(self, ad, expected_cell_info_stats,
-                          number_of_sample=10, delay_each_sample=5):
+    def _verify_cell_info(self,
+                          ad,
+                          expected_cell_info_stats,
+                          number_of_sample=10,
+                          delay_each_sample=5):
         """Return if reported cell info from ad matches expected_cell_info_stats
         or not.
 
@@ -420,8 +432,7 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                     self.log.error("Found unexpected cell!")
                     return False
                 elif not self._is_matching_cell(
-                        expected_cell_info_stats[unique_id],
-                        sample):
+                        expected_cell_info_stats[unique_id], sample):
                     self.log.error("Mismatched Cell Info")
                     return False
 
@@ -435,10 +446,7 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                                    " in expected range".format(sample))
                     return False
                 if unique_id not in cell_info_stats:
-                    cell_info_stats[unique_id] = {
-                        self.RSSI: 0,
-                        self.COUNT: 0
-                    }
+                    cell_info_stats[unique_id] = {self.RSSI: 0, self.COUNT: 0}
                 cell_info_stats[unique_id][self.RSSI] += rssi
                 cell_info_stats[unique_id][self.COUNT] += 1
 
@@ -449,15 +457,14 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 expected_cell_info = expected_cell_info_stats[unique_id]
 
                 expected_number_of_sample_reported = math.floor(
-                        expected_cell_info[self.REPORT_RATE] * number_of_sample)
+                    expected_cell_info[self.REPORT_RATE] * number_of_sample)
 
                 if cell_info_stats[unique_id][
-                    self.COUNT] < expected_number_of_sample_reported:
+                        self.COUNT] < expected_number_of_sample_reported:
                     self.log.error(
                         "Insufficient reports {}/{} for {}, expected: {}",
                         expected_cell_info[unique_id][self.COUNT],
-                        number_of_sample,
-                        expected_cell_info,
+                        number_of_sample, expected_cell_info,
                         expected_number_of_sample_reported)
                     return False
 
@@ -466,20 +473,350 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
 
                 # Check Average RSSI within expected range
                 if not self._is_rssi_in_expected_range(
-                        average_rssi,
-                        expected_cell_info[self.TARGET_RSSI],
+                        average_rssi, expected_cell_info[self.TARGET_RSSI],
                         expected_cell_info[self.MAX_ERROR_AVERAGE_RSSI]):
                     self.log.error("Cell Average RSSI not in expected range.")
                     return False
         except KeyError as unique_id:
             self.log.error("Failed to find key {}".format(unique_id))
             self.log.error("Expected cell info not reported {}.".format(
-                    expected_cell_info))
+                expected_cell_info))
             return False
 
         return True
 
+    def lte_intra_freq_ncell(self,
+                             ad,
+                             pcid_list,
+                             init_pwr,
+                             power_seq,
+                             interval=3,
+                             err_margin=1):
+        """Return True if UE measured RSSI follows the powers in BTS simulator
+
+        Args:
+            ad: android device object.
+            pcid: list of PCID of LTE BTS
+            init_pwr: initial downlinl power in dBm for serving and neighbor cell
+            power_seq: power change sequence in dB.
+            interval: time delay in seocnd between each power change.
+            error_margin: error margin in dB to determine measurement pass or fail
+
+        Returns:
+            True if all measurments are within margin.
+            False otherwise.
+
+        """
+        bts = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                       self.ad.sim_card)
+
+        self._setup_lte_serving_cell(bts[0], init_pwr, pcid_list[0],
+                                     pcid_list[0])
+        self._setup_lte_neighbhor_cell_md8475a(bts[1], LTE_BAND_2, init_pwr,
+                                               pcid_list[1], pcid_list[1])
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
+        self.md8475a.send_command("IMSSTARTVN 1")
+        self.md8475a.start_simulation()
+        bts[1].service_state = BtsServiceState.SERVICE_STATE_OUT
+        self.ad.droid.telephonyToggleDataConnection(True)
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+            return False
+        self.md8475a.wait_for_registration_state()
+        time.sleep(1)
+        bts[1].service_state = BtsServiceState.SERVICE_STATE_IN
+
+        n_bts = len(pcid_list)  # number of total BTS
+        if n_bts >= 3:
+            self.setup_3710a_waveform("1", "A", "1960MHZ", init_pwr, "LTE",
+                                      "10M_B1_CID2")
+            self.turn_on_3710a_sg(1)
+        if n_bts == 4:
+            self.setup_3710a_waveform("1", "B", "1960MHZ", init_pwr, "LTE",
+                                      "10M_B1_CID3")
+        self.log.info("Wait for {} seconds to settle".format(
+            self._ANRITSU_SETTLING_TIME))
+        time.sleep(self._ANRITSU_SETTLING_TIME)
+        cell_list = ad.droid.telephonyGetAllCellInfo()
+        self.log.info("Received Cell Info List: {}".format(cell_list))
+        init_rsrp_list = []
+        for pcid in pcid_list:
+            for cell in cell_list:
+                if cell['pcid'] == pcid:
+                    init_rsrp_list.append(cell['rsrp'])
+                    break
+        self.log.info("init_rsrp_list = {}".format(init_rsrp_list))
+        error_seq = []
+        for power in power_seq:
+            self.log.info("power = {}".format(power))
+            for i in range(2):
+                bts[i].output_level = init_pwr + power[i]
+            if n_bts >= 3:
+                self.mg3710a.set_arb_level_aorb("A", init_pwr + power[2], "1")
+            if n_bts == 4:
+                self.mg3710a.set_arb_level_aorb("B", init_pwr + power[2], "1")
+            time.sleep(interval)
+            cell_list = ad.droid.telephonyGetAllCellInfo()
+            delta = []
+            error = []
+            for pcid, init_rsrp, pwr in zip(pcid_list, init_rsrp_list, power):
+                found = False
+                for cell in cell_list:
+                    if cell['pcid'] == pcid:
+                        found = True
+                        self.log.info("pcid {}, rsrp = {}".format(pcid, cell[
+                            'rsrp']))
+                        delta.append(cell['rsrp'] - init_rsrp)
+                        error.append(cell['rsrp'] - init_rsrp - pwr)
+                if not found:
+                    self.log.info("pcid {} not found!".format(pcid))
+                    delta.append(-99)
+                    error.append(-99)
+            self.log.info("delta = {}".format(delta))
+            self.log.info("error = {}".format(error))
+            error_seq.append(error)
+        self.log.info("error_seq = {}".format(error_seq))
+        for error in error_seq:
+            for err in error:
+                if err != -99 and abs(err) > err_margin:
+                    self.log.error(
+                        "Test failed! Measured power error is greater than margin."
+                    )
+                    return False
+        return True
+
     """ Tests Begin """
+
+    @TelephonyBaseTest.tel_test_wrap
+    def test_2lte_intra_freq_ncell_away_close(self):
+        """ Test phone moving away from Neighbor Intra Freq cell then
+        close back while serving cell stays the same power
+
+        Setup a two LTE cell configuration on MD8475A
+        Make Sure Phone is in LTE mode
+        Verify the reported RSSI follows the DL power change in MD8475A
+
+        Returns:
+            True if pass; False if fail
+        """
+        pcid = [0, 1]
+        init_pwr = -30  # initial DL power for all cells
+        power_seq = [
+            [0, -1],  # power change sequence reference to init_pwr
+            [0, -2],
+            [0, -3],
+            [0, -4],
+            [0, -3],
+            [0, -2],
+            [0, -1],
+            [0, 0],
+            [0, 1],
+            [0, 3],
+            [0, 4],
+            [0, 5],
+            [0, 6],
+            [0, 7],
+            [0, 8],
+            [0, 9],
+            [0, 10],
+            [0, 9],
+            [0, 8],
+            [0, 7],
+            [0, 6],
+            [0, 5],
+            [0, 4],
+            [0, 3],
+            [0, 2],
+            [0, 1],
+            [0, 0]
+        ]
+
+        return self.lte_intra_freq_ncell(self.ad, pcid, init_pwr, power_seq)
+
+    @TelephonyBaseTest.tel_test_wrap
+    def test_2lte_intra_freq_scell_away_close(self):
+        """ Test phone moving away from serving cell then close back while
+        neighbor Intra Freq cell stays the same power
+
+        Setup a two LTE cell configuration on MD8475A
+        Make Sure Phone is in LTE mode
+        Verify the reported RSSI follows the DL power change in MD8475A
+
+        Returns:
+            True if pass; False if fail
+        """
+        pcid = [0, 1]
+        init_pwr = -30  # initial DL power for all cells
+        power_seq = [
+            [-1, 0],  # power change sequence reference to init_pwr
+            [-2, 0],
+            [-3, 0],
+            [-4, 0],
+            [-5, 0],
+            [-6, 0],
+            [-7, 0],
+            [-8, 0],
+            [-9, 0],
+            [-10, 0],
+            [-9, 0],
+            [-8, 0],
+            [-7, 0],
+            [-6, 0],
+            [-5, 0],
+            [-4, 0],
+            [-3, 0],
+            [-2, 0],
+            [-1, 0],
+            [0, 0],
+            [1, 0],
+            [2, 0],
+            [3, 0],
+            [4, 0],
+            [3, 0],
+            [2, 0],
+            [1, 0],
+            [0, 0]
+        ]
+
+        return self.lte_intra_freq_ncell(self.ad, pcid, init_pwr, power_seq)
+
+    @TelephonyBaseTest.tel_test_wrap
+    def test_2lte_intra_freq_ncell_away_close(self):
+        """ Test phone moving away from serving cell and close to neighbor
+        Intra Freq cell, then back and forth
+
+        Setup a two LTE cell configuration on MD8475A
+        Make Sure Phone is in LTE mode
+        Verify the reported RSSI follows the DL power change in MD8475A
+
+        Returns:
+            True if pass; False if fail
+        """
+        pcid = [0, 1]
+        init_pwr = -30  # initial DL power for all cells
+        power_seq = [
+            [-1, 1],  # power change sequence reference to init_pwr
+            [-2, 2],
+            [-3, 3],
+            [-4, 4],
+            [-5, 5],
+            [-4, 4],
+            [-3, 3],
+            [-2, 2],
+            [-1, 1],
+            [-0, 0],
+            [1, -1],
+            [2, -2],
+            [1, -1],
+            [0, 0]
+        ]
+
+        return self.lte_intra_freq_ncell(self.ad, pcid, init_pwr, power_seq)
+
+    @TelephonyBaseTest.tel_test_wrap
+    def test_2lte_intra_freq_2cell_synced(self):
+        """ Test phone moving away and back to both serving cell and neighbor
+        Intra Freq cell
+
+        Setup a two LTE cell configuration on MD8475A
+        Make Sure Phone is in LTE mode
+        Verify the reported RSSI follows the DL power change in MD8475A and MG3710A
+
+        Returns:
+            True if pass; False if fail
+        """
+        pcid = [0, 1]
+        init_pwr = -30  # initial DL power for all cells
+        power_seq = [
+            [-1, -1],  # power change sequence reference to init_pwr
+            [-3, -3],
+            [-5, -5],
+            [-7, -7],
+            [-5, -5],
+            [-3, -3],
+            [-1, -1],
+            [1, 1],
+            [3, 3],
+            [5, 5],
+            [7, 7],
+            [3, 3],
+            [0, 0]
+        ]
+
+        return self.lte_intra_freq_ncell(self.ad, pcid, init_pwr, power_seq)
+
+    @TelephonyBaseTest.tel_test_wrap
+    def test_3lte_intra_freq_scell_reversed(self):
+        """ Test phone moving away and back between 2 neighbor cells while maintain
+        same rssi with serving cell
+
+        Setup a two LTE cell configuration on MD8475A
+        Make Sure Phone is in LTE mode
+        Verify the reported RSSI follows the DL power change in MD8475A and MG3710A
+
+        Returns:
+            True if pass; False if fail
+        """
+        pcid = [0, 1, 2]
+        init_pwr = -30  # initial DL power for all cells
+        power_seq = [
+            [0, 1, -1],  # power change sequence reference to init_pwr
+            [0, 2, -2],
+            [0, 3, -3],
+            [0, 4, -4],
+            [0, 3, -3],
+            [0, 2, -2],
+            [0, 1, -1],
+            [0, 0, 0],
+            [0, -1, 1],
+            [0, -2, 2],
+            [0, -3, 3],
+            [0, -4, 4],
+            [0, -3, 3],
+            [0, -2, 2],
+            [0, -1, 1],
+            [0, 0, 0]
+        ]
+
+        return self.lte_intra_freq_ncell(self.ad, pcid, init_pwr, power_seq)
+
+    @TelephonyBaseTest.tel_test_wrap
+    def test_3lte_intra_freq_3cell_synced(self):
+        """ Test phone moving away and back to both serving cell and neighbor
+        Intra Freq cell
+
+        Setup a two LTE cell configuration on MD8475A
+        Make Sure Phone is in LTE mode
+        Verify the reported RSSI follows the DL power change in MD8475A
+
+        Returns:
+            True if pass; False if fail
+        """
+        pcid = [0, 1, 2]
+        init_pwr = -30  # initial DL power for all cells
+        power_seq = [
+            [-1, -1, -1],  # power change sequence reference to init_pwr
+            [-3, -3, -3],
+            [-5, -5, -5],
+            [-7, -7, -7],
+            [-5, -5, -5],
+            [-3, -3, -3],
+            [-1, -1, -1],
+            [1, 1, 1],
+            [3, 3, 3],
+            [5, 5, 5],
+            [7, 7, 7],
+            [3, 3, 3],
+            [0, 0, 0]
+        ]
+
+        return self.lte_intra_freq_ncell(self.ad, pcid, init_pwr, power_seq)
 
     @TelephonyBaseTest.tel_test_wrap
     def test_ncells_intra_lte_0_cells(self):
@@ -513,20 +850,21 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
-        [bts1] = set_system_model_lte(self.md8475a, self.user_params)
+        [bts1] = set_system_model_lte(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_lte_serving_cell(bts1, serving_cell_dlpower,
                                      serving_cell_cid, serving_cell_pcid)
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._SETTLING_TIME)
@@ -578,25 +916,32 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
+
         self._setup_lte_serving_cell(bts1, serving_cell_dlpower,
                                      serving_cell_cid, serving_cell_pcid)
         self._setup_lte_neighbhor_cell_md8475a(bts2, LTE_BAND_2,
                                                neigh_cell_dlpower,
                                                neigh_cell_cid, neigh_cell_pcid)
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
+        self.md8475a.send_command("IMSSTARTVN 1")
         self.md8475a.start_simulation()
+        bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
+        bts2.service_state = BtsServiceState.SERVICE_STATE_IN
+        self.log.info("Wait for {} seconds to settle".format(
+            self._SETTLING_TIME))
         time.sleep(self._SETTLING_TIME)
         return self._verify_cell_info(self.ad, expected_cell_info_stats)
 
@@ -659,24 +1004,24 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
 
         self._setup_lte_serving_cell(bts1, serving_cell_dlpower,
                                      serving_cell_cid, serving_cell_pcid)
         self._setup_lte_neighbhor_cell_md8475a(
             bts2, LTE_BAND_2, neigh_cell_1_dlpower, neigh_cell_1_cid,
             neigh_cell_1_pcid)
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
-
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
 
@@ -756,25 +1101,24 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         expected_cell_info_stats = {}
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
-
-        self.md8475a.reset()
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_serving_cell(bts1, serving_cell_dlpower,
                                      serving_cell_cid, serving_cell_pcid)
 
         self._setup_lte_neighbhor_cell_md8475a(
             bts2, LTE_BAND_2, neigh_cell_1_dlpower, neigh_cell_1_cid,
             neigh_cell_1_pcid)
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
-
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
 
@@ -870,24 +1214,25 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_serving_cell(bts1, serving_cell_dlpower,
                                      serving_cell_cid, serving_cell_pcid)
 
         self._setup_lte_neighbhor_cell_md8475a(
-                bts2, LTE_BAND_2, neigh_cell_1_dlpower, neigh_cell_1_cid,
-                neigh_cell_1_pcid)
+            bts2, LTE_BAND_2, neigh_cell_1_dlpower, neigh_cell_1_cid,
+            neigh_cell_1_pcid)
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                    "Failed to set rat family {}, preferred network:{}".format(
-                            RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
 
@@ -928,7 +1273,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -938,19 +1284,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
-        [bts1] = set_system_model_lte(self.md8475a, self.user_params)
+        [bts1] = set_system_model_lte(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._SETTLING_TIME)
@@ -980,7 +1327,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -990,7 +1338,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -999,27 +1348,28 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_lte_cell_md8475a(bts2, neighbor_cell,
                                      neighbor_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("LTE", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 1, "LTE_4_C2000_F2115_PCID2")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1055,7 +1405,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1065,7 +1416,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1074,7 +1426,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1083,9 +1436,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_lte_cell_md8475a(bts2, neighbor_cell_1,
                                      neighbor_cell_1['power'])
@@ -1094,18 +1447,19 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("LTE", 1, "LTE_4_C2000_F2115_PCID2")
         bts1.set_neighbor_cell_type("LTE", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 2, "LTE_4_C2000_F2115_PCID3")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1147,7 +1501,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1157,7 +1512,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1166,7 +1522,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1175,7 +1532,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_3['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_3['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1184,9 +1542,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_lte_cell_md8475a(bts2, neighbor_cell_1,
                                      neighbor_cell_1['power'])
@@ -1197,18 +1555,19 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("LTE", 2, "LTE_4_C2000_F2115_PCID3")
         bts1.set_neighbor_cell_type("LTE", 3, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 3, "LTE_4_C2000_F2115_PCID4")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1249,7 +1608,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1259,7 +1619,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1268,28 +1629,29 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_lte_cell_md8475a(bts2, neighbor_cell_1,
                                      neighbor_cell_1['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("LTE", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 1, "LTE_4_C2050_F2120_PCID7")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1327,7 +1689,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1337,7 +1700,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1346,7 +1710,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1355,9 +1720,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_lte_cell_md8475a(bts2, neighbor_cell_1,
                                      neighbor_cell_1['power'])
@@ -1366,19 +1731,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("LTE", 1, "LTE_4_C2050_F2120_PCID7")
         bts1.set_neighbor_cell_type("LTE", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 2, "LTE_4_C2250_F2140_PCID8")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1421,7 +1787,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1431,7 +1798,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1440,7 +1808,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1449,9 +1818,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params)
+        [bts1, bts2] = set_system_model_lte_lte(self.md8475a, self.user_params,
+                                                self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_lte_cell_md8475a(bts2, neighbor_cell_1,
                                      neighbor_cell_1['power'])
@@ -1460,19 +1829,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("LTE", 1, "LTE_2_C900_F1960_PCID9")
         bts1.set_neighbor_cell_type("LTE", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 2, "LTE_12_C5095_F737_PCID10")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1512,7 +1882,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1522,7 +1893,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1531,29 +1903,29 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_wcdma(self.md8475a,
-                                                  self.user_params)
+        [bts1, bts2] = set_system_model_lte_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell_1,
                                        neighbor_cell_1['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("WCDMA", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 1, "WCDM_1_C10700_F2140_CID31")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1588,7 +1960,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1598,7 +1971,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1607,7 +1981,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1616,10 +1991,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_wcdma(self.md8475a,
-                                                  self.user_params)
+        [bts1, bts2] = set_system_model_lte_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_lte_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell_1,
                                        neighbor_cell_1['power'])
@@ -1628,19 +2002,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("WCDMA", 1, "WCDM_1_C10700_F2140_CID31")
         bts1.set_neighbor_cell_type("GSM", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 1, "GSM_1900_C512_F1930_CID51")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_LTE_GSM_WCDMA,
-                                  RAT_FAMILY_LTE,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_LTE_GSM_WCDMA,
+                RAT_FAMILY_LTE,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_LTE, NETWORK_MODE_LTE_GSM_WCDMA))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1676,7 +2051,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1685,20 +2061,21 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
-        [bts1] = set_system_model_wcdma(self.md8475a, self.user_params)
+        [bts1] = set_system_model_wcdma(self.md8475a, self.user_params,
+                                        self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._SETTLING_TIME)
@@ -1728,7 +2105,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1738,7 +2116,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1747,10 +2126,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_wcdma_wcdma(self.md8475a,
-                                                    self.user_params)
+        [bts1, bts2] = set_system_model_wcdma_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell,
@@ -1758,18 +2136,19 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("WCDMA", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 1, "WCDM_1_C10700_F2140_CID34")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1804,7 +2183,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1814,7 +2194,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1823,7 +2204,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1832,10 +2214,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_wcdma_wcdma(self.md8475a,
-                                                    self.user_params)
+        [bts1, bts2] = set_system_model_wcdma_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell_1,
@@ -1845,18 +2226,19 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("WCDMA", 1, "WCDM_1_C10700_F2140_CID32")
         bts1.set_neighbor_cell_type("WCDMA", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 2, "WCDM_1_C10700_F2140_CID33")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -1898,7 +2280,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1908,7 +2291,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1917,7 +2301,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -1926,7 +2311,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_3['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_3['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -1935,10 +2321,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_wcdma_wcdma(self.md8475a,
-                                                    self.user_params)
+        [bts1, bts2] = set_system_model_wcdma_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell_1,
@@ -1950,18 +2335,19 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("WCDMA", 2, "WCDM_1_C10700_F2140_CID33")
         bts1.set_neighbor_cell_type("WCDMA", 3, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 3, "WCDM_1_C10700_F2140_CID34")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                    "Failed to set rat family {}, preferred network:{}".format(
-                            RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -2004,7 +2390,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2014,7 +2401,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2023,10 +2411,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_wcdma_wcdma(self.md8475a,
-                                                    self.user_params)
+        [bts1, bts2] = set_system_model_wcdma_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell_1,
@@ -2034,19 +2421,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("WCDMA", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 1, "WCDM_1_C10800_F2160_CID37")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         #To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -2081,7 +2469,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2091,7 +2480,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2100,7 +2490,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2109,10 +2500,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_wcdma_wcdma(self.md8475a,
-                                                    self.user_params)
+        [bts1, bts2] = set_system_model_wcdma_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell_1,
@@ -2122,19 +2512,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("WCDMA", 1, "WCDM_1_C10575_F2115_CID36")
         bts1.set_neighbor_cell_type("WCDMA", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 2, "WCDM_1_C10800_F2160_CID37")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -2174,7 +2565,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2184,7 +2576,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2193,7 +2586,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2202,10 +2596,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_wcdma_wcdma(self.md8475a,
-                                                    self.user_params)
+        [bts1, bts2] = set_system_model_wcdma_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
         self._setup_wcdma_cell_md8475a(bts2, neighbor_cell_1,
@@ -2215,19 +2608,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("WCDMA", 1, "WCDM_2_C9800_F1960_CID38")
         bts1.set_neighbor_cell_type("WCDMA", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 2, "WCDM_2_C9900_F1980_CID39")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -2267,7 +2661,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2277,7 +2672,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2286,7 +2682,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2295,10 +2692,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_lte_wcdma(self.md8475a,
-                                                  self.user_params)
+        [bts1, bts2] = set_system_model_lte_wcdma(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts2, serving_cell,
                                        serving_cell['power'])
         self._setup_lte_cell_md8475a(bts1, neighbor_cell_2,
@@ -2306,19 +2702,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts2.neighbor_cell_mode = "USERDATA"
         bts2.set_neighbor_cell_type("LTE", 1, "CELLNAME")
         bts2.set_neighbor_cell_name("LTE", 1, "LTE_4_C2000_F2115_PCID1")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts1.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -2354,7 +2751,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2364,7 +2762,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2373,7 +2772,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2382,10 +2782,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1, bts2] = set_system_model_wcdma_gsm(self.md8475a,
-                                                  self.user_params)
+        [bts1, bts2] = set_system_model_wcdma_gsm(
+            self.md8475a, self.user_params, self.ad.sim_card)
         self._setup_wcdma_cell_md8475a(bts1, serving_cell,
                                        serving_cell['power'])
         self._setup_gsm_cell_md8475a(bts2, neighbor_cell_1,
@@ -2395,19 +2794,20 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("GSM", 1, "GSM_1900_C512_F1930_CID51")
         bts1.set_neighbor_cell_type("LTE", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 1, "LTE_4_C2000_F2115_PCID1")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
         # To make sure phone camps on BTS1
         bts2.service_state = BtsServiceState.SERVICE_STATE_OUT
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_UMTS,
-                                  RAT_FAMILY_UMTS,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_UMTS,
+                RAT_FAMILY_UMTS,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_UMTS, NETWORK_MODE_GSM_UMTS))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -2441,7 +2841,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2450,18 +2851,19 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._SETTLING_TIME)
@@ -2491,7 +2893,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2501,7 +2904,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2510,23 +2914,24 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("GSM", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 1, "GSM_1900_C512_F1930_CID52")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         time.sleep(self._ANRITSU_SETTLING_TIME)
@@ -2565,7 +2970,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2575,7 +2981,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2584,7 +2991,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2593,25 +3001,26 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("GSM", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 1, "GSM_1900_C512_F1930_CID52")
         bts1.set_neighbor_cell_type("GSM", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 2, "GSM_1900_C512_F1930_CID53")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         self.setup_3710a_waveform("1", "A", "1930.2MHz",
@@ -2655,7 +3064,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2665,7 +3075,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2674,7 +3085,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2683,7 +3095,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_3['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_3['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2692,9 +3105,9 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("GSM", 1, "CELLNAME")
@@ -2703,16 +3116,17 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         bts1.set_neighbor_cell_name("GSM", 2, "GSM_1900_C512_F1930_CID53")
         bts1.set_neighbor_cell_type("GSM", 3, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 3, "GSM_1900_C512_F1930_CID53")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         self.setup_3710a_waveform("1", "A", "1930.2MHz",
@@ -2756,7 +3170,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2766,7 +3181,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2775,24 +3191,25 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("GSM", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 1, "GSM_1900_C640_F1955_CID56")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         self.setup_3710a_waveform("1", "A", "1955.8MHz",
@@ -2830,7 +3247,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2840,7 +3258,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2849,7 +3268,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2858,26 +3278,27 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("GSM", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 1, "GSM_1900_C640_F1955_CID56")
         bts1.set_neighbor_cell_type("GSM", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 2, "GSM_1900_C750_F1977_CID57")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         self.setup_3710a_waveform("1", "A", "1955.8MHz",
@@ -2919,7 +3340,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2929,7 +3351,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -2938,7 +3361,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -2947,26 +3371,27 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("GSM", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 1, "GSM_850_C128_F869_CID58")
         bts1.set_neighbor_cell_type("GSM", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("GSM", 2, "GSM_850_C251_F893_CID59")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
 
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         self.setup_3710a_waveform("1", "A", "869MHz", neighbor_cell_1['power'],
@@ -3006,7 +3431,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 1,
                 self.IS_REGISTERED: True,
                 self.RAT: 'gsm',
-                self.TARGET_RSSI: self._GSM_RSSI_OFFSET + serving_cell['power'],
+                self.TARGET_RSSI:
+                self._GSM_RSSI_OFFSET + serving_cell['power'],
                 self.MAX_ERROR_RSSI: 3,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -3016,7 +3442,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'lte',
-                self.TARGET_RSSI: self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
+                self.TARGET_RSSI:
+                self._LTE_RSSI_OFFSET + neighbor_cell_1['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             },
@@ -3025,7 +3452,8 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
                 self.REPORT_RATE: 0.1,
                 self.IS_REGISTERED: False,
                 self.RAT: 'wcdma',
-                self.TARGET_RSSI: self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
+                self.TARGET_RSSI:
+                self._WCDMA_RSSI_OFFSET + neighbor_cell_2['power'],
                 self.MAX_ERROR_RSSI: 4,
                 self.MAX_ERROR_AVERAGE_RSSI: 3
             }
@@ -3034,26 +3462,26 @@ class TelLabNeighborCellTest(TelephonyBaseTest):
         for sample in expected_cell_info_list:
             expected_cell_info_stats[self._unique_cell_id(sample)] = sample
 
-        self.md8475a.reset()
         self.md8475a.load_cell_paramfile(self._CELL_PARAM_FILE)
-        [bts1] = set_system_model_gsm(self.md8475a, self.user_params)
+        [bts1] = set_system_model_gsm(self.md8475a, self.user_params,
+                                      self.ad.sim_card)
         self._setup_gsm_cell_md8475a(bts1, serving_cell, serving_cell['power'])
         bts1.neighbor_cell_mode = "USERDATA"
         bts1.set_neighbor_cell_type("LTE", 1, "CELLNAME")
         bts1.set_neighbor_cell_name("LTE", 1, "LTE_4_C2000_F2115_PCID1")
         bts1.set_neighbor_cell_type("WCDMA", 2, "CELLNAME")
         bts1.set_neighbor_cell_name("WCDMA", 2, "WCDM_1_C10700_F2140_CID31")
+        set_usim_parameters(self.md8475a, self.ad.sim_card)
         self.md8475a.start_simulation()
-
         self.ad.droid.telephonyToggleDataConnection(False)
-        if not ensure_network_rat(self.log,
-                                  self.ad,
-                                  NETWORK_MODE_GSM_ONLY,
-                                  RAT_FAMILY_GSM,
-                                  toggle_apm_after_setting=True):
-            self.log.error(
-                "Failed to set rat family {}, preferred network:{}".format(
-                    RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
+        if not ensure_network_rat(
+                self.log,
+                self.ad,
+                NETWORK_MODE_GSM_ONLY,
+                RAT_FAMILY_GSM,
+                toggle_apm_after_setting=True):
+            self.log.error("Failed to set rat family {}, preferred network:{}".
+                           format(RAT_FAMILY_GSM, NETWORK_MODE_GSM_ONLY))
             return False
         self.md8475a.wait_for_registration_state()
         self.setup_3710a_waveform("1", "A", "2115MHz",

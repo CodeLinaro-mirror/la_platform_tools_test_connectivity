@@ -1813,7 +1813,7 @@ def http_file_download_by_chrome(ad,
                                                            "/sdcard/Download/")
     for cmd in ("am set-debug-app --persistent com.android.chrome",
                 'echo "chrome --no-default-browser-check --no-first-run '
-                '--disable-fre" > /data/local/chrome-command-line',
+                '--disable-fre > /data/local/chrome-command-line"',
                 "pm grant com.android.chrome "
                 "android.permission.READ_EXTERNAL_STORAGE",
                 "pm grant com.android.chrome "
@@ -2451,6 +2451,11 @@ def _is_attached_for_subscription(log, ad, sub_id, voice_or_data):
     ad.log.info("Sub_id %s network rate is %s for %s", sub_id, rat,
                 voice_or_data)
     return rat != RAT_UNKNOWN
+
+
+def is_voice_attached(log, ad):
+    return _is_attached_for_subscription(
+        log, ad, ad.droid.subscriptionGetDefaultSubId(), NETWORK_SERVICE_VOICE)
 
 
 def wait_for_voice_attach(log, ad, max_time):
@@ -3494,15 +3499,17 @@ def is_droid_in_network_generation_for_subscription(log, ad, sub_id, nw_gen,
 
     for service in service_list:
         nw_rat = get_network_rat_for_subscription(log, ad, sub_id, service)
-        ad.log.info("network rat for %s is %s", service, nw_rat)
+        ad.log.info("%s network rat is %s", service, nw_rat)
         if nw_rat == RAT_UNKNOWN or not is_valid_rat(nw_rat):
             continue
 
         if rat_generation_from_rat(nw_rat) == nw_gen:
-            ad.log.info("network rat %s is expected %s", nw_rat, nw_gen)
+            ad.log.info("%s network rat %s is expected %s", service, nw_rat,
+                        nw_gen)
             return True
         else:
-            ad.log.info("network rat %s is %s, expecting %s", nw_rat,
+            ad.log.info("%s network rat %s is %s, does not meet expected %s",
+                        service, nw_rat,
                         rat_generation_from_rat(nw_rat), nw_gen)
             return False
 
