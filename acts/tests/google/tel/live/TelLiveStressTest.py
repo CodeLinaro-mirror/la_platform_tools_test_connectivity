@@ -20,6 +20,7 @@
 import collections
 import random
 import time
+from acts.asserts import fail
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 from acts.test_utils.tel.tel_defines import WFC_MODE_WIFI_PREFERRED
@@ -74,7 +75,7 @@ class TelLiveStressTest(TelephonyBaseTest):
     def _setup_wfc(self):
         for ad in self.android_devices:
             if not ensure_wifi_connected(
-                    ad.log,
+                    self.log,
                     ad,
                     self.wifi_network_ssid,
                     self.wifi_network_pass,
@@ -86,7 +87,7 @@ class TelLiveStressTest(TelephonyBaseTest):
                 ad.log.error("Phone failed to enable Wifi-Calling.")
                 return False
             ad.log.info("Phone is set in Wifi-Calling successfully.")
-            if not phone_idle_iwlan(self.log, self.ad):
+            if not phone_idle_iwlan(self.log, ad):
                 ad.log.error("Phone is not in WFC enabled state.")
                 return False
             ad.log.info("Phone is in WFC enabled state.")
@@ -140,12 +141,13 @@ class TelLiveStressTest(TelephonyBaseTest):
             self.log.error("%s of length %s from %s to %s fails",
                            message_type_map[selection], length, ads[0].serial,
                            ads[1].serial)
+            self.result_info["%s failure" % message_type_map[selection]] += 1
             return False
         else:
             self.log.info("%s of length %s from %s to %s succeed",
                           message_type_map[selection], length, ads[0].serial,
                           ads[1].serial)
-            return False
+            return True
 
     def _make_phone_call(self, ads):
         if not call_setup_teardown(
@@ -160,28 +162,18 @@ class TelLiveStressTest(TelephonyBaseTest):
         ads[0].log.info("Setup call successfully.")
         return True
 
-    def _download_file(self):
-        file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB", "1GB"]
-        selection = random.randrange(0, 7)
-        return active_file_download_test(self.log, self.dut,
-                                         file_names[selection])
-
-    def check_crash(self):
-        new_crash = self.dut.check_crash_report()
-        crash_diff = set(new_crash).difference(set(self.dut.crash_report))
-        self.dut.crash_report = new_crash
-        if crash_diff:
-            self.dut.log.error("Find new crash reports %s", list(crash_diff))
-            self.dut.pull_files(list(crash_diff))
-            return False
-        return True
-
     def crash_check_test(self):
         failure = 0
         while time.time() < self.finishing_time:
-            if not self.check_crash():
+            new_crash = self.dut.check_crash_report()
+            crash_diff = set(new_crash).difference(set(self.dut.crash_report))
+            self.dut.crash_report = new_crash
+            if crash_diff:
+                self.dut.log.error("Find new crash reports %s",
+                                   list(crash_diff))
+                self.dut.pull_files(list(crash_diff))
                 failure += 1
-                self.log.error("Crash found count: %s", failure)
+                self.result_info["Crashes"] += 1
                 self._take_bug_report("%s_crash_found" % self.test_name,
                                       time.strftime("%m-%d-%Y-%H-%M-%S"))
             self.dut.droid.goToSleepNow()
@@ -190,12 +182,15 @@ class TelLiveStressTest(TelephonyBaseTest):
 
     def call_test(self):
         failure = 0
+        total_count = 0
         while time.time() < self.finishing_time:
             ads = [self.dut, self.helper]
             random.shuffle(ads)
+            total_count += 1
             if not self._make_phone_call(ads):
                 failure += 1
-                self.log.error("Call test failure count: %s", failure)
+                self.log.error("New call test failure: %s/%s", failure,
+                               total_count)
                 self._take_bug_report("%s_call_failure" % self.test_name,
                                       time.strftime("%m-%d-%Y-%H-%M-%S"))
             self.dut.droid.goToSleepNow()
@@ -204,44 +199,50 @@ class TelLiveStressTest(TelephonyBaseTest):
 
     def message_test(self):
         failure = 0
+        total_count = 0
         while time.time() < self.finishing_time:
             ads = [self.dut, self.helper]
             random.shuffle(ads)
+            total_count += 1
             if not self._send_message(ads):
                 failure += 1
-                self.log.error("Messaging test failure count: %s", failure)
-                self._take_bug_report("%s_messaging_failure" % self.test_name,
-                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
+                self.log.error("New messaging test failure: %s/%s", failure,
+                               total_count)
+                #self._take_bug_report("%s_messaging_failure" % self.test_name,
+                #                      time.strftime("%m-%d-%Y-%H-%M-%S"))
             self.dut.droid.goToSleepNow()
             time.sleep(random.randrange(0, self.max_sleep_time))
         return failure
 
     def data_test(self):
         failure = 0
+        total_count = 0
+        file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB", "1GB"]
         while time.time() < self.finishing_time:
-            if not self._download_file():
-                failure += 1
-                self.log.error("File download test failure count: %s", failure)
-                self._take_bug_report("%s_download_failure" % self.test_name,
-                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
-            self.dut.droid.goToSleepNow()
-            time.sleep(random.randrange(0, self.max_sleep_time))
+            self.dut.log.info(dict(self.result_info))
+            self.result_info["Total file download"] += 1
+            selection = random.randrange(0, 7)
+            file_name = file_names[selection]
+            if not active_file_download_test(self.log, self.dut, file_name):
+                self.result_info["%s file download failure" % file_name] += 1
+                #self._take_bug_report("%s_download_failure" % self.test_name,
+                #                      time.strftime("%m-%d-%Y-%H-%M-%S"))
+                self.dut.droid.goToSleepNow()
+                time.sleep(random.randrange(0, self.max_sleep_time))
         return failure
 
     def parallel_tests(self, setup_func=None):
         if setup_func and not setup_func():
             self.log.error("Test setup %s failed", setup_func.__name__)
             return False
+        self.result_info = collections.defaultdict(int)
         self.finishing_time = time.time() + self.max_run_time
         results = run_multithread_func(self.log, [(self.call_test, []), (
             self.message_test, []), (self.data_test, []),
                                                   (self.crash_check_test, [])])
-        self.log.info("Call failures: %s", results[0])
-        self.log.info("Messaging failures: %s", results[1])
-        self.log.info("Data failures: %s", results[2])
-        self.log.info("Crash failures: %s", results[3])
-        for result in results:
-            if result: return False
+        self.log.info(dict(self.result_info))
+        if sum(results):
+            fail(str(dict(self.result_info)))
 
     """ Tests Begin """
 
