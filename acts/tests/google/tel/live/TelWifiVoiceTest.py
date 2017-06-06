@@ -107,7 +107,7 @@ WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_NOT_HAND_IN = -80
 WIFI_RSSI_FOR_HAND_IN_TEST_PHONE_HAND_IN = -50
 
 # WiFi RSSI settings for HAND_OUT test
-WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT = -70
+WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT = -60
 WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT = -85
 
 
@@ -455,7 +455,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_phone_setup_cellular_absent(self, wfc_mode):
         is_exception_happened = False
-        time.sleep(30)
+        time.sleep(60)
         try:
             if not toggle_airplane_mode(self.log, self.android_devices[0],
                                         False):
@@ -563,7 +563,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_phone_setup_cellular_absent_wifi_absent(self, wfc_mode):
         is_exception_happened = False
-        time.sleep(30)
+        time.sleep(60)
         try:
             if not toggle_airplane_mode(self.log, self.android_devices[0],
                                         False):
@@ -660,7 +660,7 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_phone_setup_cellular_absent_wifi_disabled(self, wfc_mode):
         is_exception_happened = False
-        time.sleep(30)
+        time.sleep(60)
         try:
             if not toggle_airplane_mode(self.log, self.android_devices[0],
                                         False):
@@ -745,10 +745,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
                  MAX_RSSI_RESERVED_VALUE)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
                  MAX_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
-                 CELL_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
-                 CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
         return True
 
     def _wfc_set_wifi_strong_cell_absent(self):
@@ -765,10 +765,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_set_wifi_weak_cell_strong(self):
         self.log.info("--->Setting WiFi weak cell strong<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
-                 WIFI_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
-                 WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
                  MAX_RSSI_RESERVED_VALUE)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
@@ -777,22 +777,22 @@ class TelWifiVoiceTest(TelephonyBaseTest):
 
     def _wfc_set_wifi_weak_cell_weak(self):
         self.log.info("--->Setting WiFi weak cell weak<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
-                 WIFI_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
-                 WIFI_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
-                 CELL_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
-                 CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
         return True
 
     def _wfc_set_wifi_weak_cell_absent(self):
         self.log.info("--->Setting WiFi weak cell absent<---")
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G], 0,
-                 WIFI_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
-                 WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
+                 self.wifi_rssi_with_no_atten, WIFI_WEAK_RSSI_VALUE)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
                  MIN_RSSI_RESERVED_VALUE)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
@@ -817,10 +817,10 @@ class TelWifiVoiceTest(TelephonyBaseTest):
                  MIN_RSSI_RESERVED_VALUE)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G], 0,
                  MIN_RSSI_RESERVED_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G], 0,
-                 CELL_WEAK_RSSI_VALUE)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G], 0,
-                 CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
+        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
+                 self.cell_rssi_with_no_atten, CELL_WEAK_RSSI_VALUE)
         return True
 
     def _wfc_set_wifi_absent_cell_absent(self):
@@ -2360,13 +2360,13 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
             self._wfc_set_wifi_strong_cell_strong,
-            self._wfc_phone_setup_wfc_disabled, self._phone_idle_not_iwlan,
+            self._wfc_phone_setup_wfc_disabled, None,
             self._is_phone_in_call_not_iwlan, None, True)
 
         mt_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_TERMINATED,
             self._wfc_set_wifi_strong_cell_strong,
-            self._wfc_phone_setup_wfc_disabled, self._phone_idle_not_iwlan,
+            self._wfc_phone_setup_wfc_disabled, None,
             self._is_phone_in_call_not_iwlan, None, True)
 
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
@@ -2390,13 +2390,13 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
             self._wfc_set_wifi_strong_cell_weak,
-            self._wfc_phone_setup_wfc_disabled, self._phone_idle_not_iwlan,
+            self._wfc_phone_setup_wfc_disabled, None,
             self._is_phone_in_call_not_iwlan, None, True)
 
         mt_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_TERMINATED,
             self._wfc_set_wifi_strong_cell_weak,
-            self._wfc_phone_setup_wfc_disabled, self._phone_idle_not_iwlan,
+            self._wfc_phone_setup_wfc_disabled, None,
             self._is_phone_in_call_not_iwlan, None, True)
 
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
@@ -2420,15 +2420,15 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
             self._wfc_set_wifi_strong_cell_absent,
-            self._wfc_phone_setup_cellular_absent_wfc_disabled,
-            self._phone_idle_not_iwlan, self._is_phone_not_in_call, None,
+            self._wfc_phone_setup_cellular_absent_wfc_disabled, None,
+            self._is_phone_not_in_call, None,
             "initiate_call fail.")
 
         mt_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_TERMINATED,
             self._wfc_set_wifi_strong_cell_absent,
-            self._wfc_phone_setup_cellular_absent_wfc_disabled,
-            self._phone_idle_not_iwlan, self._is_phone_not_in_call, None,
+            self._wfc_phone_setup_cellular_absent_wfc_disabled, None,
+            self._is_phone_not_in_call, None,
             "wait_and_answer_call fail.")
 
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
@@ -2452,13 +2452,13 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         mo_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_ORIGINATED,
             self._wfc_set_wifi_strong_cell_strong,
-            self._wfc_phone_setup_apm_wfc_disabled, self._phone_idle_not_iwlan,
+            self._wfc_phone_setup_apm_wfc_disabled, None,
             self._is_phone_not_in_call, None, "initiate_call fail.")
 
         mt_result = self._wfc_call_sequence(
             ads, DIRECTION_MOBILE_TERMINATED,
             self._wfc_set_wifi_strong_cell_strong,
-            self._wfc_phone_setup_apm_wfc_disabled, self._phone_idle_not_iwlan,
+            self._wfc_phone_setup_apm_wfc_disabled, None,
             self._is_phone_not_in_call, None, "wait_and_answer_call fail.")
 
         self.log.info("MO: {}, MT: {}".format(mo_result, mt_result))
@@ -3122,36 +3122,13 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         PhoneA should still be in call. PhoneA should hand-out to LTE.
         PhoneA should have data on WiFi.
         """
-        # Decrease WiFi RSSI to WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT
-        # in 10 seconds
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
-                 self.wifi_rssi_with_no_atten,
-                 WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT, 2, 1)
-        set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
-                 self.wifi_rssi_with_no_atten,
-                 WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_NOT_HAND_OUT, 2, 1)
-        # Make sure WiFi still connected and have data.
-        if (not wait_for_wifi_data_connection(self.log,
-                                              self.android_devices[0], True) or
-                not verify_http_connection(self.log, self.android_devices[0])):
-            self.log.error("No Data on Wifi")
-            return False
-        # Make sure phone not hand-out, not drop call
-        if self._phone_wait_for_not_wfc():
-            self.log.error("Phone should not hand out.")
-            return False
-        if self._is_phone_not_in_call():
-            self.log.error("Phone should not drop call.")
-            return False
-
         # Decrease WiFi RSSI to WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT
-        # in 10 seconds
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_2G],
                  self.wifi_rssi_with_no_atten,
-                 WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
+                 MAX_RSSI_RESERVED_VALUE, 2, 1)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_WIFI_5G],
                  self.wifi_rssi_with_no_atten,
-                 WIFI_RSSI_FOR_HAND_OUT_TEST_PHONE_HAND_OUT, 2, 1)
+                 MAX_RSSI_RESERVED_VALUE, 2, 1)
         # Make sure WiFi still connected and have data.
         if (not wait_for_wifi_data_connection(self.log,
                                               self.android_devices[0], True) or
@@ -3428,11 +3405,11 @@ class TelWifiVoiceTest(TelephonyBaseTest):
         PhoneA should still be in call. PhoneA should hand-out to LTE.
         PhoneA should have data on WiFi.
         """
-        # Increase Cellular RSSI to CELL_STRONG_RSSI_VALUE in 30 seconds
+        # Increase Cellular RSSI to CELL_STRONG_RSSI_VALUE
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_3G],
-                 self.cell_rssi_with_no_atten, CELL_STRONG_RSSI_VALUE, 1, 1)
+                 self.cell_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE, 1, 1)
         set_rssi(self.log, self.attens[ATTEN_NAME_FOR_CELL_4G],
-                 self.cell_rssi_with_no_atten, CELL_STRONG_RSSI_VALUE, 1, 1)
+                 self.cell_rssi_with_no_atten, MAX_RSSI_RESERVED_VALUE, 1, 1)
         # Make sure phone hand-out, not drop call
         if not self._phone_wait_for_not_wfc():
             self.log.error("Phone should hand out.")
