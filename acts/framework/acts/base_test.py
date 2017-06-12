@@ -376,6 +376,8 @@ class BaseTestClass(object):
         tr_record = records.TestResultRecord(test_name, self.TAG)
         tr_record.test_begin()
         self.log.info("%s %s", TEST_CASE_TOKEN, test_name)
+        th = logger.create_test_case_logger(self.log_path,
+                                            "%s:%s" % (self.TAG, test_name))
         verdict = None
         try:
             try:
@@ -400,7 +402,7 @@ class BaseTestClass(object):
                     tr_record.add_error("teardown_test", e)
                     self._exec_procedure_func(self._on_exception, tr_record)
         except (signals.TestFailure, AssertionError) as e:
-            self.log.error(traceback.format_exc())
+            self.log.error(e)
             tr_record.test_fail(e)
             self._exec_procedure_func(self._on_fail, tr_record)
         except signals.TestSkip as e:
@@ -441,6 +443,7 @@ class BaseTestClass(object):
             tr_record.test_fail()
             self._exec_procedure_func(self._on_fail, tr_record)
         finally:
+            logger.remove_test_case_logger(th)
             if not is_generate_trigger:
                 self.results.add_record(tr_record)
 
