@@ -44,7 +44,8 @@ ANDROID_DEVICE_PICK_ALL_TOKEN = "*"
 ANDROID_DEVICE_ADB_LOGCAT_PARAM_KEY = "adb_logcat_param"
 ANDROID_DEVICE_EMPTY_CONFIG_MSG = "Configuration is empty, abort!"
 ANDROID_DEVICE_NOT_LIST_CONFIG_MSG = "Configuration should be a list, abort!"
-CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/ramdumps/", "/data/ramdump/")
+CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/vendor/ramdump/",
+                      "/data/ramdump/")
 CRASH_REPORT_SKIPS = ("RAMDUMP_RESERVED", "RAMDUMP_STATUS")
 BUG_REPORT_TIMEOUT = 1200
 PULL_TIMEOUT = 300
@@ -538,7 +539,7 @@ class AndroidDevice:
 
     @property
     def is_adb_logcat_on(self):
-        """Whether there is an ongoing adb logcat collection.
+        """Whether the adb logcat process is active.
         """
         if self.adb_logcat_process:
             try:
@@ -551,9 +552,8 @@ class AndroidDevice:
             if ret is None:
                 return True
             else:
-                if self.droid:
-                    self.droid.logI('Logcat died')
-                self.log.error('Logcat died on %s' % self.adb_logcat_file_path)
+                self.log.error(
+                    'Logcat process %s died' % self.adb_logcat_process)
                 return False
         return False
 
@@ -719,7 +719,7 @@ class AndroidDevice:
                         if in_range:
                             break
 
-    def start_adb_logcat(self, cont_logcat_file=False):
+    def start_adb_logcat(self, cont_logcat_file=False, logcat_file_path=None):
         """Starts a standing adb logcat collection in separate subprocesses and
         save the logcat in a file.
 
@@ -728,6 +728,7 @@ class AndroidDevice:
                               file.  This allows for start_adb_logcat to act
                               as a restart logcat function if it is noticed
                               logcat is no longer running.
+            log_cat_file_path: the file path to collect logcat.
         """
         if self.is_adb_logcat_on:
             raise AndroidDeviceError(("Android device {} already has an adb "
@@ -737,32 +738,29 @@ class AndroidDevice:
         # because 'start' doesn't support --clear option before Android N.
         self.adb.shell("logpersist.stop --clear")
         self.adb.shell("logpersist.start")
-        if cont_logcat_file:
-            if self.droid:
-                self.droid.logI('Restarting logcat')
-            self.log.warning(
-                'Restarting logcat on file %s' % self.adb_logcat_file_path)
-            logcat_file_path = self.adb_logcat_file_path
-        else:
-            f_name = "adblog,{},{}.txt".format(self.model, self.serial)
-            utils.create_dir(self.log_path)
-            logcat_file_path = os.path.join(self.log_path, f_name)
-        try:
-            extra_params = self.adb_logcat_param
-        except AttributeError:
-            extra_params = "-b all"
-        cmd = "adb -s {} logcat -v threadtime {} >> {}".format(
-            self.serial, extra_params, logcat_file_path)
+        if not logcat_file_path:
+            if self.adb_logcat_file_path:
+                logcat_file_path = self.adb_logcat_file_path
+            else:
+                f_name = "adblog_%s_%s.txt" % (self.model, self.serial)
+                utils.create_dir(self.log_path)
+                logcat_file_path = os.path.join(self.log_path, f_name)
+        extra_params = getattr(self, "adb_logcat_param", "-b all")
+        cmd = "adb -s %s logcat -v threadtime %s" % (self.serial, extra_params)
+        redirect = ">>" if cont_logcat_file else ">"
+        cmd = " ".join([cmd, redirect, logcat_file_path])
+        if self.droid:
+            self.droid.logI('Restarting logcat')
+        self.log.debug('Restarting logcat on file %s', logcat_file_path)
         self.adb_logcat_process = utils.start_standing_subprocess(cmd)
         self.adb_logcat_file_path = logcat_file_path
 
     def stop_adb_logcat(self):
         """Stops the adb logcat collection subprocess.
         """
-        if not self.is_adb_logcat_on:
-            raise AndroidDeviceError(
-                "Android device %s does not have an ongoing adb logcat collection."
-                % self.serial)
+        if not self.adb_logcat_process:
+            self.log.info(
+                "Device does not have an ongoing adb logcat collector.")
         utils.stop_standing_subprocess(self.adb_logcat_process)
         self.adb_logcat_process = None
 
@@ -856,14 +854,12 @@ class AndroidDevice:
                 new_br = False
         except adb.AdbError:
             new_br = False
-        br_path = os.path.join(self.log_path, "BugReports")
+        br_path = self.log_path
         utils.create_dir(br_path)
-        base_name = ",{},{}.txt".format(begin_time, self.serial)
-        if new_br:
-            base_name = base_name.replace(".txt", ".zip")
-        test_name_len = utils.MAX_FILENAME_LEN - len(base_name)
-        out_name = test_name[:test_name_len] + base_name
-        full_out_path = os.path.join(br_path, out_name.replace(' ', '_'))
+        out_name = "AndroidDevice%s_%s" % (self.serial, begin_time.replace(
+            " ", "_").replace(":", "-"))
+        out_name = "%s.zip" % out_name if new_br else "%s.txt" % out_name
+        full_out_path = os.path.join(br_path, out_name)
         # in case device restarted, wait for adb interface to return
         self.wait_for_boot_completion()
         self.log.info("Taking bugreport for %s.", test_name)
@@ -893,6 +889,7 @@ class AndroidDevice:
         """Pull files from devies."""
         if not remote_path:
             remote_path = self.log_path
+        utils.create_dir(remote_path)
         for file_name in files:
             self.adb.pull(
                 "%s %s" % (file_name, remote_path), timeout=PULL_TIMEOUT)
@@ -906,9 +903,7 @@ class AndroidDevice:
                     continue
                 crash_reports.append(os.path.join(crash_path, report))
         if log_crash_report:
-            crash_log_path = os.path.join(self.log_path, "CrashReports",
-                                          time.strftime("%m-%d-%Y-%H-%M-%S"))
-            utils.create_dir(crash_log_path)
+            crash_log_path = os.path.join(self.log_path, "crashes")
             self.pull_files(crash_reports, crash_log_path)
         return crash_reports
 
