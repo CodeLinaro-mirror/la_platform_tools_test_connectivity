@@ -376,8 +376,6 @@ class BaseTestClass(object):
         tr_record = records.TestResultRecord(test_name, self.TAG)
         tr_record.test_begin()
         self.log.info("%s %s", TEST_CASE_TOKEN, test_name)
-        th = logger.create_test_case_logger(self.log_path,
-                                            "%s:%s" % (self.TAG, test_name))
         verdict = None
         try:
             try:
@@ -443,7 +441,6 @@ class BaseTestClass(object):
             tr_record.test_fail()
             self._exec_procedure_func(self._on_fail, tr_record)
         finally:
-            logger.remove_test_case_logger(th)
             if not is_generate_trigger:
                 self.results.add_record(tr_record)
 
@@ -696,11 +693,13 @@ class BaseTestClass(object):
             try:
                 ad.adb.wait_for_device()
                 ad.take_bug_report(test_name, begin_time)
-                tombstone_path = os.path.join(
-                    ad.log_path, "BugReports", "{},{}".format(
-                        begin_time, ad.serial).replace(' ', '_'))
-                utils.create_dir(tombstone_path)
-                ad.adb.pull('/data/tombstones/', tombstone_path, timeout=1200)
+                bugreport_path = os.path.join(ad.log_path, test_name)
+                utils.create_dir(bugreport_path)
+                ad.check_crash_report(True, test_name)
+                if getattr(ad, "qxdm_always_on", False):
+                    ad.log.info("Pull QXDM Logs")
+                    ad.pull_files(["/data/vendor/radio/diag_logs/logs/"],
+                                  bugreport_path)
             except Exception as e:
                 ad.log.error(
                     "Failed to take a bug report for %s with error %s",
