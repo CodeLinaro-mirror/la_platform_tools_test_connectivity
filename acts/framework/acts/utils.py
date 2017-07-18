@@ -29,6 +29,8 @@ import subprocess
 import time
 import traceback
 
+from acts.controllers import adb
+
 # File name length is limited to 255 chars on some OS, so we need to make sure
 # the file names we output fits within the limit.
 MAX_FILENAME_LEN = 255
@@ -584,8 +586,7 @@ def enable_doze(ad):
     ad.adb.shell("dumpsys deviceidle force-idle")
     ad.droid.goToSleepNow()
     time.sleep(5)
-    adb_shell_result = ad.adb.shell("dumpsys deviceidle get deep").decode(
-        'utf-8')
+    adb_shell_result = ad.adb.shell("dumpsys deviceidle get deep")
     if not adb_shell_result.startswith(DozeModeStatus.IDLE):
         info = ("dumpsys deviceidle get deep: {}".format(adb_shell_result))
         print(info)
@@ -605,8 +606,7 @@ def disable_doze(ad):
     """
     ad.adb.shell("dumpsys deviceidle disable")
     ad.adb.shell("dumpsys battery reset")
-    adb_shell_result = ad.adb.shell("dumpsys deviceidle get deep").decode(
-        'utf-8')
+    adb_shell_result = ad.adb.shell("dumpsys deviceidle get deep")
     if not adb_shell_result.startswith(DozeModeStatus.ACTIVE):
         info = ("dumpsys deviceidle get deep: {}".format(adb_shell_result))
         print(info)
@@ -629,8 +629,7 @@ def enable_doze_light(ad):
     time.sleep(5)
     ad.adb.shell("cmd deviceidle enable light")
     ad.adb.shell("cmd deviceidle step light")
-    adb_shell_result = ad.adb.shell("dumpsys deviceidle get light").decode(
-        'utf-8')
+    adb_shell_result = ad.adb.shell("dumpsys deviceidle get light")
     if not adb_shell_result.startswith(DozeModeStatus.IDLE):
         info = ("dumpsys deviceidle get light: {}".format(adb_shell_result))
         print(info)
@@ -650,8 +649,7 @@ def disable_doze_light(ad):
     """
     ad.adb.shell("dumpsys battery reset")
     ad.adb.shell("cmd deviceidle disable light")
-    adb_shell_result = ad.adb.shell("dumpsys deviceidle get light").decode(
-        'utf-8')
+    adb_shell_result = ad.adb.shell("dumpsys deviceidle get light")
     if not adb_shell_result.startswith(DozeModeStatus.ACTIVE):
         info = ("dumpsys deviceidle get light: {}".format(adb_shell_result))
         print(info)
@@ -722,27 +720,61 @@ def set_mobile_data_always_on(ad, new_state):
         1 if new_state else 0))
 
 
-def bypass_setup_wizard(ad):
+def bypass_setup_wizard(ad, bypass_wait_time=3):
     """Bypass the setup wizard on an input Android device
 
     Args:
         ad: android device object.
+        bypass_wait_time: Do not set this variable. Only modified for framework
+        tests.
 
     Returns:
         True if Andorid device successfully bypassed the setup wizard.
         False if failed.
     """
-    ad.adb.shell(
-        "am start -n \"com.google.android.setupwizard/.SetupWizardExitActivity\""
-    )
+    try:
+        ad.adb.shell("am start -n \"com.google.android.setupwizard/"
+                     ".SetupWizardExitActivity\"")
+        logging.debug("No error during default bypass call.")
+    except adb.AdbError as adb_error:
+        if adb_error.stdout == "ADB_CMD_OUTPUT:0":
+            if adb_error.stderr and \
+                    not adb_error.stderr.startswith("Error type 3\n"):
+                logging.error(
+                    "ADB_CMD_OUTPUT:0, but error is %s " % adb_error.stderr)
+                raise adb_error
+            logging.debug("Bypass wizard call received harmless error 3: "
+                          "No setup to bypass.")
+        elif adb_error.stdout == "ADB_CMD_OUTPUT:255":
+            # Run it again as root.
+            ad.adb.root_adb()
+            logging.debug("Need root access to bypass setup wizard.")
+            try:
+                ad.adb.shell("am start -n \"com.google.android.setupwizard/"
+                             ".SetupWizardExitActivity\"")
+                logging.debug("No error during rooted bypass call.")
+            except adb.AdbError as adb_error:
+                if adb_error.stdout == "ADB_CMD_OUTPUT:0":
+                    if adb_error.stderr and \
+                            not adb_error.stderr.startswith("Error type 3\n"):
+                        logging.error("Rooted ADB_CMD_OUTPUT:0, but error is "
+                                      "%s " % adb_error.stderr)
+                        raise adb_error
+                    logging.debug(
+                        "Rooted bypass wizard call received harmless "
+                        "error 3: No setup to bypass.")
+
     # magical sleep to wait for the gservices override broadcast to complete
-    time.sleep(3)
+    time.sleep(bypass_wait_time)
+
     provisioned_state = int(
         ad.adb.shell("settings get global device_provisioned"))
-    if (provisioned_state != 1):
+    if provisioned_state != 1:
         logging.error("Failed to bypass setup wizard.")
         return False
+    logging.debug("Setup wizard successfully bypassed.")
     return True
+
 
 def parse_ping_ouput(ad, count, out, loss_tolerance=20):
     """Ping Parsing util.
@@ -779,7 +811,10 @@ def parse_ping_ouput(ad, count, out, loss_tolerance=20):
     return True
 
 
-def adb_shell_ping(ad, count=120, dest_ip="www.google.com", timeout=200,
+def adb_shell_ping(ad,
+                   count=120,
+                   dest_ip="www.google.com",
+                   timeout=200,
                    loss_tolerance=20):
     """Ping utility using adb shell.
 

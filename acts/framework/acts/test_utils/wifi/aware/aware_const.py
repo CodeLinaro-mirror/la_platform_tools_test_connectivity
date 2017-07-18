@@ -15,6 +15,16 @@
 #   limitations under the License.
 
 ######################################################
+# Aware DW (Discovery Window) power mode values
+######################################################
+
+DW_24_INTERACTIVE = 1
+DW_5_INTERACTIVE = 1
+
+DW_24_NON_INTERACTIVE = 4
+DW_5_NON_INTERACTIVE = 0
+
+######################################################
 # Broadcast events
 ######################################################
 BROADCAST_WIFI_AWARE_AVAILABLE = "WifiAwareAvailable"
@@ -31,29 +41,22 @@ CONFIG_KEY_CLUSTER_HIGH = "ClusterHigh"
 CONFIG_KEY_ENABLE_IDEN_CB = "EnableIdentityChangeCallback"
 
 ######################################################
-# PublishConfig keys
+# Publish & Subscribe Config keys
 ######################################################
 
-PUBLISH_KEY_SERVICE_NAME = "ServiceName"
-PUBLISH_KEY_SSI = "ServiceSpecificInfo"
-PUBLISH_KEY_MATCH_FILTER = "MatchFilter"
-PUBLISH_KEY_TYPE = "PublishType"
-PUBLISH_KEY_COUNT = "PublishCount"
-PUBLISH_KEY_TTL = "TtlSec"
-PUBLISH_KEY_TERM_CB_ENABLED = "TerminateNotificationEnabled"
+DISCOVERY_KEY_SERVICE_NAME = "ServiceName"
+DISCOVERY_KEY_SSI = "ServiceSpecificInfo"
+DISCOVERY_KEY_MATCH_FILTER = "MatchFilter"
+DISCOVERY_KEY_MATCH_FILTER_LIST = "MatchFilterList"
+DISCOVERY_KEY_DISCOVERY_TYPE = "DiscoveryType"
+DISCOVERY_KEY_TTL = "TtlSec"
+DISCOVERY_KEY_TERM_CB_ENABLED = "TerminateNotificationEnabled"
 
-######################################################
-# SubscribeConfig keys
-######################################################
+PUBLISH_TYPE_UNSOLICITED = 0
+PUBLISH_TYPE_SOLICITED = 1
 
-SUBSCRIBE_KEY_SERVICE_NAME = "ServiceName"
-SUBSCRIBE_KEY_SSI = "ServiceSpecificInfo"
-SUBSCRIBE_KEY_MATCH_FILTER = "MatchFilter"
-SUBSCRIBE_KEY_TYPE = "SubscribeType"
-SUBSCRIBE_KEY_COUNT = "SubscribeCount"
-SUBSCRIBE_KEY_TTL = "TtlSec"
-SUBSCRIBE_KEY_STYLE = "MatchStyle"
-SUBSCRIBE_KEY_ENABLE_TERM_CB = "EnableTerminateNotification"
+SUBSCRIBE_TYPE_PASSIVE = 0
+SUBSCRIBE_TYPE_ACTIVE = 1
 
 ######################################################
 # WifiAwareAttachCallback events
@@ -92,6 +95,7 @@ SESSION_CB_KEY_REASON = "reason"
 SESSION_CB_KEY_PEER_ID = "peerId"
 SESSION_CB_KEY_SERVICE_SPECIFIC_INFO = "serviceSpecificInfo"
 SESSION_CB_KEY_MATCH_FILTER = "matchFilter"
+SESSION_CB_KEY_MATCH_FILTER_LIST = "matchFilterList"
 SESSION_CB_KEY_MESSAGE = "message"
 SESSION_CB_KEY_MESSAGE_ID = "messageId"
 SESSION_CB_KEY_MESSAGE_AS_STRING = "messageAsString"
@@ -113,6 +117,32 @@ RTT_LISTENER_CB_KEY_REASON = "reason"
 RTT_LISTENER_CB_KEY_DESCRIPTION = "description"
 
 ######################################################
+# Capabilities keys
+######################################################
+
+CAP_MAX_CONCURRENT_AWARE_CLUSTERS = "maxConcurrentAwareClusters"
+CAP_MAX_PUBLISHES = "maxPublishes"
+CAP_MAX_SUBSCRIBES = "maxSubscribes"
+CAP_MAX_SERVICE_NAME_LEN = "maxServiceNameLen"
+CAP_MAX_MATCH_FILTER_LEN = "maxMatchFilterLen"
+CAP_MAX_TOTAL_MATCH_FILTER_LEN = "maxTotalMatchFilterLen"
+CAP_MAX_SERVICE_SPECIFIC_INFO_LEN = "maxServiceSpecificInfoLen"
+CAP_MAX_EXTENDED_SERVICE_SPECIFIC_INFO_LEN = "maxExtendedServiceSpecificInfoLen"
+CAP_MAX_NDI_INTERFACES = "maxNdiInterfaces"
+CAP_MAX_NDP_SESSIONS = "maxNdpSessions"
+CAP_MAX_APP_INFO_LEN = "maxAppInfoLen"
+CAP_MAX_QUEUED_TRANSMIT_MESSAGES = "maxQueuedTransmitMessages"
+CAP_MAX_SUBSCRIBE_INTERFACE_ADDRESSES = "maxSubscribeInterfaceAddresses"
+CAP_SUPPORTED_CIPHER_SUITES = "supportedCipherSuites"
+
+######################################################
+
+# Aware NDI (NAN data-interface) name prefix
+AWARE_NDI_PREFIX = "aware_data"
+
+# Aware discovery channels
+AWARE_DISCOVERY_CHANNEL_24_BAND = 6
+AWARE_DISCOVERY_CHANNEL_5_BAND = 149
 
 # Aware Data-Path Constants
 DATA_PATH_INITIATOR = 0
@@ -120,3 +150,16 @@ DATA_PATH_RESPONDER = 1
 
 # Maximum send retry
 MAX_TX_RETRIES = 5
+
+# Callback keys (for 'adb shell cmd wifiaware native_cb get_cb_count')
+CB_EV_CLUSTER = "0"
+CB_EV_DISABLED = "1"
+CB_EV_PUBLISH_TERMINATED = "2"
+CB_EV_SUBSCRIBE_TERMINATED = "3"
+CB_EV_MATCH = "4"
+CB_EV_MATCH_EXPIRED = "5"
+CB_EV_FOLLOWUP_RECEIVED = "6"
+CB_EV_TRANSMIT_FOLLOWUP = "7"
+CB_EV_DATA_PATH_REQUEST = "8"
+CB_EV_DATA_PATH_CONFIRM = "9"
+CB_EV_DATA_PATH_TERMINATED = "10"

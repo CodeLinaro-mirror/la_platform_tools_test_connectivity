@@ -91,34 +91,22 @@ class TelephonyBaseTest(BaseTestClass):
     @staticmethod
     def tel_test_wrap(fn):
         def _safe_wrap_test_case(self, *args, **kwargs):
-            current_time = time.strftime("%m-%d-%Y-%H-%M-%S")
-            func_name = fn.__name__
-            test_id = "%s:%s:%s" % (self.__class__.__name__, func_name,
-                                    current_time)
+            test_id = "%s:%s:%s" % (self.__class__.__name__, self.test_name,
+                                    self.begin_time.replace(' ', '-'))
             self.test_id = test_id
-            self.begin_time = current_time
-            self.test_name = func_name
             log_string = "[Test ID] %s" % test_id
             self.log.info(log_string)
             try:
                 for ad in self.android_devices:
                     ad.droid.logI("Started %s" % log_string)
-                    ad.crash_report = ad.check_crash_report(
-                        log_crash_report=False)
-                    if ad.crash_report:
-                        ad.log.info("Found crash reports %s before test start",
-                                    ad.crash_report)
-
                 # TODO: b/19002120 start QXDM Logging
                 result = fn(self, *args, **kwargs)
                 for ad in self.android_devices:
                     ad.droid.logI("Finished %s" % log_string)
-                    new_crash = ad.check_crash_report()
-                    crash_diff = set(new_crash).difference(
-                        set(ad.crash_report))
-                    if crash_diff:
-                        ad.log.error("Find new crash reports %s",
-                                     list(crash_diff))
+                    new_crash = ad.check_crash_report(self.test_name,
+                                                      self.begin_time, result)
+                    if new_crash:
+                        ad.log.error("Find new crash reports %s", new_crash)
                 if not result and self.user_params.get("telephony_auto_rerun"):
                     self.teardown_test()
                     # re-run only once, if re-run pass, mark as pass
@@ -190,13 +178,24 @@ class TelephonyBaseTest(BaseTestClass):
                 ad.adb.shell("am start --ei EXTRA_LAUNCH_CARRIER_APP 0 -n "
                              "\"com.google.android.wfcactivation/"
                              ".VzwEmergencyAddressActivity\"")
+            # Start telephony monitor
             if not ad.is_apk_running("com.google.telephonymonitor"):
                 ad.log.info("TelephonyMonitor is not running, start it now")
                 ad.adb.shell(
                     'am broadcast -a '
                     'com.google.gservices.intent.action.GSERVICES_OVERRIDE -e '
                     '"ce.telephony_monitor_enable" "true"')
-
+            # Set chrome browser start with no-first-run verification and
+            # disable-fre. Give permission to read from and write to storage.
+            for cmd in ("pm grant com.android.chrome "
+                    "android.permission.READ_EXTERNAL_STORAGE",
+                    "pm grant com.android.chrome "
+                    "android.permission.WRITE_EXTERNAL_STORAGE",
+                    "rm /data/local/chrome-command-line",
+                    "am set-debug-app --persistent com.android.chrome",
+                    'echo "chrome --no-default-browser-check --no-first-run '
+                    '--disable-fre" > /data/local/tmp/chrome-command-line'):
+                ad.adb.shell(cmd)
             # Ensure that a test class starts from a consistent state that
             # improves chances of valid network selection and facilitates
             # logging.
