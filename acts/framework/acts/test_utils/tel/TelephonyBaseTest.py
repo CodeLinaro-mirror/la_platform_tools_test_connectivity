@@ -32,30 +32,24 @@ from acts.signals import TestAbortAll
 from acts import utils
 
 from acts.test_utils.tel.tel_subscription_utils import \
-    get_subid_from_slot_index
-from acts.test_utils.tel.tel_subscription_utils import \
     initial_set_up_for_subid_infomation
-from acts.test_utils.tel.tel_subscription_utils import set_subid_for_data
-from acts.test_utils.tel.tel_subscription_utils import \
-    set_subid_for_message
-from acts.test_utils.tel.tel_subscription_utils import \
-    set_subid_for_outgoing_call
 from acts.test_utils.tel.tel_test_utils import abort_all_tests
-from acts.test_utils.tel.tel_test_utils import toggle_airplane_mode
+from acts.test_utils.tel.tel_test_utils import check_qxdm_logger_always_on
 from acts.test_utils.tel.tel_test_utils import ensure_phones_default_state
 from acts.test_utils.tel.tel_test_utils import ensure_phones_idle
-from acts.test_utils.tel.tel_test_utils import \
-    reset_preferred_network_type_to_allowable_range
+from acts.test_utils.tel.tel_test_utils import refresh_droid_config
+from acts.test_utils.tel.tel_test_utils import setup_droid_properties
 from acts.test_utils.tel.tel_test_utils import set_phone_screen_on
 from acts.test_utils.tel.tel_test_utils import set_phone_silent_mode
-from acts.test_utils.tel.tel_test_utils import setup_droid_properties
-from acts.test_utils.tel.tel_test_utils import refresh_droid_config
+from acts.test_utils.tel.tel_test_utils import set_qxdm_logger_always_on
+from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_FOREGROUND
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_RINGING
-from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND
 from acts.test_utils.tel.tel_defines import WIFI_VERBOSE_LOGGING_ENABLED
 from acts.test_utils.tel.tel_defines import WIFI_VERBOSE_LOGGING_DISABLED
 from acts.utils import force_airplane_mode
+
+QXDM_LOG_PATH = "/data/vendor/radio/diag_logs/logs/"
 
 
 class TelephonyBaseTest(BaseTestClass):
@@ -65,6 +59,15 @@ class TelephonyBaseTest(BaseTestClass):
         self.logger_sessions = []
 
         for ad in self.android_devices:
+            if getattr(ad, "qxdm_always_on", False):
+                #this is only supported on 2017 devices
+                ad.log.info("qxdm_always_on is set in config file")
+                mask = getattr(ad, "qxdm_mask", "Radio-general.cfg")
+                if not check_qxdm_logger_always_on(ad, mask):
+                    ad.log.info("qxdm always on is not set, turn it on")
+                    set_qxdm_logger_always_on(ad, mask)
+                else:
+                    ad.log.info("qxdm always on is already set")
             #The puk and pin should be provided in testbed config file.
             #"AndroidDevice": [{"serial": "84B5T15A29018214",
             #                   "adb_logcat_param": "-b all",
@@ -88,34 +91,22 @@ class TelephonyBaseTest(BaseTestClass):
     @staticmethod
     def tel_test_wrap(fn):
         def _safe_wrap_test_case(self, *args, **kwargs):
-            current_time = time.strftime("%m-%d-%Y-%H-%M-%S")
-            func_name = fn.__name__
-            test_id = "%s:%s:%s" % (self.__class__.__name__, func_name,
-                                    current_time)
+            test_id = "%s:%s:%s" % (self.__class__.__name__, self.test_name,
+                                    self.begin_time.replace(' ', '-'))
             self.test_id = test_id
-            self.begin_time = current_time
-            self.test_name = func_name
             log_string = "[Test ID] %s" % test_id
             self.log.info(log_string)
             try:
                 for ad in self.android_devices:
                     ad.droid.logI("Started %s" % log_string)
-                    ad.crash_report = ad.check_crash_report(
-                        log_crash_report=False)
-                    if ad.crash_report:
-                        ad.log.info("Found crash reports %s before test start",
-                                    ad.crash_report)
-
                 # TODO: b/19002120 start QXDM Logging
                 result = fn(self, *args, **kwargs)
                 for ad in self.android_devices:
                     ad.droid.logI("Finished %s" % log_string)
-                    new_crash = ad.check_crash_report()
-                    crash_diff = set(new_crash).difference(
-                        set(ad.crash_report))
-                    if crash_diff:
-                        ad.log.error("Find new crash reports %s",
-                                     list(crash_diff))
+                    new_crash = ad.check_crash_report(self.test_name,
+                                                      self.begin_time, result)
+                    if new_crash:
+                        ad.log.error("Find new crash reports %s", new_crash)
                 if not result and self.user_params.get("telephony_auto_rerun"):
                     self.teardown_test()
                     # re-run only once, if re-run pass, mark as pass
@@ -187,13 +178,24 @@ class TelephonyBaseTest(BaseTestClass):
                 ad.adb.shell("am start --ei EXTRA_LAUNCH_CARRIER_APP 0 -n "
                              "\"com.google.android.wfcactivation/"
                              ".VzwEmergencyAddressActivity\"")
+            # Start telephony monitor
             if not ad.is_apk_running("com.google.telephonymonitor"):
                 ad.log.info("TelephonyMonitor is not running, start it now")
                 ad.adb.shell(
                     'am broadcast -a '
                     'com.google.gservices.intent.action.GSERVICES_OVERRIDE -e '
                     '"ce.telephony_monitor_enable" "true"')
-
+            # Set chrome browser start with no-first-run verification and
+            # disable-fre. Give permission to read from and write to storage.
+            for cmd in ("pm grant com.android.chrome "
+                    "android.permission.READ_EXTERNAL_STORAGE",
+                    "pm grant com.android.chrome "
+                    "android.permission.WRITE_EXTERNAL_STORAGE",
+                    "rm /data/local/chrome-command-line",
+                    "am set-debug-app --persistent com.android.chrome",
+                    'echo "chrome --no-default-browser-check --no-first-run '
+                    '--disable-fre" > /data/local/tmp/chrome-command-line'):
+                ad.adb.shell(cmd)
             # Ensure that a test class starts from a consistent state that
             # improves chances of valid network selection and facilitates
             # logging.

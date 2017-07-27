@@ -44,7 +44,8 @@ ANDROID_DEVICE_PICK_ALL_TOKEN = "*"
 ANDROID_DEVICE_ADB_LOGCAT_PARAM_KEY = "adb_logcat_param"
 ANDROID_DEVICE_EMPTY_CONFIG_MSG = "Configuration is empty, abort!"
 ANDROID_DEVICE_NOT_LIST_CONFIG_MSG = "Configuration should be a list, abort!"
-CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/ramdumps/", "/data/ramdump/")
+CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/vendor/ramdump/",
+                      "/data/ramdump/", "/data/vendor/ssrdump")
 CRASH_REPORT_SKIPS = ("RAMDUMP_RESERVED", "RAMDUMP_STATUS")
 BUG_REPORT_TIMEOUT = 1200
 PULL_TIMEOUT = 300
@@ -775,18 +776,15 @@ class AndroidDevice:
         Returns:
         True if package is installed. False otherwise.
         """
+
         try:
-            out = self.adb.shell(
-                'pm list packages | grep -w "package:%s"' % package_name,
-                ignore_status=False)
-            if package_name in out:
-                self.log.debug("apk %s is installed", package_name)
-                return True
-            else:
-                self.log.debug("apk %s is not installed, query returns %s",
-                               package_name, out)
-                return False
-        except:
+            return bool(
+                self.adb.shell('pm list packages | grep -w "package:%s"' %
+                               package_name))
+
+        except Exception as err:
+            self.log.error('Could not determine if %s is installed. '
+                           'Received error:\n%s', package_name, err)
             return False
 
     def is_sl4a_installed(self):
@@ -856,14 +854,12 @@ class AndroidDevice:
                 new_br = False
         except adb.AdbError:
             new_br = False
-        br_path = os.path.join(self.log_path, "BugReports")
+        br_path = os.path.join(self.log_path, test_name)
         utils.create_dir(br_path)
-        base_name = ",{},{}.txt".format(begin_time, self.serial)
-        if new_br:
-            base_name = base_name.replace(".txt", ".zip")
-        test_name_len = utils.MAX_FILENAME_LEN - len(base_name)
-        out_name = test_name[:test_name_len] + base_name
-        full_out_path = os.path.join(br_path, out_name.replace(' ', '_'))
+        out_name = "AndroidDevice%s_%s" % (self.serial, begin_time.replace(
+            " ", "_").replace(":", "-"))
+        out_name = "%s.zip" % out_name if new_br else "%s.txt" % out_name
+        full_out_path = os.path.join(br_path, out_name)
         # in case device restarted, wait for adb interface to return
         self.wait_for_boot_completion()
         self.log.info("Taking bugreport for %s.", test_name)
@@ -897,20 +893,40 @@ class AndroidDevice:
             self.adb.pull(
                 "%s %s" % (file_name, remote_path), timeout=PULL_TIMEOUT)
 
-    def check_crash_report(self, log_crash_report=False):
+    def check_crash_report(self,
+                           test_name=None,
+                           begin_time=None,
+                           log_crash_report=False):
         """check crash report on the device."""
         crash_reports = []
         for crash_path in CRASH_REPORT_PATHS:
             for report in self.get_file_names(crash_path):
                 if report in CRASH_REPORT_SKIPS:
                     continue
-                crash_reports.append(os.path.join(crash_path, report))
-        if log_crash_report:
-            crash_log_path = os.path.join(self.log_path, "CrashReports",
-                                          time.strftime("%m-%d-%Y-%H-%M-%S"))
+                file_path = os.path.join(crash_path, report)
+                if begin_time:
+                    file_time = self.adb.shell('stat -c "%%y" %s' % file_path)
+                    if begin_time < file_time.split('-', 1)[1]:
+                        crash_reports.append(file_path)
+                else:
+                    crash_reports.append(file_path)
+        if crash_reports and log_crash_report:
+            test_name = test_name or begin_time or time.strftime(
+                "%m-%d-%Y-%H-%M-%S")
+            crash_log_path = os.path.join(self.log_path, test_name, "Crashes")
             utils.create_dir(crash_log_path)
             self.pull_files(crash_reports, crash_log_path)
         return crash_reports
+
+    def get_qxdm_logs(self):
+        """Get qxdm logs."""
+        ad.log.info("Pull QXDM Logs")
+        qxdm_logs = self.get_file_names(
+            "/data/vendor/radio/diag_logs/logs/*.qmdl")
+        if qxdm_logs:
+            qxdm_path = os.path.join(ad.log_path, "QXDM_Logs")
+            utils.create_dir(qxdm_path)
+            ad.pull_files(qxdm_logs, qxdm_path)
 
     def start_new_session(self):
         """Start a new session in sl4a.
@@ -1090,6 +1106,44 @@ class AndroidDevice:
         if has_adb_log:
             self.start_adb_logcat()
         return droid, ed
+
+    def fastboot_wipe(self):
+        """Wipe the device in fastboot mode.
+
+        Pull sl4a apk from device. Terminate all sl4a sessions,
+        Reboot the device to bootloader, wipe the device by fastboot.
+        Reboot the device. wait for device to complete booting
+        Re-intall and start an sl4a session.
+
+        """
+        #Pull sl4a apk from device
+        out = self.adb.shell("pm path com.googlecode.android_scripting")
+        result = re.search(r"package:(.*)", out)
+        if not result:
+            self.log.error("Couldn't find sl4a apk")
+        else:
+            sl4a_apk = result.group(1)
+            self.log.info("Get sl4a apk from %s", sl4a_apk)
+            self.pull_files([sl4a_apk], "/tmp/")
+        has_adb_log = self.is_adb_logcat_on
+        if has_adb_log:
+            self.stop_adb_logcat()
+        self.terminate_all_sessions()
+        self.log.info("Reboot to bootloader")
+        self.adb.reboot_bootloader(ignore_status=True)
+        self.log.info("Wipe in fastboot")
+        self.fastboot._w()
+        self.fastboot.reboot()
+        self.log.info("Reboot")
+        self.wait_for_boot_completion()
+        self.root_adb()
+        if result:
+            self.log.info("Re-install sl4a")
+            self.adb.install("-r /tmp/base.apk")
+        droid, ed = self.get_droid()
+        ed.start()
+        if has_adb_log:
+            self.start_adb_logcat()
 
     def search_logcat(self, matching_string):
         """Search logcat message with given string.

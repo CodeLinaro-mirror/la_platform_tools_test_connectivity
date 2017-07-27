@@ -20,6 +20,7 @@ standard_library.install_aliases()
 import concurrent.futures
 import json
 import logging
+import re
 import os
 import urllib.parse
 import time
@@ -115,7 +116,7 @@ from acts.test_utils.tel.tel_lookup_tables import is_valid_rat
 from acts.test_utils.tel.tel_lookup_tables import get_allowable_network_preference
 from acts.test_utils.tel.tel_lookup_tables import \
     get_voice_mail_count_check_function
-from acts.test_utils.tel.tel_lookup_tables import get_voice_mail_number_function
+from acts.test_utils.tel.tel_lookup_tables import get_voice_mail_check_number
 from acts.test_utils.tel.tel_lookup_tables import get_voice_mail_delete_digit
 from acts.test_utils.tel.tel_lookup_tables import \
     network_preference_for_generaton
@@ -139,6 +140,9 @@ from acts.test_utils.wifi import wifi_test_utils
 from acts.test_utils.wifi import wifi_constants
 from acts.utils import adb_shell_ping
 from acts.utils import load_config
+from acts.utils import create_dir
+from acts.utils import start_standing_subprocess
+from acts.utils import stop_standing_subprocess
 
 WIFI_SSID_KEY = wifi_test_utils.WifiEnums.SSID_KEY
 WIFI_PWD_KEY = wifi_test_utils.WifiEnums.PWD_KEY
@@ -252,11 +256,16 @@ def setup_droid_properties(log, ad, sim_filename=None):
                     sim_data[iccid]["phone_num"], sim_filename,
                     sub_info["phone_num"])
             sub_info["phone_num"] = sim_data[iccid]["phone_num"]
-        if sub_info["sim_operator_name"] != sub_info["network_operator_name"]:
+        if not hasattr(
+                ad, 'roaming'
+        ) and sub_info["sim_plmn"] != sub_info["network_plmn"] and (
+                sub_info["sim_operator_name"].strip() not in
+                sub_info["network_operator_name"].strip()):
+            ad.log.info("roaming is not enabled, enable it")
             setattr(ad, 'roaming', True)
-    if getattr(ad, 'roaming', False):
-        ad.log.info("Enable cell data roaming")
-        toggle_cell_data_roaming(ad, True)
+    data_roaming = getattr(ad, 'roaming', False)
+    if get_cell_data_roaming_state_by_adb(ad) != data_roaming:
+        set_cell_data_roaming_state_by_adb(ad, data_roaming)
 
     ad.log.info("cfg = %s", ad.cfg)
 
@@ -393,6 +402,25 @@ def toggle_airplane_mode(log, ad, new_state=None, strict_checking=True):
     else:
         return toggle_airplane_mode_msim(
             log, ad, new_state, strict_checking=strict_checking)
+
+
+def get_telephony_signal_strength(ad):
+    signal_strength = ad.droid.telephonyGetSignalStrength()
+    #{'evdoEcio': -1, 'asuLevel': 28, 'lteSignalStrength': 14, 'gsmLevel': 0,
+    # 'cdmaAsuLevel': 99, 'evdoDbm': -120, 'gsmDbm': -1, 'cdmaEcio': -160,
+    # 'level': 2, 'lteLevel': 2, 'cdmaDbm': -120, 'dbm': -112, 'cdmaLevel': 0,
+    # 'lteAsuLevel': 28, 'gsmAsuLevel': 99, 'gsmBitErrorRate': 0,
+    # 'lteDbm': -112, 'gsmSignalStrength': 99}
+    if not signal_strength: signal_strength = {}
+    out = ad.adb.shell("dumpsys telephony.registry | grep -i signalstrength")
+    signals = re.findall(r"(-*\d+)", out)
+    for i, val in enumerate(
+        ("gsmSignalStrength", "gsmBitErrorRate", "cdmaDbm", "cdmaEcio",
+         "evdoDbm", "evdoEcio", "evdoSnr", "lteSignalStrength", "lteRsrp",
+         "lteRsrq", "lteRssnr", "lteCqi", "lteRsrpBoost")):
+        signal_strength[val] = signal_strength.get(val, int(signals[i]))
+    ad.log.info("Telephony Signal strength = %s", signal_strength)
+    return signal_strength
 
 
 def is_expected_event(event_to_check, events_list):
@@ -688,7 +716,8 @@ def wait_for_ringing_call_for_subscription(
         incoming_number=None,
         caller=None,
         event_tracking_started=False,
-        timeout=MAX_WAIT_TIME_CALLEE_RINGING):
+        timeout=MAX_WAIT_TIME_CALLEE_RINGING,
+        retries=1):
     """Wait for an incoming call on specified subscription.
 
     Args:
@@ -706,24 +735,32 @@ def wait_for_ringing_call_for_subscription(
     if not event_tracking_started:
         ad.ed.clear_all_events()
         ad.droid.telephonyStartTrackingCallStateForSubscription(sub_id)
-    event_ringing = _wait_for_ringing_event(log, ad, timeout)
+    event_ringing = None
+    for i in range(retries):
+        event_ringing = _wait_for_ringing_event(log, ad, timeout)
+        if event_ringing:
+            ad.log.info("callee received ring event")
+            break
+        if ad.droid.telephonyGetCallStateForSubscription(
+                sub_id
+        ) == TELEPHONY_STATE_RINGING or ad.droid.telecomIsRinging():
+            ad.log.info("callee in ringing state")
+            break
+        if i == retries - 1:
+            ad.log.error(
+                "callee didn't receive ring event or got into ringing state")
+            return False
     if not event_tracking_started:
         ad.droid.telephonyStopTrackingCallStateChangeForSubscription(sub_id)
     if caller and not caller.droid.telecomIsInCall():
         caller.log.error("Caller not in call state")
         raise _CallSequenceException("Caller not in call state")
-    if not event_ringing and not (
-            ad.droid.telephonyGetCallStateForSubscription(sub_id) ==
-            TELEPHONY_STATE_RINGING or ad.droid.telecomIsRinging()):
-        ad.log.info("Not in call ringing state")
-        return False
     if not incoming_number:
         return True
 
-    result = check_phone_number_match(
-        event_ringing['data'][CallStateContainer.INCOMING_NUMBER],
-        incoming_number)
-    if not result:
+    if event_ringing and not check_phone_number_match(
+            event_ringing['data'][CallStateContainer.INCOMING_NUMBER],
+            incoming_number):
         ad.log.error(
             "Incoming Number not match. Expected number:%s, actual number:%s",
             incoming_number,
@@ -1442,7 +1479,8 @@ def call_setup_teardown_for_subscription(
     try:
         if not initiate_call(log, ad_caller, callee_number):
             raise _CallSequenceException("Initiate call failed.")
-
+        else:
+            ad_caller.log.info("Caller initate call successfully")
         if not wait_and_answer_call_for_subscription(
                 log,
                 ad_callee,
@@ -1451,7 +1489,8 @@ def call_setup_teardown_for_subscription(
                 caller=ad_caller,
                 incall_ui_display=incall_ui_display):
             raise _CallSequenceException("Answer call fail.")
-
+        else:
+            ad_callee.log.info("Callee answered the call successfully")
         # ensure that all internal states are updated in telecom
         time.sleep(WAIT_TIME_ANDROID_STATE_SETTLING)
 
@@ -1466,29 +1505,38 @@ def call_setup_teardown_for_subscription(
                                  wait_time_in_call - elapsed_time)
             time.sleep(CHECK_INTERVAL)
             elapsed_time += CHECK_INTERVAL
+            time_message = "at <%s>/<%s> second." % (elapsed_time,
+                                                     wait_time_in_call)
             if not verify_caller_func:
-                caller_state_result = ad_caller.droid.telecomIsInCall()
+                if not ad_caller.droid.telecomIsInCall():
+                    ad_caller.log.error("Caller not in call state %s",
+                                        time_message)
+                    raise _CallSequenceException(
+                        "Caller not in correct state %s.".format(time_message))
             else:
-                caller_state_result = verify_caller_func(log, ad_caller)
-            if not caller_state_result:
-                raise _CallSequenceException(
-                    "Caller not in correct state at <{}>/<{}> second.".format(
-                        elapsed_time, wait_time_in_call))
+                if not verify_caller_func(log, ad_caller):
+                    ad_caller.log.error("Caller %s return False",
+                                        verify_caller_func.__name__)
+                    raise _CallSequenceException(
+                        "Caller not in correct state %s.".format(time_message))
             if not verify_callee_func:
-                callee_state_result = ad_callee.droid.telecomIsInCall()
+                if not ad_callee.droid.telecomIsInCall():
+                    ad_callee.log.error("Callee not in call state %s",
+                                        time_message)
+                    raise _CallSequenceException(
+                        "Callee not in correct state %s.".format(time_message))
             else:
-                callee_state_result = verify_callee_func(log, ad_callee)
-            if not callee_state_result:
-                raise _CallSequenceException(
-                    "Callee not in correct state at <{}>/<{}> second.".format(
-                        elapsed_time, wait_time_in_call))
+                if not verify_callee_func(log, ad_callee):
+                    ad_callee.log.error("Callee %s return False",
+                                        verify_callee_func.__name__)
+                    raise _CallSequenceException(
+                        "Callee not in correct state %s.".format(time_message))
 
         if not ad_hangup:
             return True
-
         if not hangup_call(log, ad_hangup):
+            ad_hangup.log.info("Failed to hang up the call")
             raise _CallSequenceException("Error in Hanging-Up Call")
-
         return True
 
     except _CallSequenceException as e:
@@ -1620,11 +1668,11 @@ def _check_file_existance(ad, file_name, out_path, expected_file_size=None):
     """
     if out_path.endswith("/"):
         out_path = os.path.join(out_path, file_name)
-    out = ad.adb.shell("ls -l %s" % out_path, ignore_status=True)
+    out = ad.adb.shell('stat -c "%%s" %s' % out_path, ignore_status=True)
     # Handle some old version adb returns error message "No such" into std_out
-    if out and "No such" not in out and file_name in out:
+    if out and "No such" not in out:
         if expected_file_size:
-            file_size = int(out.split(" ")[4])
+            file_size = int(out)
             if file_size >= expected_file_size:
                 ad.log.info("File %s of size %s is in %s", file_name,
                             file_size, out_path)
@@ -1646,9 +1694,9 @@ def active_file_download_task(log, ad, file_name="5MB"):
     curl_capable = True
     try:
         out = ad.adb.shell("curl --version")
-        if "not found" in out:
+        if not out or "not found" in out:
             curl_capable = False
-    except AdbError:
+    except Exception:
         curl_capable = False
     # files available for download on the same website:
     # 1GB.zip, 512MB.zip, 200MB.zip, 50MB.zip, 20MB.zip, 10MB.zip, 5MB.zip
@@ -1667,9 +1715,10 @@ def active_file_download_task(log, ad, file_name="5MB"):
     if not file_size:
         log.warning("file_name %s for download is not available", file_name)
         return False
-    timeout = min(max(file_size / 100000, 60), 3600)
+    timeout = min(max(file_size / 100000, 300), 3600)
     output_path = "/sdcard/Download/" + file_name + ".zip"
     if not curl_capable:
+        ad.log.info("curl is not available, using chrome to download file")
         return (http_file_download_by_chrome, (ad, url, file_size, True,
                                                timeout))
     else:
@@ -1747,7 +1796,7 @@ def http_file_download_by_curl(ad,
                                out_path=None,
                                expected_file_size=None,
                                remove_file_after_check=True,
-                               timeout=900,
+                               timeout=3600,
                                limit_rate=None,
                                retry=3):
     """Download http file by adb curl.
@@ -1797,7 +1846,7 @@ def http_file_download_by_chrome(ad,
                                  url,
                                  expected_file_size=None,
                                  remove_file_after_check=True,
-                                 timeout=900):
+                                 timeout=3600):
     """Download http file by chrome.
 
     Args:
@@ -1809,18 +1858,14 @@ def http_file_download_by_chrome(ad,
                                  check.
         timeout: timeout for file download to complete.
     """
-    file_name, out_path = _generate_file_name_and_out_path(url,
-                                                           "/sdcard/Download/")
-    for cmd in ("am set-debug-app --persistent com.android.chrome",
-                'echo "chrome --no-default-browser-check --no-first-run '
-                '--disable-fre > /data/local/chrome-command-line"',
-                "pm grant com.android.chrome "
-                "android.permission.READ_EXTERNAL_STORAGE",
-                "pm grant com.android.chrome "
-                "android.permission.WRITE_EXTERNAL_STORAGE",
+    file_name, out_path = _generate_file_name_and_out_path(
+        url, "/sdcard/Download/")
+    # Remove pre-existing file
+    ad.adb.shell("rm %s" % out_path, ignore_status=True)
+    ad.log.info("Download %s from %s with timeout %s", file_name, url, timeout)
+    for cmd in ("input keyevent KEYCODE_WAKEUP", "input swipe 200 400 200 0",
                 'am start -a android.intent.action.VIEW -d "%s"' % url):
         ad.adb.shell(cmd)
-    ad.log.info("Download %s from %s with timeout %s", file_name, url, timeout)
     elapse_time = 0
     while elapse_time < timeout:
         time.sleep(30)
@@ -1880,6 +1925,13 @@ def http_file_download_by_sl4a(log,
             ad.adb.shell("rm %s" % out_path, ignore_status=True)
 
 
+def trigger_modem_crash(log, ad, timeout=10):
+    cmd = "echo restart > /sys/kernel/debug/msm_subsys/modem"
+    ad.log.info("Triggering Modem Crash using adb command %s", cmd)
+    ad.adb.shell(cmd, timeout=timeout)
+    return True
+
+
 def _connection_state_change(_event, target_state, connection_type):
     if connection_type:
         if 'TypeName' not in _event['data']:
@@ -1893,8 +1945,7 @@ def _connection_state_change(_event, target_state, connection_type):
                 connection_type, connection_type_string_in_event, cur_type)
             return False
 
-    if 'isConnected' in _event['data'] and _event['data'][
-            'isConnected'] == target_state:
+    if 'isConnected' in _event['data'] and _event['data']['isConnected'] == target_state:
         return True
     return False
 
@@ -1921,8 +1972,8 @@ def wait_for_cell_data_connection(
         False if failed.
     """
     sub_id = get_default_data_sub_id(ad)
-    return wait_for_cell_data_connection_for_subscription(log, ad, sub_id,
-                                                          state, timeout_value)
+    return wait_for_cell_data_connection_for_subscription(
+        log, ad, sub_id, state, timeout_value)
 
 
 def _is_data_connection_state_match(log, ad, expected_data_connection_state):
@@ -2146,6 +2197,26 @@ def _wait_for_nw_data_connection(
         ad.droid.connectivityStopTrackingConnectivityStateChange()
 
 
+def get_cell_data_roaming_state_by_adb(ad):
+    """Get Cell Data Roaming state. True for enabled, False for disabled"""
+    adb_str = {"1": True, "0": False}
+    out = ad.adb.shell("settings get global data_roaming")
+    return adb_str[out]
+
+
+def get_cell_data_roaming_state_by_adb(ad):
+    """Get Cell Data Roaming state. True for enabled, False for disabled"""
+    state_mapping = {"1": True, "0": False}
+    return state_mapping[ad.adb.shell("settings get global data_roaming")]
+
+
+def set_cell_data_roaming_state_by_adb(ad, state):
+    """Set Cell Data Roaming state."""
+    state_mapping = {True: "1", False: "0"}
+    ad.log.info("Set data roaming to %s", state)
+    ad.adb.shell("settings put global data_roaming %s" % state_mapping[state])
+
+
 def toggle_cell_data_roaming(ad, state):
     """Enable cell data roaming for default data subscription.
 
@@ -2294,15 +2365,16 @@ def set_wfc_mode(log, ad, wfc_mode):
             if wfc_mode == WFC_MODE_DISABLED:
                 return True
             else:
-                log.error("WFC not supported by platform.")
+                ad.log.error("WFC not supported by platform.")
                 return False
-
         ad.droid.imsSetWfcMode(wfc_mode)
-
+        mode = ad.droid.imsGetWfcMode()
+        if mode != wfc_mode:
+            ad.log.error("WFC mode is %s, not in %s", mode, wfc_mode)
+            return False
     except Exception as e:
         log.error(e)
         return False
-
     return True
 
 
@@ -2390,8 +2462,14 @@ def is_phone_not_in_call(log, ad):
         log: log object.
         ad:  android device.
     """
-    return ((not ad.droid.telecomIsInCall()) and
-            (ad.droid.telephonyGetCallState() == TELEPHONY_STATE_IDLE))
+    in_call = ad.droid.telecomIsInCall()
+    call_state = ad.droid.telephonyGetCallState()
+    if in_call:
+        ad.log.info("Device is In Call")
+    if call_state != TELEPHONY_STATE_IDLE:
+        ad.log.info("Call_state is %s, not %s", call_state,
+                    TELEPHONY_STATE_IDLE)
+    return ((not in_call) and (call_state == TELEPHONY_STATE_IDLE))
 
 
 def wait_for_droid_in_call(log, ad, max_time):
@@ -2448,7 +2526,7 @@ def _is_attached(log, ad, voice_or_data):
 
 def _is_attached_for_subscription(log, ad, sub_id, voice_or_data):
     rat = get_network_rat_for_subscription(log, ad, sub_id, voice_or_data)
-    ad.log.info("Sub_id %s network rate is %s for %s", sub_id, rat,
+    ad.log.info("Sub_id %s network RAT is %s for %s", sub_id, rat,
                 voice_or_data)
     return rat != RAT_UNKNOWN
 
@@ -2573,11 +2651,15 @@ def is_volte_enabled(log, ad):
         Return True if VoLTE feature bit is True and IMS registered.
         Return False if VoLTE feature bit is False or IMS not registered.
     """
-    volte_status = ad.droid.telephonyIsVolteAvailable()
-    if volte_status is True and is_ims_registered(log, ad) is False:
-        ad.log.error("Error! VoLTE is Available, but IMS is not registered.")
+    if not ad.droid.telephonyIsVolteAvailable():
+        ad.log.info("IsVolteCallingAvailble is False")
         return False
-    return volte_status
+    else:
+        ad.log.info("IsVolteCallingAvailble is True")
+        if not is_ims_registered(log, ad):
+            ad.log.info("VoLTE is Available, but IMS is not registered.")
+            return False
+        return True
 
 
 def is_video_enabled(log, ad):
@@ -2639,12 +2721,16 @@ def is_wfc_enabled(log, ad):
         Return True if WiFi Calling feature bit is True and IMS registered.
         Return False if WiFi Calling feature bit is False or IMS not registered.
     """
-    wfc_status = ad.droid.telephonyIsWifiCallingAvailable()
-    if wfc_status is True and is_ims_registered(log, ad) is False:
-        log.error(
-            "Error! WiFi Calling is Available, but IMS is not registered.")
+    if not ad.droid.telephonyIsWifiCallingAvailable():
+        ad.log.info("IsWifiCallingAvailble is False")
         return False
-    return wfc_status
+    else:
+        ad.log.info("IsWifiCallingAvailble is True")
+        if not is_ims_registered(log, ad):
+            ad.log.info(
+                "WiFi Calling is Available, but IMS is not registered.")
+            return False
+        return True
 
 
 def wait_for_wfc_enabled(log, ad, max_time=MAX_WAIT_TIME_WFC_ENABLED):
@@ -3606,8 +3692,7 @@ def check_voice_mail_count(log, ad, voice_mail_count_before,
 def get_voice_mail_number(log, ad):
     """function to get the voice mail number
     """
-    voice_mail_number = get_voice_mail_number_function(
-        get_operator_name(log, ad))()
+    voice_mail_number = get_voice_mail_check_number(get_operator_name(log, ad))
     if voice_mail_number is None:
         return get_phone_number(log, ad)
     return voice_mail_number
@@ -3629,7 +3714,7 @@ def ensure_phone_idle(log, ad, max_time=MAX_WAIT_TIME_CALL_DROP):
     if ad.droid.telecomIsInCall():
         ad.droid.telecomEndCall()
     if not wait_for_droid_not_in_call(log, ad, max_time=max_time):
-        ad.log.error("Failed to end call on %s")
+        ad.log.error("Failed to end call")
         return False
     return True
 
@@ -3663,33 +3748,34 @@ def ensure_phone_default_state(log, ad, check_subscription=True):
     Phone not in airplane mode.
     """
     result = True
-
-    try:
-        ad.droid.telephonyFactoryReset()
-        ad.droid.imsFactoryReset()
-        if ad.droid.telecomIsInCall():
-            ad.droid.telecomEndCall()
-        if not wait_for_droid_not_in_call(log, ad):
-            ad.log.error("Failed to end call on %s")
-    except Exception as e:
-        ad.log.error("Failure %s, toggle APM instead", e)
-        toggle_airplane_mode(log, ad, True, False)
-        ad.droid.telephonyToggleDataConnection(True)
-        set_wfc_mode(log, ad, WFC_MODE_DISABLED)
-
     if not toggle_airplane_mode(log, ad, False, False):
         ad.log.error("Fail to turn off airplane mode")
         result = False
     set_wifi_to_default(log, ad)
+    try:
+        if ad.droid.telecomIsInCall():
+            ad.droid.telecomEndCall()
+            if not wait_for_droid_not_in_call(log, ad):
+                ad.log.error("Failed to end call")
+        ad.droid.telephonyFactoryReset()
+        ad.droid.imsFactoryReset()
+        data_roaming = getattr(ad, 'roaming', False)
+        if get_cell_data_roaming_state_by_adb(ad) != data_roaming:
+            set_cell_data_roaming_state_by_adb(ad, data_roaming)
+    except Exception as e:
+        ad.log.error("%s failure, toggle APM instead", e)
+        toggle_airplane_mode(log, ad, True, False)
+        toggle_airplane_mode(log, ad, False, False)
+        ad.droid.telephonyToggleDataConnection(True)
+        set_wfc_mode(log, ad, WFC_MODE_DISABLED)
+
+    get_telephony_signal_strength(ad)
 
     if not wait_for_not_network_rat(
             log, ad, RAT_FAMILY_WLAN, voice_or_data=NETWORK_SERVICE_DATA):
         ad.log.error("%s still in %s", NETWORK_SERVICE_DATA, RAT_FAMILY_WLAN)
         result = False
 
-    if getattr(ad, 'data_roaming', False):
-        ad.log.info("Enable cell data roaming")
-        toggle_cell_data_roaming(ad, True)
     if check_subscription and not ensure_phone_subscription(log, ad):
         ad.log.error("Unable to find a valid subscription!")
         result = False
@@ -3730,8 +3816,7 @@ def check_is_wifi_connected(log, ad, wifi_ssid):
         False if wifi is not connected to wifi_ssid
     """
     wifi_info = ad.droid.wifiGetConnectionInfo()
-    if wifi_info["supplicant_state"] == "completed" and wifi_info[
-            "SSID"] == wifi_ssid:
+    if wifi_info["supplicant_state"] == "completed" and wifi_info["SSID"] == wifi_ssid:
         ad.log.info("Wifi is connected to %s", wifi_ssid)
         return True
     else:
@@ -3766,7 +3851,11 @@ def ensure_wifi_connected(log, ad, wifi_ssid, wifi_pwd=None, retries=3):
             return True
         else:
             ad.log.info("Connecting to wifi %s", wifi_ssid)
-            ad.droid.wifiConnectByConfig(network)
+            try:
+                ad.droid.wifiConnectByConfig(network)
+            except Exception:
+                ad.log.info("Connecting to wifi by wifiConnect instead")
+                ad.droid.wifiConnect(network)
             time.sleep(20)
             if check_is_wifi_connected(log, ad, wifi_ssid):
                 ad.log.info("Connected to Wifi %s", wifi_ssid)
@@ -4170,8 +4259,8 @@ def is_network_call_back_event_match(event, network_callback_id,
     try:
         return (
             (network_callback_id == event['data'][NetworkCallbackContainer.ID])
-            and (network_callback_event == event['data'][
-                NetworkCallbackContainer.NETWORK_CALLBACK_EVENT]))
+            and (network_callback_event == event['data']
+                 [NetworkCallbackContainer.NETWORK_CALLBACK_EVENT]))
     except KeyError:
         return False
 
@@ -4271,3 +4360,73 @@ def get_number_from_tel_uri(uri):
         return uri_number
     else:
         return None
+
+
+def set_qxdm_logger_always_on(ad, mask_file="Radio-general.cfg"):
+    """Set QXDM logger always on.
+
+    Args:
+        ad: android device object.
+
+    """
+    ad.adb.shell("setprop persist.sys.modem.diag.mdlog true")
+    ad.adb.shell("setprop persist.radio.smlog_switch false")
+    ad.adb.shell('echo "diag_mdlog -f /data/vendor/radio/diag_logs/cfg/%s'
+                 ' -o /data/vendor/radio/diag_logs/logs -s 500 -n 10 -b -c > '
+                 '/data/vendor/radio/diag_logs/diag.conf"' % mask_file)
+    ad.reboot()
+
+
+def check_qxdm_logger_always_on(ad, mask_file="Radio-general.cfg"):
+    """Check if QXDM logger always on is set.
+
+    Args:
+        ad: android device object.
+
+    """
+    if ad.adb.shell("getprop persist.sys.modem.diag.mdlog") != 'true':
+        return False
+    if ad.adb.shell("getprop persist.radio.smlog_switch") != 'false':
+        return False
+    if mask_file not in ad.adb.shell(
+            "cat /data/vendor/radio/diag_logs/diag.conf", ignore_status=True):
+        return False
+    return True
+
+
+def start_adb_tcpdump(ad, test_name):
+    """Start tcpdump on any iface
+
+    Args:
+        ad: android device object.
+        test_name: tcpdump file name will have this
+
+    """
+    ad.log.debug("Ensuring no tcpdump is running in background")
+    ad.adb.shell("killall -9 tcpdump")
+    file_name = "/sdcard/tcpdump,{},{}.pcap".format(ad.serial, test_name)
+    ad.log.debug("tcpdump file is %s", file_name)
+    cmd = "adb -s {} shell tcpdump -i any -s0 -n -p udp port 500 or \
+          udp port 4500 -w {}".format(ad.serial, file_name)
+    ad.log.debug("%s" % cmd)
+    tcpdump_pid = start_standing_subprocess(cmd, 5)
+    return (tcpdump_pid, file_name)
+
+
+def stop_adb_tcpdump(ad, tcpdump_pid, tcpdump_file):
+    """Stops tcpdump on any iface
+       Pulls the tcpdump file in the tcpdump dir
+
+    Args:
+        ad: android device object.
+        tcpdump_pid: need to know which pid to stop
+        tcpdump_file: filename needed to pull out
+
+    """
+    stop_standing_subprocess(tcpdump_pid)
+    # Pulling to be done only in failure case
+    tcpdump_path = os.path.join(ad.log_path, "tcpdump")
+    create_dir(tcpdump_path)
+    ad.adb.pull("{} {}".format(tcpdump_file, tcpdump_path))
+    ad.adb.shell("rm -rf {}".format(tcpdump_file))
+    return True

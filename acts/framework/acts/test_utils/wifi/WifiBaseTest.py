@@ -17,6 +17,12 @@
     Base Class for Defining Common WiFi Test Functionality
 """
 
+import copy
+import itertools
+import time
+
+import acts.controllers.access_point as ap
+
 from acts import asserts
 from acts import utils
 from acts.base_test import BaseTestClass
@@ -32,6 +38,135 @@ class WifiBaseTest(BaseTestClass):
     def __init__(self, controllers):
         BaseTestClass.__init__(self, controllers)
 
+
+    def teardown_class(self):
+        """Teardown function that will be called after all the test cases in
+        the test class have been executed.
+
+        """
+        ap.destroy(self.access_points)
+
+
+    def get_wpa2_network(
+            self,
+            ap_count=1,
+            ssid_length_2g=hostapd_constants.AP_SSID_LENGTH_2G,
+            ssid_length_5g=hostapd_constants.AP_SSID_LENGTH_5G,
+            passphrase_length_2g=hostapd_constants.AP_PASSPHRASE_LENGTH_2G,
+            passphrase_length_5g=hostapd_constants.AP_PASSPHRASE_LENGTH_5G):
+
+        """Generates SSID and passphrase for a WPA2 network using random
+           generator.
+
+           Args:
+               ap_count: Determines if we want to use one or both the APs
+                         for configuration. If set to '2', then both APs will
+                         be configured with the same configuration.
+               ssid_length_2g: Int, number of characters to use for 2G SSID.
+               ssid_length_5g: Int, number of characters to use for 5G SSID.
+               passphrase_length_2g: Int, length of password for 2G network.
+               passphrase_length_5g: Int, length of password for 5G network.
+           Returns: A dict of 2G and 5G network lists for hostapd configuration.
+
+        """
+        network_dict_2g = {}
+        network_dict_5g = {}
+        ref_5g_security = hostapd_constants.WPA2_STRING
+        ref_2g_security = hostapd_constants.WPA2_STRING
+        self.user_params["reference_networks"] = []
+
+        ref_2g_ssid = '2g_%s' % utils.rand_ascii_str(ssid_length_2g)
+        ref_2g_passphrase = utils.rand_ascii_str(passphrase_length_2g)
+
+        ref_5g_ssid = '5g_%s' % utils.rand_ascii_str(ssid_length_5g)
+        ref_5g_passphrase = utils.rand_ascii_str(passphrase_length_5g)
+
+        network_dict_2g = {
+            "SSID": ref_2g_ssid,
+            "security": ref_2g_security,
+            "password": ref_2g_passphrase
+        }
+
+        network_dict_5g = {
+            "SSID": ref_5g_ssid,
+            "security": ref_5g_security,
+            "password": ref_5g_passphrase
+        }
+
+        for ap in range(ap_count):
+            self.user_params["reference_networks"].append({
+                "2g": network_dict_2g,
+                "5g": network_dict_5g
+            })
+        self.reference_networks = self.user_params["reference_networks"]
+        return {"2g": network_dict_2g, "5g": network_dict_5g}
+
+
+    def get_open_network(
+            self,
+            ap_count=1,
+            ssid_length_2g=hostapd_constants.AP_SSID_LENGTH_2G,
+            ssid_length_5g=hostapd_constants.AP_SSID_LENGTH_5G):
+
+        """Generates SSIDs for a open network using a random generator.
+
+        Args:
+            ap_count: Determines if we want to use one or both the APs for
+                      for configuration. If set to '2', then both APs will
+                      be configured with the same configuration.
+            ssid_length_2g: Int, number of characters to use for 2G SSID.
+            ssid_length_5g: Int, number of characters to use for 5G SSID.
+        Returns: A dict of 2G and 5G network lists for hostapd configuration.
+
+        """
+        network_dict_2g = {}
+        network_dict_5g = {}
+        self.user_params["open_network"] = []
+        open_2g_ssid = '2g_%s' % utils.rand_ascii_str(ssid_length_2g)
+        open_5g_ssid = '5g_%s' % utils.rand_ascii_str(ssid_length_5g)
+        network_dict_2g = {"SSID": open_2g_ssid, "security": 'none'}
+        network_dict_5g = {"SSID": open_5g_ssid, "security": 'none'}
+        for ap in range(ap_count):
+            self.user_params["open_network"].append({
+                "2g": network_dict_2g,
+                "5g": network_dict_5g
+            })
+        self.open_network = self.user_params["open_network"]
+        return {"2g": network_dict_2g, "5g": network_dict_5g}
+
+
+    def populate_bssid(self, ap, networks_5g, networks_2g):
+        """Get bssid for a given SSID and add it to the network dictionary.
+
+        Args:
+            networks_5g: List of 5g networks configured on the APs.
+            networks_2g: List of 2g networks configured on the APs.
+
+        """
+
+        if not(networks_5g or networks_2g):
+            return
+
+        for network in itertools.chain(networks_5g, networks_2g):
+            if 'channel' in network:
+                continue
+            bssid = ap.get_bssid_from_ssid(network["SSID"])
+            if network["security"] == hostapd_constants.WPA2_STRING:
+                # TODO:(bamahadev) Change all occurances of reference_networks
+                # in to wpa_networks.
+                network_list = self.reference_networks
+            else:
+                network_list = self.open_network
+            if '2g' in network["SSID"]:
+                band = hostapd_constants.BAND_2G
+            else:
+                band = hostapd_constants.BAND_5G
+            # For each network update BSSID if it doesn't already exist.
+            for ref_network in network_list:
+                if not 'bssid' in ref_network[band]:
+                    ref_network[band]["bssid"] = bssid
+
+
     def legacy_configure_ap_and_start(
             self,
             channel_5g=hostapd_constants.AP_DEFAULT_CHANNEL_5G,
@@ -42,160 +177,80 @@ class WifiBaseTest(BaseTestClass):
             ap_passphrase_length_2g=hostapd_constants.AP_PASSPHRASE_LENGTH_2G,
             ap_ssid_length_5g=hostapd_constants.AP_SSID_LENGTH_5G,
             ap_passphrase_length_5g=hostapd_constants.AP_PASSPHRASE_LENGTH_5G,
-    ):
+            ap_count=1):
         asserts.assert_true(
             len(self.user_params["AccessPoint"]) == 2,
             "Exactly two access points must be specified. \
-            If the access point has two radios, the configuration \
-            can be repeated for the second radio.")
+             Each accesspoint has 2 radios, one each for 2.4GHZ \
+             and 5GHz. A test can choose to use one or both APs.")
         network_list_2g = []
         network_list_5g = []
-        self.access_point_2g = self.access_points[0]
-        self.access_point_5g = self.access_points[1]
         network_list_2g.append({"channel": channel_2g})
         network_list_5g.append({"channel": channel_5g})
 
         if "reference_networks" in self.user_params:
             pass
         else:
-            ref_5g_security = hostapd_constants.WPA2_STRING
-            ref_2g_security = hostapd_constants.WPA2_STRING
-            self.user_params["reference_networks"] = []
-            for x in range(0, 2):
-                ref_2g_ssid = '2g_%s' % utils.rand_ascii_str(ap_ssid_length_2g)
-                ref_2g_passphrase = utils.rand_ascii_str(
-                    ap_passphrase_length_2g)
-                ref_5g_ssid = '5g_%s' % utils.rand_ascii_str(ap_ssid_length_5g)
-                ref_5g_passphrase = utils.rand_ascii_str(
-                    ap_passphrase_length_5g)
-                network_list_2g.append({
-                    "ssid": ref_2g_ssid,
-                    "security": ref_2g_security,
-                    "passphrase": ref_2g_passphrase
-                })
-                network_list_5g.append({
-                    "ssid": ref_5g_ssid,
-                    "security": ref_5g_security,
-                    "passphrase": ref_5g_passphrase
-                })
-                self.user_params["reference_networks"].append({
-                    "2g": {
-                        "SSID": ref_2g_ssid,
-                        "password": ref_2g_passphrase
-                    },
-                    "5g": {
-                        "SSID": ref_5g_ssid,
-                        "password": ref_5g_passphrase
-                    }
-                })
-            self.reference_networks = self.user_params["reference_networks"]
+            networks_dict = self.get_wpa2_network(ap_count=ap_count)
+            network_list_2g.append(networks_dict["2g"])
+            network_list_5g.append(networks_dict["5g"])
 
         if "open_network" in self.user_params:
             pass
         else:
-            self.user_params["open_network"] = []
-            open_2g_ssid = '2g_%s' % utils.rand_ascii_str(8)
-            network_list_2g.append({"ssid": open_2g_ssid, "security": 'none'})
-            self.user_params["open_network"] = {"SSID": open_2g_ssid}
-            self.open_network = self.user_params["open_network"]
+            networks_dict = self.get_open_network(ap_count=ap_count)
+            network_list_2g.append(networks_dict["2g"])
+            network_list_5g.append(networks_dict["5g"])
 
-        if "config_store_networks" in self.user_params:
-            pass
-        else:
-            self.user_params["config_store_networks"] = []
-            self.user_params["config_store_networks"].append(self.open_network)
-            config_store_2g_security = 'wpa2'
-            for x in range(0, 4):
-                config_store_2g_ssid = '2g_%s' % utils.rand_ascii_str(8)
-                config_store_2g_passphrase = utils.rand_ascii_str(10)
-                network_list_2g.append({
-                    "ssid": config_store_2g_ssid,
-                    "security": config_store_2g_security,
-                    "passphrase": config_store_2g_passphrase
-                })
-                self.user_params["config_store_networks"].append({
-                    "SSID": config_store_2g_ssid,
-                    "password": config_store_2g_passphrase
-                })
-            self.config_store_networks = self.user_params[
-                "config_store_networks"]
-
-        if "iot_networks" in self.user_params:
-            pass
-        else:
-            self.user_params["iot_networks"] = []
-            for iot_network in self.config_store_networks:
-                if "password" in iot_network:
-                    self.user_params["iot_networks"].append(iot_network)
-            iot_2g_security = 'wpa2'
-            for iot_network_2g in range(
-                    0, (max_2g_networks - len(network_list_2g)) + 1):
-                iot_2g_ssid = '2g_%s' % utils.rand_ascii_str(8)
-                iot_2g_passphrase = utils.rand_ascii_str(10)
-                network_list_2g.append({
-                    "ssid": iot_2g_ssid,
-                    "security": iot_2g_security,
-                    "passphrase": iot_2g_passphrase
-                })
-                self.user_params["iot_networks"].append({
-                    "SSID": iot_2g_ssid,
-                    "password": iot_2g_passphrase
-                })
-            iot_5g_security = 'wpa2'
-            for iot_network_5g in range(
-                    0, (max_5g_networks - len(network_list_5g)) + 1):
-                iot_5g_ssid = '5g_%s' % utils.rand_ascii_str(8)
-                iot_5g_passphrase = utils.rand_ascii_str(10)
-                network_list_5g.append({
-                    "ssid": iot_5g_ssid,
-                    "security": iot_5g_security,
-                    "passphrase": iot_5g_passphrase
-                })
-                self.user_params["iot_networks"].append({
-                    "SSID": iot_5g_ssid,
-                    "password": iot_5g_passphrase
-                })
-            self.iot_networks = self.user_params["iot_networks"]
+        orig_network_list_5g = copy.copy(network_list_5g)
+        orig_network_list_2g = copy.copy(network_list_2g)
 
         if len(network_list_5g) > 1:
             self.config_5g = self._generate_legacy_ap_config(network_list_5g)
-            self.access_point_5g.start_ap(self.config_5g)
-
         if len(network_list_2g) > 1:
             self.config_2g = self._generate_legacy_ap_config(network_list_2g)
-            self.access_point_2g.start_ap(self.config_2g)
+
+        for ap in range(ap_count):
+            self.access_points[ap].start_ap(self.config_2g)
+            self.access_points[ap].start_ap(self.config_5g)
+            self.populate_bssid(self.access_points[ap], orig_network_list_5g,
+                                orig_network_list_2g)
+
 
     def _generate_legacy_ap_config(self, network_list):
         bss_settings = []
         ap_settings = network_list.pop(0)
+        # TODO:(bmahadev) This is a bug. We should not have to pop the first
+        # network in the list and treat it as a separate case. Instead,
+        # create_ap_preset() should be able to take NULL ssid and security and
+        # build config based on the bss_Settings alone.
         hostapd_config_settings = network_list.pop(0)
         for network in network_list:
-            if "passphrase" in network:
+            if "password" in network:
                 bss_settings.append(
                     hostapd_bss_settings.BssSettings(
-                        name=network["ssid"],
-                        ssid=network["ssid"],
+                        name=network["SSID"],
+                        ssid=network["SSID"],
                         security=hostapd_security.Security(
                             security_mode=network["security"],
-                            password=network["passphrase"])))
+                            password=network["password"])))
             else:
                 bss_settings.append(
                     hostapd_bss_settings.BssSettings(
-                        name=network["ssid"], ssid=network["ssid"]))
-        if "passphrase" in hostapd_config_settings:
+                        name=network["SSID"], ssid=network["SSID"]))
+        if "password" in hostapd_config_settings:
             config = hostapd_ap_preset.create_ap_preset(
                 channel=ap_settings["channel"],
-                ssid=hostapd_config_settings["ssid"],
+                ssid=hostapd_config_settings["SSID"],
                 security=hostapd_security.Security(
                     security_mode=hostapd_config_settings["security"],
-                    password=hostapd_config_settings["passphrase"]),
-                bss_settings=bss_settings,
-                profile_name='whirlwind')
+                    password=hostapd_config_settings["password"]),
+                    bss_settings=bss_settings,
+                    profile_name='whirlwind')
         else:
             config = hostapd_ap_preset.create_ap_preset(
                 channel=ap_settings["channel"],
-                ssid=hostapd_config_settings["ssid"],
+                ssid=hostapd_config_settings["SSID"],
                 bss_settings=bss_settings,
                 profile_name='whirlwind')
-
         return config

@@ -40,36 +40,43 @@ class GattTestUtilsError(Exception):
 def setup_gatt_connection(cen_ad,
                           mac_address,
                           autoconnect,
-                          transport=GattTransport.TRANSPORT_AUTO.value):
+                          transport=GattTransport.TRANSPORT_AUTO.value,
+                          opportunistic=False):
     gatt_callback = cen_ad.droid.gattCreateGattCallback()
     log.info("Gatt Connect to mac address {}.".format(mac_address))
     bluetooth_gatt = cen_ad.droid.gattClientConnectGatt(
-        gatt_callback, mac_address, autoconnect, transport,
+        gatt_callback, mac_address, autoconnect, transport, opportunistic,
         GattPhyMask.PHY_LE_1M_MASK)
     expected_event = GattCbStrings.GATT_CONN_CHANGE.value.format(gatt_callback)
     try:
         event = cen_ad.ed.pop_event(expected_event, default_timeout)
     except Empty:
-        try:
-            cen_ad.droid.gattClientClose(bluetooth_gatt)
-        except Exception:
-            self.log.debug("Failed to close gatt client.")
-        raise GattTestUtilsError("Could not establish a connection to "
-                                 "peripheral. Expected event:".format(
-                                     expected_event))
+        close_gatt_client(cen_ad, bluetooth_gatt)
+        raise GattTestUtilsError(
+            "Could not establish a connection to "
+            "peripheral. Expected event: {}".format(expected_event))
     if event['data']['State'] != GattConnectionState.STATE_CONNECTED.value:
-        try:
-            cen_ad.droid.gattClientClose(bluetooth_gatt)
-        except Exception:
-            self.log.debug("Failed to close gatt client.")
-        raise GattTestUtilsError("Could not establish a connection to "
-                                 "peripheral. Event Details:".format(
-                                     pprint.pformat(event)))
+        close_gatt_client(cen_ad, bluetooth_gatt)
+        raise GattTestUtilsError(
+            "Could not establish a connection to "
+            "peripheral. Event Details: {}".format(pprint.pformat(event)))
     return bluetooth_gatt, gatt_callback
+
+
+def close_gatt_client(cen_ad, bluetooth_gatt):
+    try:
+        cen_ad.droid.gattClientClose(bluetooth_gatt)
+    except Exception:
+        log.debug("Failed to close gatt client.")
 
 
 def disconnect_gatt_connection(cen_ad, bluetooth_gatt, gatt_callback):
     cen_ad.droid.gattClientDisconnect(bluetooth_gatt)
+    wait_for_gatt_disconnect_event(cen_ad, gatt_callback)
+    return
+
+
+def wait_for_gatt_disconnect_event(cen_ad, gatt_callback):
     expected_event = GattCbStrings.GATT_CONN_CHANGE.value.format(gatt_callback)
     try:
         event = cen_ad.ed.pop_event(expected_event, default_timeout)
@@ -89,7 +96,8 @@ def orchestrate_gatt_connection(cen_ad,
                                 per_ad,
                                 transport=GattTransport.TRANSPORT_LE.value,
                                 mac_address=None,
-                                autoconnect=False):
+                                autoconnect=False,
+                                opportunistic=False):
     adv_callback = None
     if mac_address is None:
         if transport == GattTransport.TRANSPORT_LE.value:
@@ -103,7 +111,7 @@ def orchestrate_gatt_connection(cen_ad,
             mac_address = per_ad.droid.bluetoothGetLocalAddress()
             adv_callback = None
     bluetooth_gatt, gatt_callback = setup_gatt_connection(
-        cen_ad, mac_address, autoconnect, transport)
+        cen_ad, mac_address, autoconnect, transport, opportunistic)
     return bluetooth_gatt, gatt_callback, adv_callback
 
 
@@ -130,7 +138,8 @@ def run_continuous_write_descriptor(cen_droid, cen_ed, per_droid, per_ed,
                             discovered_services_index, i, characteristic))
                     log.info(descriptor_uuids)
                     for descriptor in descriptor_uuids:
-                        log.info("descriptor to be written {}".format(descriptor))
+                        log.info(
+                            "descriptor to be written {}".format(descriptor))
                         cen_droid.gattClientDescriptorSetValue(
                             bluetooth_gatt, discovered_services_index, i,
                             characteristic, descriptor, test_value)
@@ -150,11 +159,12 @@ def run_continuous_write_descriptor(cen_droid, cen_ed, per_droid, per_ed,
                         request_id = event['data']['requestId']
                         found_value = event['data']['value']
                         if found_value != test_value:
-                            log.error("Values didn't match. Found: {}, Expected: "
-                                      "{}".format(found_value, test_value))
-                        per_droid.gattServerSendResponse(gatt_server, bt_device_id,
-                                                         request_id, status,
-                                                         offset, test_value_return)
+                            log.error(
+                                "Values didn't match. Found: {}, Expected: "
+                                "{}".format(found_value, test_value))
+                        per_droid.gattServerSendResponse(
+                            gatt_server, bt_device_id, request_id, status,
+                            offset, test_value_return)
                         expected_event = GattCbStrings.DESC_WRITE.value.format(
                             bluetooth_gatt)
                         try:
@@ -189,17 +199,15 @@ def setup_characteristics_and_descriptors(droid):
             'permission': GattCharacteristic.PERMISSION_READ.value
         },
     ]
-    descriptor_input = [
-        {
-            'uuid': "aa7edd5a-4d1d-4f0e-883a-d145616a1630",
-            'property': GattDescriptor.PERMISSION_READ.value |
-            GattDescriptor.PERMISSION_WRITE.value,
-        }, {
-            'uuid': "76d5ed92-ca81-4edb-bb6b-9f019665fb32",
-            'property': GattDescriptor.PERMISSION_READ.value |
-            GattCharacteristic.PERMISSION_WRITE.value,
-        }
-    ]
+    descriptor_input = [{
+        'uuid': "aa7edd5a-4d1d-4f0e-883a-d145616a1630",
+        'property': GattDescriptor.PERMISSION_READ.value |
+        GattDescriptor.PERMISSION_WRITE.value,
+    }, {
+        'uuid': "76d5ed92-ca81-4edb-bb6b-9f019665fb32",
+        'property': GattDescriptor.PERMISSION_READ.value |
+        GattCharacteristic.PERMISSION_WRITE.value,
+    }]
     characteristic_list = setup_gatt_characteristics(droid,
                                                      characteristic_input)
     descriptor_list = setup_gatt_descriptors(droid, descriptor_input)
@@ -281,17 +289,15 @@ def setup_characteristics_and_descriptors(droid):
             'permission': GattCharacteristic.PERMISSION_READ.value
         },
     ]
-    descriptor_input = [
-        {
-            'uuid': "aa7edd5a-4d1d-4f0e-883a-d145616a1630",
-            'property': GattDescriptor.PERMISSION_READ.value |
-            GattDescriptor.PERMISSION_WRITE.value,
-        }, {
-            'uuid': "76d5ed92-ca81-4edb-bb6b-9f019665fb32",
-            'property': GattDescriptor.PERMISSION_READ.value |
-            GattCharacteristic.PERMISSION_WRITE.value,
-        }
-    ]
+    descriptor_input = [{
+        'uuid': "aa7edd5a-4d1d-4f0e-883a-d145616a1630",
+        'property': GattDescriptor.PERMISSION_READ.value |
+        GattDescriptor.PERMISSION_WRITE.value,
+    }, {
+        'uuid': "76d5ed92-ca81-4edb-bb6b-9f019665fb32",
+        'property': GattDescriptor.PERMISSION_READ.value |
+        GattCharacteristic.PERMISSION_WRITE.value,
+    }]
     characteristic_list = setup_gatt_characteristics(droid,
                                                      characteristic_input)
     descriptor_list = setup_gatt_descriptors(droid, descriptor_input)
@@ -310,9 +316,9 @@ def setup_gatt_characteristics(droid, input):
 def setup_gatt_descriptors(droid, input):
     descriptor_list = []
     for item in input:
-        index = droid.gattServerCreateBluetoothGattDescriptor(item['uuid'],
-                                                              item['property'],
-                                                              )
+        index = droid.gattServerCreateBluetoothGattDescriptor(
+            item['uuid'],
+            item['property'], )
         descriptor_list.append(index)
     log.info("setup descriptor list: {}".format(descriptor_list))
     return descriptor_list
@@ -340,8 +346,8 @@ def setup_gatt_mtu(cen_ad, bluetooth_gatt, gatt_callback, mtu):
         mtu_event = cen_ad.ed.pop_event(expected_event, default_timeout)
         mtu_size_found = mtu_event['data']['MTU']
         if mtu_size_found != mtu:
-            log.error("MTU size found: {}, expected: {}".format(mtu_size_found,
-                                                                mtu))
+            log.error(
+                "MTU size found: {}, expected: {}".format(mtu_size_found, mtu))
             return False
     except Empty:
         log.error(GattCbErr.MTU_CHANGED_ERR.value.format(expected_event))
@@ -349,7 +355,9 @@ def setup_gatt_mtu(cen_ad, bluetooth_gatt, gatt_callback, mtu):
     return True
 
 
-def log_gatt_server_uuids(cen_ad, discovered_services_index):
+def log_gatt_server_uuids(cen_ad,
+                          discovered_services_index,
+                          bluetooth_gatt=None):
     services_count = cen_ad.droid.gattClientGetDiscoveredServicesCount(
         discovered_services_index)
     for i in range(services_count):
@@ -359,11 +367,23 @@ def log_gatt_server_uuids(cen_ad, discovered_services_index):
         characteristic_uuids = (
             cen_ad.droid.gattClientGetDiscoveredCharacteristicUuids(
                 discovered_services_index, i))
-        for characteristic in characteristic_uuids:
-            log.info("Discovered characteristic uuid {}".format(
-                characteristic))
+        for j in range(len(characteristic_uuids)):
             descriptor_uuids = (
-                cen_ad.droid.gattClientGetDiscoveredDescriptorUuids(
-                    discovered_services_index, i, characteristic))
-            for descriptor in descriptor_uuids:
-                log.info("Discovered descriptor uuid {}".format(descriptor))
+                cen_ad.droid.gattClientGetDiscoveredDescriptorUuidsByIndex(
+                    discovered_services_index, i, j))
+            if bluetooth_gatt:
+                char_inst_id = cen_ad.droid.gattClientGetCharacteristicInstanceId(
+                    bluetooth_gatt, discovered_services_index, i, j)
+                log.info("Discovered characteristic handle uuid: {} {}".format(
+                    hex(char_inst_id), characteristic_uuids[j]))
+                for k in range(len(descriptor_uuids)):
+                    desc_inst_id = cen_ad.droid.gattClientGetDescriptorInstanceId(
+                        bluetooth_gatt, discovered_services_index, i, j, k)
+                    log.info("Discovered descriptor handle uuid: {} {}".format(
+                        hex(desc_inst_id), descriptor_uuids[k]))
+            else:
+                log.info("Discovered characteristic uuid: {}".format(
+                    characteristic_uuids[j]))
+                for k in range(len(descriptor_uuids)):
+                    log.info("Discovered descriptor uuid {}".format(
+                        descriptor_uuids[k]))

@@ -17,18 +17,31 @@ import time
 
 from acts import asserts
 from acts import base_test
+from acts.test_decorators import test_tracker_info
 import acts.test_utils.wifi.wifi_test_utils as wutils
+from acts.test_utils.wifi.WifiBaseTest import WifiBaseTest
 
 WifiEnums = wutils.WifiEnums
 
 
-class WifiPnoTest(base_test.BaseTestClass):
+class WifiPnoTest(WifiBaseTest):
+
+    def __init__(self, controllers):
+        WifiBaseTest.__init__(self, controllers)
+
     def setup_class(self):
         self.dut = self.android_devices[0]
         wutils.wifi_test_device_init(self.dut)
-        req_params = ("attn_vals", "pno_network_a", "pno_network_b",
-                      "pno_interval")
-        self.unpack_userparams(req_params)
+        req_params = ["attn_vals", "pno_interval"]
+        opt_param = ["reference_networks"]
+        self.unpack_userparams(
+            req_param_names=req_params, opt_param_names=opt_param)
+
+        if "AccessPoint" in self.user_params:
+            self.legacy_configure_ap_and_start()
+
+        self.pno_network_a = self.reference_networks[0]['2g']
+        self.pno_network_b = self.reference_networks[0]['5g']
         self.attenuators = wutils.group_attenuators(self.attenuators)
         self.attn_a = self.attenuators[0]
         self.attn_b = self.attenuators[1]
@@ -111,6 +124,7 @@ class WifiPnoTest(base_test.BaseTestClass):
 
     """ Tests Begin """
 
+    @test_tracker_info(uuid="33d3cae4-5fa7-4e90-b9e2-5d3747bba64c")
     def test_simple_pno_connection(self):
         """Test PNO triggered autoconnect to a network.
 
@@ -137,6 +151,7 @@ class WifiPnoTest(base_test.BaseTestClass):
         self.trigger_pno_and_assert_connect("b_on_a_off", self.pno_network_b)
         self.trigger_pno_and_assert_connect("a_on_b_off", self.pno_network_a)
 
+    @test_tracker_info(uuid="844b15be-ff45-4b09-a11b-0b2b4bb13b22")
     def test_pno_connection_with_multiple_saved_networks(self):
         """Test PNO triggered autoconnect to a network when there are more
         than 16 networks saved in the device.

@@ -49,6 +49,7 @@ from acts.test_utils.tel.tel_voice_utils import phone_setup_iwlan
 from acts.test_utils.tel.tel_voice_utils import phone_setup_voice_3g
 from acts.test_utils.tel.tel_voice_utils import phone_setup_voice_2g
 from acts.test_utils.tel.tel_voice_utils import phone_setup_volte
+from acts.test_utils.tel.tel_voice_utils import get_current_voice_rat
 from acts.utils import rand_ascii_str
 
 
@@ -146,6 +147,9 @@ class TelLiveSinglePhoneStressTest(TelephonyBaseTest):
             self.dut.log.info(dict(self.result_info))
             self.result_info["Total Calls"] += 1
             duration = random.randrange(1, self.max_phone_call_duration)
+            # Current Voice RAT
+            self.dut.log.info("Current Voice RAT is %s",
+                              get_current_voice_rat(self.log, self.dut))
             self.dut.log.info("Make call to %s with call duration %s",
                               self.call_server_number, duration)
             if not initiate_call(self.log, self.dut, self.call_server_number):
@@ -156,13 +160,20 @@ class TelLiveSinglePhoneStressTest(TelephonyBaseTest):
                     "%s_call_initiation_failure" % self.test_name,
                     time.strftime("%m-%d-%Y-%H-%M-%S"))
                 continue
-            time.sleep(duration)
-            if not is_phone_in_call(self.log, self.dut):
-                self.dut.log.error("Call droped.")
-                self.result_info["Call drop"] += 1
-                self._take_bug_report("%s_call_drop" % self.test_name,
-                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
-                continue
+            elapse_time = 0
+            interval = min(60, duration)
+            while elapse_time < duration:
+                interval = min(duration - elapse_time, interval)
+                time.sleep(interval)
+                elapse_time += interval
+                if not is_phone_in_call(self.log, self.dut):
+                    self.dut.log.error("Call droped.")
+                    self.result_info["Call drop"] += 1
+                    self._take_bug_report("%s_call_drop" % self.test_name,
+                                          time.strftime("%m-%d-%Y-%H-%M-%S"))
+                    break
+                else:
+                    self.dut.log.info("DUT is in call")
             else:
                 hangup_call(self.log, self.dut)
                 self.dut.log.info("Call test succeed.")

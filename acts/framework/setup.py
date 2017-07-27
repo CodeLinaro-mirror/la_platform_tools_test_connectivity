@@ -24,7 +24,8 @@ from setuptools.command import test
 import sys
 
 install_requires = [
-    'future',
+    # Future needs to have a newer version that contains urllib.
+    'future>=0.16.0',
     # mock-1.0.1 is the last version compatible with setuptools <17.1,
     # which is what comes with Ubuntu 14.04 LTS.
     'mock<=1.0.1',
@@ -76,6 +77,8 @@ class ActsInstallDependencies(cmd.Command):
         pass
 
     def run(self):
+        import pip
+        pip.main(['install', '--upgrade', 'pip'])
         required_packages = self.distribution.install_requires
 
         for package in required_packages:
