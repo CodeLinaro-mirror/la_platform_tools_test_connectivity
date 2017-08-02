@@ -47,7 +47,7 @@ ANDROID_DEVICE_NOT_LIST_CONFIG_MSG = "Configuration should be a list, abort!"
 CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/vendor/ramdump/",
                       "/data/ramdump/", "/data/vendor/ssrdump")
 CRASH_REPORT_SKIPS = ("RAMDUMP_RESERVED", "RAMDUMP_STATUS")
-BUG_REPORT_TIMEOUT = 1200
+BUG_REPORT_TIMEOUT = 1800
 PULL_TIMEOUT = 300
 PORT_RETRY_COUNT = 3
 IPERF_TIMEOUT = 60
@@ -845,6 +845,7 @@ class AndroidDevice:
             test_name: Name of the test case that triggered this bug report.
             begin_time: Logline format timestamp taken when the test started.
         """
+        self.adb.wait_for_device()
         new_br = True
         try:
             stdout = self.adb.shell("bugreportz -v")
@@ -875,11 +876,15 @@ class AndroidDevice:
                 " > {}".format(full_out_path), timeout=BUG_REPORT_TIMEOUT)
         self.log.info("Bugreport for %s taken at %s.", test_name,
                       full_out_path)
+        self.adb.wait_for_device()
 
     def get_file_names(self, directory):
         """Get files names with provided directory."""
         file_names = []
         out = self.adb.shell("ls %s" % directory, ignore_status=True)
+        if "Permission denied" in out:
+            self.adb.root_adb()
+            out = self.adb.shell("ls %s" % directory, ignore_status=True)
         if out and "No such" not in out:
             return out.split('\n')
         else:
@@ -978,15 +983,15 @@ class AndroidDevice:
         Args:
             session_id: UID of the sl4a session to terminate.
         """
+        ed_key = self.serial + str(session_id)
+        if self._event_dispatchers and ed_key in self._event_dispatchers:
+            self._event_dispatchers[ed_key].clean_up()
+            del self._event_dispatchers[ed_key]
         if self._droid_sessions and (session_id in self._droid_sessions):
             for droid in self._droid_sessions[session_id]:
                 droid.closeSl4aSession(timeout=180)
                 droid.close()
             del self._droid_sessions[session_id]
-        ed_key = self.serial + str(session_id)
-        if self._event_dispatchers and ed_key in self._event_dispatchers:
-            self._event_dispatchers[ed_key].clean_up()
-            del self._event_dispatchers[ed_key]
 
     def terminate_all_sessions(self):
         """Terminate all sl4a sessions on the AndroidDevice instance.
@@ -998,9 +1003,9 @@ class AndroidDevice:
             for session_id in session_ids:
                 try:
                     self.terminate_session(session_id)
-                except:
-                    self.log.exception("Failed to terminate session %d.",
-                                       session_id)
+                except Exception as e:
+                    self.log.exception("Failed to terminate session %d: %s",
+                                       session_id, e)
             if self.h_port:
                 self.adb.remove_tcp_forward(self.h_port)
                 self.h_port = None

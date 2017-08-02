@@ -46,7 +46,16 @@ from acts.test_utils.tel.tel_voice_utils import phone_setup_iwlan
 from acts.test_utils.tel.tel_voice_utils import phone_setup_voice_3g
 from acts.test_utils.tel.tel_voice_utils import phone_setup_voice_2g
 from acts.test_utils.tel.tel_voice_utils import phone_setup_volte
+from acts.test_utils.tel.tel_voice_utils import phone_idle_iwlan
+from acts.logger import epoch_to_log_line_timestamp
+from acts.utils import get_current_epoch_time
 from acts.utils import rand_ascii_str
+
+import socket
+from acts.controllers.sl4a_client import Sl4aProtocolError
+
+IGNORE_EXCEPTIONS = (BrokenPipeError, Sl4aProtocolError)
+EXCEPTION_TOLERANCE = 20
 
 
 class TelLiveStressTest(TelephonyBaseTest):
@@ -67,6 +76,10 @@ class TelLiveStressTest(TelephonyBaseTest):
         self.max_run_time = int(self.user_params.get("max_run_time", 18000))
         self.max_sms_length = int(self.user_params.get("max_sms_length", 1000))
         self.max_mms_length = int(self.user_params.get("max_mms_length", 160))
+        self.min_sms_length = int(self.user_params.get("min_sms_length", 1))
+        self.min_mms_length = int(self.user_params.get("min_mms_length", 1))
+        self.min_phone_call_duration = int(
+            self.user_params.get("min_phone_call_duration", 10))
         self.crash_check_interval = int(
             self.user_params.get("crash_check_interval", 300))
 
@@ -79,7 +92,7 @@ class TelLiveStressTest(TelephonyBaseTest):
                     ad,
                     self.wifi_network_ssid,
                     self.wifi_network_pass,
-                    retry=3):
+                    retries=3):
                 ad.log.error("Phone Wifi connection fails.")
                 return False
             ad.log.info("Phone WIFI is connected successfully.")
@@ -129,13 +142,16 @@ class TelLiveStressTest(TelephonyBaseTest):
         selection = random.randrange(0, 2)
         message_type_map = {0: "SMS", 1: "MMS"}
         max_length_map = {0: self.max_sms_length, 1: self.max_mms_length}
-        length = random.randrange(0, max_length_map[selection] + 1)
+        min_length_map = {0: self.min_sms_length, 1: self.min_mms_length}
+        length = random.randrange(min_length_map[selection],
+                                  max_length_map[selection] + 1)
         text = rand_ascii_str(length)
         message_content_map = {0: [text], 1: [("Mms Message", text, None)]}
         message_func_map = {
             0: sms_send_receive_verify,
             1: mms_send_receive_verify
         }
+        self.result_info["Total %s" % message_type_map[selection]] += 1
         if not message_func_map[selection](self.log, ads[0], ads[1],
                                            message_content_map[selection]):
             self.log.error("%s of length %s from %s to %s fails",
@@ -150,86 +166,147 @@ class TelLiveStressTest(TelephonyBaseTest):
             return True
 
     def _make_phone_call(self, ads):
+        self.result_info["Total Calls"] += 1
         if not call_setup_teardown(
                 self.log,
                 ads[0],
                 ads[1],
                 ad_hangup=ads[random.randrange(0, 2)],
                 wait_time_in_call=random.randrange(
-                    1, self.max_phone_call_duration)):
-            ads[0].log.error("Setup phone Call failed.")
+                    self.min_phone_call_duration,
+                    self.max_phone_call_duration)):
+            self.log.error("Call setup and teardown failed.")
+            self.result_info["Call Failure"] += 1
             return False
-        ads[0].log.info("Setup call successfully.")
+        self.log.info("Call setup and teardown succeed.")
         return True
 
     def crash_check_test(self):
         failure = 0
         while time.time() < self.finishing_time:
-            new_crash = self.dut.check_crash_report()
-            crash_diff = set(new_crash).difference(set(self.dut.crash_report))
-            self.dut.crash_report = new_crash
-            if crash_diff:
-                self.dut.log.error("Find new crash reports %s",
-                                   list(crash_diff))
-                self.dut.pull_files(list(crash_diff))
-                failure += 1
-                self.result_info["Crashes"] += 1
-                self._take_bug_report("%s_crash_found" % self.test_name,
-                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
-            self.dut.droid.goToSleepNow()
-            time.sleep(self.crash_check_interval)
-        return failure
+            self.dut.log.info(dict(self.result_info))
+            try:
+                begin_time = epoch_to_log_line_timestamp(
+                    get_current_epoch_time())
+                time.sleep(self.crash_check_interval)
+                crash_report = self.dut.check_crash_report(
+                    "checking_crash", begin_time, True)
+                if crash_report:
+                    self.dut.log.error("Find new crash reports %s",
+                                       crash_report)
+                    failure += 1
+                    self.result_info["Crashes"] += 1
+            except IGNORE_EXCEPTIONS as e:
+                self.log.error("Exception error %s", str(e))
+                self.result_info["Exception Errors"] += 1
+                if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
+                    self.finishing_time = time.time()
+                    raise
+            except Exception as e:
+                self.finishing_time = time.time()
+                raise
+            self.dut.log.info("Crashes found: %s", failure)
+        if failure:
+            return "%s crashes" % failure
+        else:
+            return ""
 
     def call_test(self):
         failure = 0
         total_count = 0
         while time.time() < self.finishing_time:
-            ads = [self.dut, self.helper]
-            random.shuffle(ads)
-            total_count += 1
-            if not self._make_phone_call(ads):
-                failure += 1
-                self.log.error("New call test failure: %s/%s", failure,
-                               total_count)
-                self._take_bug_report("%s_call_failure" % self.test_name,
-                                      time.strftime("%m-%d-%Y-%H-%M-%S"))
-            self.dut.droid.goToSleepNow()
-            time.sleep(random.randrange(0, self.max_sleep_time))
-        return failure
+            try:
+                ads = [self.dut, self.helper]
+                random.shuffle(ads)
+                total_count += 1
+                if not self._make_phone_call(ads):
+                    failure += 1
+                    self._take_bug_report("%s_call_failure" % self.test_name,
+                                          time.strftime("%m-%d-%Y-%H-%M-%S"))
+                self.dut.droid.goToSleepNow()
+                time.sleep(random.randrange(0, self.max_sleep_time))
+            except IGNORE_EXCEPTIONS as e:
+                self.log.error("Exception error %s", str(e))
+                self.result_info["Exception Errors"] += 1
+                if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
+                    self.finishing_time = time.time()
+                    raise
+            except Exception as e:
+                self.finishing_time = time.time()
+                raise
+            self.dut.log.info("Call test failure: %s/%s", failure, total_count)
+        if failure:
+            return "Call test failure: %s/%s" % (failure, total_count)
+        else:
+            return ""
 
     def message_test(self):
         failure = 0
         total_count = 0
         while time.time() < self.finishing_time:
-            ads = [self.dut, self.helper]
-            random.shuffle(ads)
-            total_count += 1
-            if not self._send_message(ads):
-                failure += 1
-                self.log.error("New messaging test failure: %s/%s", failure,
-                               total_count)
-                #self._take_bug_report("%s_messaging_failure" % self.test_name,
-                #                      time.strftime("%m-%d-%Y-%H-%M-%S"))
-            self.dut.droid.goToSleepNow()
-            time.sleep(random.randrange(0, self.max_sleep_time))
-        return failure
+            try:
+                ads = [self.dut, self.helper]
+                random.shuffle(ads)
+                total_count += 1
+                if not self._send_message(ads):
+                    failure += 1
+                    #self._take_bug_report("%s_messaging_failure" % self.test_name,
+                    #                      time.strftime("%m-%d-%Y-%H-%M-%S"))
+                self.dut.droid.goToSleepNow()
+                time.sleep(random.randrange(0, self.max_sleep_time))
+            except IGNORE_EXCEPTIONS as e:
+                self.log.error("Exception error %s", str(e))
+                self.result_info["Exception Errors"] += 1
+                if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
+                    self.finishing_time = time.time()
+                    raise
+            except Exception as e:
+                self.finishing_time = time.time()
+                raise
+            self.dut.log.info("Messaging test failure: %s/%s", failure,
+                              total_count)
+        if failure / total_count > 0.1:
+            return "Messaging test failure: %s/%s" % (failure, total_count)
+        else:
+            return ""
 
     def data_test(self):
         failure = 0
         total_count = 0
-        file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB", "1GB"]
+        #file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB", "1GB"]
+        file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB"]
         while time.time() < self.finishing_time:
-            self.dut.log.info(dict(self.result_info))
-            self.result_info["Total file download"] += 1
-            selection = random.randrange(0, 7)
-            file_name = file_names[selection]
-            if not active_file_download_test(self.log, self.dut, file_name):
-                self.result_info["%s file download failure" % file_name] += 1
-                #self._take_bug_report("%s_download_failure" % self.test_name,
-                #                      time.strftime("%m-%d-%Y-%H-%M-%S"))
-                self.dut.droid.goToSleepNow()
-                time.sleep(random.randrange(0, self.max_sleep_time))
-        return failure
+            try:
+                self.dut.log.info(dict(self.result_info))
+                self.result_info["Total file download"] += 1
+                selection = random.randrange(0, len(file_names))
+                file_name = file_names[selection]
+                total_count += 1
+                if not active_file_download_test(self.log, self.dut,
+                                                 file_name):
+                    self.result_info["%s file download failure" %
+                                     file_name] += 1
+                    failure += 1
+                    #self._take_bug_report("%s_download_failure" % self.test_name,
+                    #                      time.strftime("%m-%d-%Y-%H-%M-%S"))
+                    self.dut.droid.goToSleepNow()
+                    time.sleep(random.randrange(0, self.max_sleep_time))
+            except IGNORE_EXCEPTIONS as e:
+                self.log.error("Exception error %s", str(e))
+                self.result_info["Exception Errors"] += 1
+                if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
+                    self.finishing_time = time.time()
+                    raise "Too many %s errors" % IGNORE_EXCEPTIONS
+            except Exception as e:
+                self.log.error(e)
+                self.finishing_time = time.time()
+                raise
+            self.dut.log.info("File download test failure: %s/%s", failure,
+                              total_count)
+        if failure / total_count > 0.1:
+            return "File download test failure: %s/%s" % (failure, total_count)
+        else:
+            return ""
 
     def parallel_tests(self, setup_func=None):
         if setup_func and not setup_func():
@@ -241,8 +318,11 @@ class TelLiveStressTest(TelephonyBaseTest):
             self.message_test, []), (self.data_test, []),
                                                   (self.crash_check_test, [])])
         self.log.info(dict(self.result_info))
-        if sum(results):
-            fail(str(dict(self.result_info)))
+        error_message = " ".join(results).strip()
+        if error_message:
+            self.log.error(error_message)
+            fail(error_message)
+        return True
 
     """ Tests Begin """
 
