@@ -22,7 +22,7 @@ import acts.test_utils.wifi.wifi_test_utils as wutils
 from acts.test_utils.wifi.WifiBaseTest import WifiBaseTest
 
 WifiEnums = wutils.WifiEnums
-
+MAX_ATTN = 95
 
 class WifiPnoTest(WifiBaseTest):
 
@@ -42,9 +42,11 @@ class WifiPnoTest(WifiBaseTest):
 
         self.pno_network_a = self.reference_networks[0]['2g']
         self.pno_network_b = self.reference_networks[0]['5g']
-        self.attenuators = wutils.group_attenuators(self.attenuators)
         self.attn_a = self.attenuators[0]
         self.attn_b = self.attenuators[1]
+        # Disable second AP's networks, so that it does not interfere during PNO
+        self.attenuators[2].set_atten(MAX_ATTN)
+        self.attenuators[3].set_atten(MAX_ATTN)
         self.set_attns("default")
 
     def setup_test(self):
@@ -99,6 +101,8 @@ class WifiPnoTest(WifiBaseTest):
         self.log.info("Wait %ss for PNO to trigger.", self.pno_interval)
         time.sleep(self.pno_interval)
         try:
+            self.log.info("Connected to %s network after PNO interval"
+                          % self.dut.droid.wifiGetConnectionInfo())
             expected_ssid = expected_con[WifiEnums.SSID_KEY]
             verify_con = {WifiEnums.SSID_KEY: expected_ssid}
             wutils.verify_wifi_connection_info(self.dut, verify_con)
