@@ -16,6 +16,7 @@
 
 from acts import asserts
 
+from acts.test_decorators import test_tracker_info
 from acts.test_utils.net import connectivity_const as cconsts
 from acts.test_utils.wifi.aware import aware_const as aconsts
 from acts.test_utils.wifi.aware import aware_test_utils as autils
@@ -81,6 +82,7 @@ class CapabilitiesTest(AwareBaseTest):
 
   ###############################
 
+  @test_tracker_info(uuid="45da8a41-6c02-4434-9eb9-aa0a36ff9f65")
   def test_max_discovery_sessions(self):
     """Validate that the device can create as many discovery sessions as are
     indicated in the device capabilities

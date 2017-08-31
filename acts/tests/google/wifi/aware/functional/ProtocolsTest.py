@@ -15,6 +15,7 @@
 #   limitations under the License.
 
 from acts import asserts
+from acts.test_decorators import test_tracker_info
 from acts.test_utils.net import nsd_const as nconsts
 from acts.test_utils.wifi.aware import aware_const as aconsts
 from acts.test_utils.wifi.aware import aware_test_utils as autils
@@ -46,6 +47,7 @@ class ProtocolsTest(AwareBaseTest):
 
   ########################################################################
 
+  @test_tracker_info(uuid="ce103067-7fdd-4379-9a2b-d238959f1d53")
   def test_ping6_oob(self):
     """Validate that ping6 works correctly on an NDP created using OOB (out-of
     band) discovery"""
@@ -67,6 +69,7 @@ class ProtocolsTest(AwareBaseTest):
     resp_dut.droid.connectivityUnregisterNetworkCallback(resp_req_key)
     init_dut.droid.connectivityUnregisterNetworkCallback(init_req_key)
 
+  @test_tracker_info(uuid="fef86a48-0e05-464b-8c66-64316275c5ba")
   def test_ping6_ib_unsolicited_passive(self):
     """Validate that ping6 works correctly on an NDP created using Aware
     discovery with UNSOLICITED/PASSIVE sessions."""
@@ -94,6 +97,7 @@ class ProtocolsTest(AwareBaseTest):
     p_dut.droid.connectivityUnregisterNetworkCallback(p_req_key)
     s_dut.droid.connectivityUnregisterNetworkCallback(s_req_key)
 
+  @test_tracker_info(uuid="5bbd68a9-994b-4c26-88cd-43388cec280b")
   def test_ping6_ib_solicited_active(self):
     """Validate that ping6 works correctly on an NDP created using Aware
     discovery with SOLICITED/ACTIVE sessions."""

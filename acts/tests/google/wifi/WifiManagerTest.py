@@ -58,7 +58,6 @@ class WifiManagerTest(WifiBaseTest):
                 a.set_atten(0)
         req_params = []
         opt_param = [
-            "additional_energy_info_models", "additional_tdls_models",
             "open_network", "reference_networks", "iperf_server_address"
         ]
         self.unpack_userparams(
@@ -73,25 +72,22 @@ class WifiManagerTest(WifiBaseTest):
         wutils.wifi_toggle_state(self.dut, True)
         if "iperf_server_address" in self.user_params:
             self.iperf_server = self.iperf_servers[0]
-        self.iot_test_prefix = "test_connection_to-"
         self.wpapsk_2g = self.reference_networks[0]["2g"]
         self.wpapsk_5g = self.reference_networks[0]["5g"]
         self.open_network = self.open_network[0]["2g"]
+        self.iperf_server.start()
 
     def setup_test(self):
         self.dut.droid.wakeLockAcquireBright()
         self.dut.droid.wakeUpNow()
-        if self.iot_test_prefix in self.current_test_name:
-            if "iperf_server_address" in self.user_params:
-                self.iperf_server.start()
 
     def teardown_test(self):
         self.dut.droid.wakeLockRelease()
         self.dut.droid.goToSleepNow()
         wutils.reset_wifi(self.dut)
-        if self.current_test_name and self.iot_test_prefix in self.current_test_name:
-            if "iperf_server_address" in self.user_params:
-                self.iperf_server.stop()
+
+    def teardown_class(self):
+        self.iperf_server.stop()
 
     def on_fail(self, test_name, begin_time):
         self.dut.take_bug_report(test_name, begin_time)
@@ -288,6 +284,44 @@ class WifiManagerTest(WifiBaseTest):
                                              omit)
         self.log.info("Running iperf client {}".format(args))
         self.run_iperf(args)
+
+    def get_energy_info(self):
+        """ Steps:
+            1. Check that the WiFi energy info reporting support on this device
+               is as expected (support or not).
+            2. If the device does not support energy info reporting as
+               expected, skip the test.
+            3. Call API to get WiFi energy info.
+            4. Verify the values of "ControllerEnergyUsed" and
+               "ControllerIdleTimeMillis" in energy info don't decrease.
+            5. Repeat from Step 3 for 10 times.
+        """
+        # Check if dut supports energy info reporting.
+        actual_support = self.dut.droid.wifiIsEnhancedPowerReportingSupported()
+        model = self.dut.model
+        if not actual_support:
+            asserts.skip(
+                ("Device %s does not support energy info reporting as "
+                 "expected.") % model)
+        # Verify reported values don't decrease.
+        self.log.info(("Device %s supports energy info reporting, verify that "
+                       "the reported values don't decrease.") % model)
+        energy = 0
+        idle_time = 0
+        for i in range(10):
+            info = self.dut.droid.wifiGetControllerActivityEnergyInfo()
+            self.log.debug("Iteration %d, got energy info: %s" % (i, info))
+            new_energy = info["ControllerEnergyUsed"]
+            new_idle_time = info["ControllerIdleTimeMillis"]
+            asserts.assert_true(new_energy >= energy,
+                                "Energy value decreased: previous %d, now %d" %
+                                (energy, new_energy))
+            energy = new_energy
+            asserts.assert_true(new_idle_time >= idle_time,
+                                "Idle time decreased: previous %d, now %d" % (
+                                    idle_time, new_idle_time))
+            idle_time = new_idle_time
+            wutils.start_wifi_connection_scan(self.dut)
 
     """Tests"""
 
@@ -568,9 +602,9 @@ class WifiManagerTest(WifiBaseTest):
 
     @test_tracker_info(uuid="b9fbc13a-47b4-4f64-bd2c-e5a3cb24ab2f")
     def test_tdls_supported(self):
-        model = acts.utils.trim_model_name(self.dut.model)
+        model = self.dut.model
         self.log.debug("Model is %s" % model)
-        if model in self.tdls_models:
+        if not model.startswith("volantis"):
             asserts.assert_true(self.dut.droid.wifiIsTdlsSupported(), (
                 "TDLS should be supported on %s, but device is "
                 "reporting not supported.") % model)
@@ -581,46 +615,8 @@ class WifiManagerTest(WifiBaseTest):
 
     @test_tracker_info(uuid="50637d40-ea59-4f4b-9fc1-e6641d64074c")
     def test_energy_info(self):
-        """Verify the WiFi energy info reporting feature.
-
-        Steps:
-            1. Check that the WiFi energy info reporting support on this device
-               is as expected (support or not).
-            2. If the device does not support energy info reporting as
-               expected, skip the test.
-            3. Call API to get WiFi energy info.
-            4. Verify the values of "ControllerEnergyUsed" and
-               "ControllerIdleTimeMillis" in energy info don't decrease.
-            5. Repeat from Step 3 for 10 times.
-        """
-        # Check if dut supports energy info reporting.
-        actual_support = self.dut.droid.wifiIsEnhancedPowerReportingSupported()
-        model = self.dut.model
-        expected_support = model in self.energy_info_models
-        asserts.assert_equal(expected_support, actual_support)
-        if not actual_support:
-            asserts.skip(
-                ("Device %s does not support energy info reporting as "
-                 "expected.") % model)
-        # Verify reported values don't decrease.
-        self.log.info(("Device %s supports energy info reporting, verify that "
-                       "the reported values don't decrease.") % model)
-        energy = 0
-        idle_time = 0
-        for i in range(10):
-            info = self.dut.droid.wifiGetControllerActivityEnergyInfo()
-            self.log.debug("Iteration %d, got energy info: %s" % (i, info))
-            new_energy = info["ControllerEnergyUsed"]
-            new_idle_time = info["ControllerIdleTimeMillis"]
-            asserts.assert_true(new_energy >= energy,
-                                "Energy value decreased: previous %d, now %d" %
-                                (energy, new_energy))
-            energy = new_energy
-            asserts.assert_true(new_idle_time >= idle_time,
-                                "Idle time decreased: previous %d, now %d" % (
-                                    idle_time, new_idle_time))
-            idle_time = new_idle_time
-            wutils.start_wifi_connection_scan(self.dut)
+        """Verify the WiFi energy info reporting feature """
+        self.get_energy_info()
 
     @test_tracker_info(uuid="1f1cf549-53eb-4f36-9f33-ce06c9158efc")
     def test_energy_info_connected(self):
@@ -629,4 +625,4 @@ class WifiManagerTest(WifiBaseTest):
         Connect to a wifi network, then the same as test_energy_info.
         """
         wutils.wifi_connect(self.dut, self.open_network)
-        self.test_energy_info()
+        self.get_energy_info()
