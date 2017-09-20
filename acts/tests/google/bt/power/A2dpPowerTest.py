@@ -278,7 +278,7 @@ class A2dpPowerTest(PowerBaseTest):
                 self.PMC_BASE_CMD, self.music_url, play_time)
 
             if bt_off_mute == True:
-                msg = "%s --es BT_OFF_Mute %d" % (playing_msg, 1)
+                msg = "%s --es BT_OFF_Mute %d" % (play_msg, 1)
             else:
                 codec1_msg = "%s --es CodecType %d --es SampleRate %d" % (
                     play_msg, codec_type, sample_rate)
@@ -293,7 +293,10 @@ class A2dpPowerTest(PowerBaseTest):
         self.ad.log.info("Send broadcast message: %s", msg)
         self.ad.adb.shell(msg)
         # Check if PMC is ready
-        if not self.check_pmc_status(self.LOG_FILE, "READY",
+        status_msg = "READY"
+        if bt_on_not_play == True:
+            status_msg = "SUCCEED"
+        if not self.check_pmc_status(self.LOG_FILE, status_msg,
                                      "PMC is not ready"):
             return
 
