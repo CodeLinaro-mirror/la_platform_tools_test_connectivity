@@ -27,6 +27,9 @@ from bokeh.models.widgets import DataTable, TableColumn
 from bokeh.plotting import figure, output_file, save
 from acts.controllers.ap_lib import hostapd_security
 from acts.controllers.ap_lib import hostapd_ap_preset
+# http://www.secdev.org/projects/scapy/
+# On ubuntu, sudo pip3 install scapy-python3
+import scapy.all as scapy
 
 SETTINGS_PAGE = "am start -n com.android.settings/.Settings"
 SCROLL_BOTTOM = "input swipe 0 2000 0 0"
@@ -52,6 +55,8 @@ FORCE_YOUTUBE_STOP = "am force-stop com.google.android.youtube"
 FORCE_DIALER_STOP = "am force-stop com.google.android.dialer"
 IPERF_TIMEOUT = 180
 THRESHOLD_TOLERANCE = 0.2
+GET_FROM_PHONE = 'get_from_dut'
+GET_FROM_AP = 'get_from_ap'
 
 
 def dut_rockbottom(ad):
@@ -468,3 +473,88 @@ def get_phone_ipv6(ad):
     IPv6 = ad.droid.connectivityGetLinkLocalIpv6Address('wlan0')[:-6]
 
     return IPv6
+
+
+def get_if_addr6(intf, address_type):
+    """Returns the Ipv6 address from a given local interface.
+
+    Returns the desired IPv6 address from the interface 'intf' in human
+    readable form. The address type is indicated by the IPv6 constants like
+    IPV6_ADDR_LINKLOCAL, IPV6_ADDR_GLOBAL, etc. If no address is found,
+    None is returned.
+
+    Args:
+        intf: desired interface name
+        address_type: addrees typle like LINKLOCAL or GLOBAL
+
+    Returns:
+        Ipv6 address of the specified interface in human readable format
+    """
+    for if_list in scapy.in6_getifaddr():
+        if if_list[2] == intf and if_list[1] == address_type:
+            return if_list[0]
+
+    return None
+
+
+def create_pkt_config(test_class):
+    """Creates the config for generating multicast packets
+
+    Args:
+        test_class: object with all networking paramters
+
+    Returns:
+        Dictionary with the multicast packet config
+    """
+    addr_type = (scapy.IPV6_ADDR_LINKLOCAL
+                 if test_class.ipv6_src_type == 'LINK_LOCAL' else
+                 scapy.IPV6_ADDR_GLOBAL)
+
+    mac_dst = test_class.mac_dst
+    if GET_FROM_PHONE in test_class.mac_dst:
+        mac_dst = get_phone_mac(test_class.dut)
+
+    ipv4_dst = test_class.ipv4_dst
+    if GET_FROM_PHONE in test_class.ipv4_dst:
+        ipv4_dst = get_phone_ip(test_class.dut)
+
+    ipv6_dst = test_class.ipv6_dst
+    if GET_FROM_PHONE in test_class.ipv6_dst:
+        ipv6_dst = get_phone_ipv6(test_class.dut)
+
+    ipv4_gw = test_class.ipv4_gwt
+    if GET_FROM_AP in test_class.ipv4_gwt:
+        ipv4_gw = test_class.access_point.ssh_settings.hostname
+
+    pkt_gen_config = {
+        'interf': test_class.pkt_sender.interface,
+        'subnet_mask': test_class.sub_mask,
+        'src_mac': test_class.mac_src,
+        'dst_mac': mac_dst,
+        'src_ipv4': test_class.ipv4_src,
+        'dst_ipv4': ipv4_dst,
+        'src_ipv6': test_class.ipv6_src,
+        'src_ipv6_type': addr_type,
+        'dst_ipv6': ipv6_dst,
+        'gw_ipv4': ipv4_gw
+    }
+    return pkt_gen_config
+
+
+def create_monsoon_info(test_class):
+    """Creates the config dictionary for monsoon
+
+    Args:
+        test_class: object with all the parameters
+
+    Returns:
+        Dictionary with the monsoon packet config
+    """
+    mon_info = {
+        'dut': test_class.mon,
+        'freq': test_class.mon_freq,
+        'duration': test_class.mon_duration,
+        'offset': test_class.mon_offset,
+        'data_path': test_class.mon_data_path
+    }
+    return mon_info
