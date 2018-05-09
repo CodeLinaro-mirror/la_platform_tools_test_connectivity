@@ -17,9 +17,9 @@
 import time
 
 from acts import asserts
-from acts import utils
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.net import connectivity_const as cconsts
+from acts.test_utils.wifi import wifi_test_utils as wutils
 from acts.test_utils.wifi.aware import aware_const as aconsts
 from acts.test_utils.wifi.aware import aware_test_utils as autils
 from acts.test_utils.wifi.aware.AwareBaseTest import AwareBaseTest
@@ -1499,8 +1499,8 @@ class DataPathTest(AwareBaseTest):
     init_dut = self.android_devices[0]
     resp_dut = self.android_devices[1]
 
-    utils.set_regulatory_domain(init_dut, init_domain)
-    utils.set_regulatory_domain(resp_dut, resp_domain)
+    init_dut.droid.wifiSetCountryCode(init_domain)
+    resp_dut.droid.wifiSetCountryCode(resp_domain)
 
     if use_ib:
       (resp_req_key, init_req_key, resp_aware_if, init_aware_if, resp_ipv6,
@@ -1531,9 +1531,10 @@ class DataPathTest(AwareBaseTest):
     - Uses in-band discovery
     - Subscriber=US, Publisher=JP
     """
-    self.run_multiple_regulatory_domains(use_ib=True,
-                                         init_domain="US",
-                                         resp_domain="JP")
+    self.run_multiple_regulatory_domains(
+        use_ib=True,
+        init_domain=wutils.WifiEnums.CountryCode.US,
+        resp_domain=wutils.WifiEnums.CountryCode.JAPAN)
 
   @test_tracker_info(uuid="19af47cc-3204-40ef-b50f-14cf7b89cf4a")
   def test_multiple_regulator_domains_ib_jp_us(self):
@@ -1542,9 +1543,10 @@ class DataPathTest(AwareBaseTest):
     - Uses in-band discovery
     - Subscriber=JP, Publisher=US
     """
-    self.run_multiple_regulatory_domains(use_ib=True,
-                                         init_domain="JP",
-                                         resp_domain="US")
+    self.run_multiple_regulatory_domains(
+        use_ib=True,
+        init_domain=wutils.WifiEnums.CountryCode.JAPAN,
+        resp_domain=wutils.WifiEnums.CountryCode.US)
 
   @test_tracker_info(uuid="65285ab3-977f-4dbd-b663-d5a02f4fc663")
   def test_multiple_regulator_domains_oob_us_jp(self):
@@ -1553,9 +1555,10 @@ class DataPathTest(AwareBaseTest):
     - Uses out-f-band discovery
     - Initiator=US, Responder=JP
     """
-    self.run_multiple_regulatory_domains(use_ib=False,
-                                         init_domain="US",
-                                         resp_domain="JP")
+    self.run_multiple_regulatory_domains(
+        use_ib=False,
+        init_domain=wutils.WifiEnums.CountryCode.US,
+        resp_domain=wutils.WifiEnums.CountryCode.JAPAN)
 
   @test_tracker_info(uuid="8a417e24-aaf6-44b9-a089-a07c3ba8d954")
   def test_multiple_regulator_domains_oob_jp_us(self):
@@ -1564,9 +1567,10 @@ class DataPathTest(AwareBaseTest):
     - Uses out-of-band discovery
     - Initiator=JP, Responder=US
     """
-    self.run_multiple_regulatory_domains(use_ib=False,
-                                         init_domain="JP",
-                                         resp_domain="US")
+    self.run_multiple_regulatory_domains(
+        use_ib=False,
+        init_domain=wutils.WifiEnums.CountryCode.JAPAN,
+        resp_domain=wutils.WifiEnums.CountryCode.US)
 
   ########################################################################
 
@@ -1851,3 +1855,71 @@ class DataPathTest(AwareBaseTest):
     self.run_mix_ib_oob(same_request=False,
                         ib_first=False,
                         inits_on_same_dut=False)
+
+  ########################################################################
+
+  def test_ndp_loop(self):
+    """Validate that can create a loop (chain) of N NDPs between N devices,
+    where N >= 3, e.g.
+
+    A - B
+    B - C
+    C - A
+
+    The NDPs are all OPEN (no encryption).
+    """
+    asserts.assert_true(len(self.android_devices) >= 3,
+                        'A minimum of 3 devices is needed to run the test, have %d' %
+                        len(self.android_devices))
+
+    duts = self.android_devices
+    loop_len = len(duts)
+    ids = []
+    macs = []
+    reqs = [[], [], []]
+    ifs = [[], [], []]
+    ipv6s = [[], [], []]
+
+    for i in range(loop_len):
+      duts[i].pretty_name = chr(ord("A") + i)
+
+    # start-up 3 devices (attach w/ identity)
+    for i in range(loop_len):
+      ids.append(duts[i].droid.wifiAwareAttach(True))
+      autils.wait_for_event(duts[i], aconsts.EVENT_CB_ON_ATTACHED)
+      ident_event = autils.wait_for_event(duts[i],
+                                          aconsts.EVENT_CB_ON_IDENTITY_CHANGED)
+      macs.append(ident_event['data']['mac'])
+
+    # wait for for devices to synchronize with each other - there are no other
+    # mechanisms to make sure this happens for OOB discovery (except retrying
+    # to execute the data-path request)
+    time.sleep(autils.WAIT_FOR_CLUSTER)
+
+    # create the N NDPs: i to (i+1) % N
+    for i in range(loop_len):
+      peer_device = (i + 1) % loop_len
+
+      (init_req_key, resp_req_key, init_aware_if,
+       resp_aware_if, init_ipv6, resp_ipv6) = autils.create_oob_ndp_on_sessions(
+          duts[i], duts[peer_device],
+          ids[i], macs[i], ids[peer_device], macs[peer_device])
+
+      reqs[i].append(init_req_key)
+      reqs[peer_device].append(resp_req_key)
+      ifs[i].append(init_aware_if)
+      ifs[peer_device].append(resp_aware_if)
+      ipv6s[i].append(init_ipv6)
+      ipv6s[peer_device].append(resp_ipv6)
+
+    # clean-up
+    for i in range(loop_len):
+      for req in reqs[i]:
+        duts[i].droid.connectivityUnregisterNetworkCallback(req)
+
+    # info
+    self.log.info("MACs: %s", macs)
+    self.log.info("Interface names: %s", ifs)
+    self.log.info("IPv6 addresses: %s", ipv6s)
+    asserts.explicit_pass("NDP loop test",
+                          extras={"macs": macs, "ifs": ifs, "ipv6s": ipv6s})
