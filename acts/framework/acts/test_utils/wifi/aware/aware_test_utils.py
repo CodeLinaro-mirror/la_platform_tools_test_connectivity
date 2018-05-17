@@ -310,21 +310,78 @@ def extract_stats(ad, data, results, key_prefix, log_prefix):
   data_min = min(data)
   data_max = max(data)
   data_mean = statistics.mean(data)
+  data_cdf = extract_cdf(data)
+  data_cdf_decile = extract_cdf_decile(data_cdf)
 
   results['%smin' % key_prefix] = data_min
   results['%smax' % key_prefix] = data_max
   results['%smean' % key_prefix] = data_mean
+  results['%scdf' % key_prefix] = data_cdf
+  results['%scdf_decile' % key_prefix] = data_cdf_decile
   results['%sraw_data' % key_prefix] = data
 
   if num_samples > 1:
     data_stdev = statistics.stdev(data)
     results['%sstdev' % key_prefix] = data_stdev
-    ad.log.info('%s: num_samples=%d, min=%.2f, max=%.2f, mean=%.2f, stdev=%.2f',
-                log_prefix, num_samples, data_min, data_max, data_mean,
-                data_stdev)
+    ad.log.info(
+      '%s: num_samples=%d, min=%.2f, max=%.2f, mean=%.2f, stdev=%.2f, cdf_decile=%s',
+      log_prefix, num_samples, data_min, data_max, data_mean, data_stdev,
+      data_cdf_decile)
   else:
-    ad.log.info('%s: num_samples=%d, min=%.2f, max=%.2f, mean=%.2f', log_prefix,
-                num_samples, data_min, data_max, data_mean)
+    ad.log.info(
+      '%s: num_samples=%d, min=%.2f, max=%.2f, mean=%.2f, cdf_decile=%s',
+      log_prefix, num_samples, data_min, data_max, data_mean, data_cdf_decile)
+
+def extract_cdf_decile(cdf):
+  """Extracts the 10%, 20%, ..., 90% points from the CDF and returns their
+  value (a list of 9 values).
+
+  Since CDF may not (will not) have exact x% value picks the value >= x%.
+
+  Args:
+    cdf: a list of 2 lists, the X and Y of the CDF.
+  """
+  decades = []
+  next_decade = 10
+  for x, y in zip(cdf[0], cdf[1]):
+    while 100*y >= next_decade:
+      decades.append(x)
+      next_decade = next_decade + 10
+    if next_decade == 100:
+      break
+  return decades
+
+def extract_cdf(data):
+  """Calculates the Cumulative Distribution Function (CDF) of the data.
+
+  Args:
+      data: A list containing data (does not have to be sorted).
+
+  Returns: a list of 2 lists: the X and Y axis of the CDF.
+  """
+  x = []
+  cdf = []
+  if not data:
+    return (x, cdf)
+
+  all_values = sorted(data)
+  for val in all_values:
+    if not x:
+      x.append(val)
+      cdf.append(1)
+    else:
+      if x[-1] == val:
+        cdf[-1] += 1
+      else:
+        x.append(val)
+        cdf.append(cdf[-1] + 1)
+
+  scale = 1.0 / len(all_values)
+  for i in range(len(cdf)):
+    cdf[i] = cdf[i] * scale
+
+  return (x, cdf)
+
 
 def get_mac_addr(device, interface):
   """Get the MAC address of the specified interface. Uses ifconfig and parses
@@ -403,6 +460,18 @@ def configure_power_setting(device, mode, name, value):
   """
   device.adb.shell(
     "cmd wifiaware native_api set-power %s %s %d" % (mode, name, value))
+
+def configure_mac_random_interval(device, interval_sec):
+  """Use the command-line API to configure the MAC address randomization
+  interval.
+
+  Args:
+    device: Device on which to perform configuration
+    interval_sec: The MAC randomization interval in seconds. A value of 0
+                  disables all randomization.
+  """
+  device.adb.shell(
+    "cmd wifiaware native_api set mac_random_interval_sec %d" % interval_sec)
 
 def configure_ndp_allow_any_override(device, override_api_check):
   """Use the command-line API to configure whether an NDP Responder may be
