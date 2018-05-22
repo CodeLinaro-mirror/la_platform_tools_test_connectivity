@@ -35,12 +35,33 @@ DEFAULT_TIMEOUT = 10
 # Like onSuccess for start background scan and confirmation on wifi state
 # change.
 SHORT_TIMEOUT = 30
+ROAMING_TIMEOUT = 30
 
 # Speed of light in m/s.
 SPEED_OF_LIGHT = 299792458
 
 DEFAULT_PING_ADDR = "https://www.google.com/robots.txt"
 
+roaming_attn = {
+        "AP1_on_AP2_off": [
+            0,
+            0,
+            95,
+            95
+        ],
+        "AP1_off_AP2_on": [
+            95,
+            95,
+            0,
+            0
+        ],
+        "default": [
+            0,
+            0,
+            0,
+            0
+        ]
+    }
 
 class WifiEnums():
 
@@ -519,6 +540,47 @@ def match_networks(target_params, networks):
             results.append(n)
     return results
 
+def wait_for_wifi_state(ad, state, assert_on_fail=True):
+    """Waits for the device to transition to the specified wifi state
+
+    Args:
+        ad: An AndroidDevice object.
+        state: Wifi state to wait for.
+        assert_on_fail: If True, error checks in this function will raise test
+                        failure signals.
+
+    Returns:
+        If assert_on_fail is False, function returns True if the device transitions
+        to the specified state, False otherwise. If assert_on_fail is True, no return value.
+    """
+    return _assert_on_fail_handler(
+        _wait_for_wifi_state, assert_on_fail, ad, state=state)
+
+
+def _wait_for_wifi_state(ad, state):
+    """Toggles the state of wifi.
+
+    TestFailure signals are raised when something goes wrong.
+
+    Args:
+        ad: An AndroidDevice object.
+        state: Wifi state to wait for.
+    """
+    if state == ad.droid.wifiCheckState():
+        # Check if the state is already achieved, so we don't wait for the
+        # state change event by mistake.
+        return
+    ad.droid.wifiStartTrackingStateChange()
+    fail_msg = "Device did not transition to Wi-Fi state to %s on %s." % (state,
+                                                           ad.serial)
+    try:
+        ad.ed.wait_for_event(wifi_constants.WIFI_STATE_CHANGED,
+                             lambda x: x["data"]["enabled"] == state,
+                             SHORT_TIMEOUT)
+    except Empty:
+        asserts.assert_equal(state, ad.droid.wifiCheckState(), fail_msg)
+    finally:
+        ad.droid.wifiStopTrackingStateChange()
 
 def wifi_toggle_state(ad, new_state=None, assert_on_fail=True):
     """Toggles the state of wifi.
@@ -555,19 +617,16 @@ def _wifi_toggle_state(ad, new_state=None):
         return
     ad.droid.wifiStartTrackingStateChange()
     ad.log.info("Setting Wi-Fi state to %s.", new_state)
+    ad.ed.clear_all_events()
     # Setting wifi state.
     ad.droid.wifiToggleState(new_state)
     fail_msg = "Failed to set Wi-Fi state to %s on %s." % (new_state,
                                                            ad.serial)
     try:
-        event = ad.ed.pop_event(wifi_constants.SUPPLICANT_CON_CHANGED,
-                                SHORT_TIMEOUT)
-        asserts.assert_equal(event['data']['Connected'], new_state, fail_msg)
+        ad.ed.wait_for_event(wifi_constants.WIFI_STATE_CHANGED,
+                             lambda x: x["data"]["enabled"] == new_state,
+                             SHORT_TIMEOUT)
     except Empty:
-        # Supplicant connection event is not always reliable. We double check
-        # here and call it a success as long as the new state equals the
-        # expected state.
-        time.sleep(5)
         asserts.assert_equal(new_state, ad.droid.wifiCheckState(), fail_msg)
     finally:
         ad.droid.wifiStopTrackingStateChange()
@@ -1032,7 +1091,8 @@ def wait_for_disconnect(ad):
         raise signals.TestFailure("Device did not disconnect from the network")
 
 
-def connect_to_wifi_network(ad, network, assert_on_fail=True):
+def connect_to_wifi_network(ad, network, assert_on_fail=True,
+        check_connectivity=True):
     """Connection logic for open and psk wifi networks.
 
     Args:
@@ -1046,7 +1106,8 @@ def connect_to_wifi_network(ad, network, assert_on_fail=True):
     wifi_connect(ad,
                  network,
                  num_of_tries=3,
-                 assert_on_fail=assert_on_fail)
+                 assert_on_fail=assert_on_fail,
+                 check_connectivity=check_connectivity)
 
 
 def connect_to_wifi_network_with_id(ad, network_id, network_ssid):
@@ -1071,7 +1132,8 @@ def connect_to_wifi_network_with_id(ad, network_id, network_ssid):
     return True
 
 
-def wifi_connect(ad, network, num_of_tries=1, assert_on_fail=True):
+def wifi_connect(ad, network, num_of_tries=1, assert_on_fail=True,
+        check_connectivity=True):
     """Connect an Android device to a wifi network.
 
     Initiate connection to a wifi network, wait for the "connected" event, then
@@ -1093,10 +1155,11 @@ def wifi_connect(ad, network, num_of_tries=1, assert_on_fail=True):
         Returns True if the connection was successful, False otherwise.
     """
     return _assert_on_fail_handler(
-        _wifi_connect, assert_on_fail, ad, network, num_of_tries=num_of_tries)
+        _wifi_connect, assert_on_fail, ad, network, num_of_tries=num_of_tries,
+          check_connectivity=check_connectivity)
 
 
-def _wifi_connect(ad, network, num_of_tries=1):
+def _wifi_connect(ad, network, num_of_tries=1, check_connectivity=True):
     """Connect an Android device to a wifi network.
 
     Initiate connection to a wifi network, wait for the "connected" event, then
@@ -1134,10 +1197,11 @@ def _wifi_connect(ad, network, num_of_tries=1):
         # Wait for data connection to stabilize.
         time.sleep(5)
 
-        internet = validate_connection(ad, DEFAULT_PING_ADDR)
-        if not internet:
-            raise signals.TestFailure("Failed to connect to internet on %s" %
-                                      expected_ssid)
+        if check_connectivity:
+            internet = validate_connection(ad, DEFAULT_PING_ADDR)
+            if not internet:
+                raise signals.TestFailure("Failed to connect to internet on %s" %
+                                          expected_ssid)
     except Empty:
         asserts.fail("Failed to start connection process to %s on %s" %
                      (network, ad.serial))
@@ -1552,6 +1616,56 @@ def group_attenuators(attenuators):
         asserts.fail(("Either two or four attenuators are required for this "
                       "test, but found %s") % num_of_attns)
     return [attn0, attn1]
+
+def set_attns(attenuator, attn_val_name):
+    """Sets attenuation values on attenuators used in this test.
+
+    Args:
+        attenuator: The attenuator object.
+        attn_val_name: Name of the attenuation value pair to use.
+    """
+    logging.info("Set attenuation values to %s", roaming_attn[attn_val_name])
+    try:
+        attenuator[0].set_atten(roaming_attn[attn_val_name][0])
+        attenuator[1].set_atten(roaming_attn[attn_val_name][1])
+        attenuator[2].set_atten(roaming_attn[attn_val_name][2])
+        attenuator[3].set_atten(roaming_attn[attn_val_name][3])
+    except:
+        logging.exception("Failed to set attenuation values %s.",
+                       attn_val_name)
+        raise
+
+
+def trigger_roaming_and_validate(dut, attenuator, attn_val_name, expected_con):
+    """Sets attenuators to trigger roaming and validate the DUT connected
+    to the BSSID expected.
+
+    Args:
+        attenuator: The attenuator object.
+        attn_val_name: Name of the attenuation value pair to use.
+        expected_con: The network information of the expected network.
+    """
+    expected_con = {
+        WifiEnums.SSID_KEY: expected_con[WifiEnums.SSID_KEY],
+        WifiEnums.BSSID_KEY: expected_con["bssid"],
+    }
+    set_attns(attenuator, attn_val_name)
+    logging.info("Wait %ss for roaming to finish.", ROAMING_TIMEOUT)
+    time.sleep(ROAMING_TIMEOUT)
+    try:
+        # Wakeup device and verify connection.
+        dut.droid.wakeLockAcquireBright()
+        dut.droid.wakeUpNow()
+        cur_con = dut.droid.wifiGetConnectionInfo()
+        verify_wifi_connection_info(dut, expected_con)
+        expected_bssid = expected_con[WifiEnums.BSSID_KEY]
+        logging.info("Roamed to %s successfully", expected_bssid)
+        if not validate_connection(dut):
+            raise signals.TestFailure("Fail to connect to internet on %s" %
+                                      expected_ssid)
+    finally:
+        dut.droid.wifiLockRelease()
+        dut.droid.goToSleepNow()
 
 
 def create_softap_config():
