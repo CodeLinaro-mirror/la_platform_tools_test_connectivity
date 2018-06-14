@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 #   Copyright 2016 - Google, Inc.
 #
@@ -16,6 +16,7 @@
 
 import collections
 import ipaddress
+import logging
 import time
 
 from acts import logger
@@ -24,8 +25,10 @@ from acts.controllers.ap_lib import bridge_interface
 from acts.controllers.ap_lib import dhcp_config
 from acts.controllers.ap_lib import dhcp_server
 from acts.controllers.ap_lib import hostapd
+from acts.controllers.ap_lib import hostapd_config
 from acts.controllers.utils_lib.commands import ip
 from acts.controllers.utils_lib.commands import route
+from acts.controllers.utils_lib.commands import shell
 from acts.controllers.utils_lib.ssh import connection
 from acts.controllers.utils_lib.ssh import settings
 from acts.libs.proc import job
@@ -131,7 +134,7 @@ class AccessPoint(object):
         self.bridge = bridge_interface.BridgeInterface(self)
         self.interfaces = ap_get_interface.ApInterfaces(self)
 
-        # Get needed interface names and initialize the unnecessary ones.
+        # Get needed interface names and initialize the unneccessary ones.
         self.wan = self.interfaces.get_wan_interface()
         self.wlan = self.interfaces.get_wlan_interface()
         self.wlan_2g = self.wlan[0]
@@ -254,8 +257,9 @@ class AccessPoint(object):
             counter = 1
             for bss in hostapd_config.bss_lookup:
                 if interface_mac_orig:
-                    hostapd_config.bss_lookup[bss].bssid = (
-                            interface_mac_orig.stdout[:-1] + str(counter))
+                    hostapd_config.bss_lookup[
+                        bss].bssid = interface_mac_orig.stdout[:-1] + str(
+                            counter)
                 self._route_cmd.clear_routes(net_interface=str(bss))
                 if interface is self.wlan_2g:
                     starting_ip_range = self._AP_2G_SUBNET_STR
