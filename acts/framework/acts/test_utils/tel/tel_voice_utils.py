@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 #   Copyright 2016 - Google
 #
@@ -15,9 +15,12 @@
 #   limitations under the License.
 
 import time
+from acts import signals
 from acts.test_utils.tel.tel_defines import CALL_PROPERTY_HIGH_DEF_AUDIO
 from acts.test_utils.tel.tel_defines import CALL_STATE_ACTIVE
 from acts.test_utils.tel.tel_defines import CALL_STATE_HOLDING
+from acts.test_utils.tel.tel_defines import CAPABILITY_VOLTE
+from acts.test_utils.tel.tel_defines import CAPABILITY_WFC
 from acts.test_utils.tel.tel_defines import GEN_2G
 from acts.test_utils.tel.tel_defines import GEN_3G
 from acts.test_utils.tel.tel_defines import GEN_4G
@@ -69,8 +72,10 @@ from acts.test_utils.tel.tel_test_utils import toggle_airplane_mode
 from acts.test_utils.tel.tel_test_utils import toggle_volte
 from acts.test_utils.tel.tel_test_utils import toggle_volte_for_subscription
 from acts.test_utils.tel.tel_test_utils import verify_incall_state
+from acts.test_utils.tel.tel_test_utils import verify_internet_connection
 from acts.test_utils.tel.tel_test_utils import \
     wait_for_data_attach_for_subscription
+from acts.test_utils.tel.tel_test_utils import wait_for_enhanced_4g_lte_setting
 from acts.test_utils.tel.tel_test_utils import wait_for_network_generation
 from acts.test_utils.tel.tel_test_utils import \
     wait_for_network_generation_for_subscription
@@ -303,6 +308,10 @@ def phone_setup_iwlan(log,
     Returns:
         True if success. False if fail.
     """
+    #TODO: get per sub_id carrier_config for multi-sim purpose
+    if CAPABILITY_WFC not in ad.telephony.get("capabilities", []):
+        ad.log.error("WFC is not supported, abort test.")
+        raise signals.TestSkip("WFC is not supported, abort test.")
     return phone_setup_iwlan_for_subscription(log, ad,
                                               get_outgoing_voice_sub_id(ad),
                                               is_airplane_mode, wfc_mode,
@@ -347,7 +356,7 @@ def phone_setup_iwlan_for_subscription(log,
 
     if wifi_ssid is not None:
         if not ensure_wifi_connected(log, ad, wifi_ssid, wifi_pwd):
-            ad.log.error("Fail to connect to WiFi %s.", wifi_ssid)
+            ad.log.error("Fail to bring up WiFi connection on %s.", wifi_ssid)
             return False
 
     if not set_wfc_mode(log, ad, wfc_mode):
@@ -405,13 +414,13 @@ def phone_setup_iwlan_cellular_preferred(log,
     except Exception as e:
         ad.log.error(e)
         ad.droid.telephonyToggleDataConnection(True)
-    if not set_wfc_mode(log, ad, WFC_MODE_CELLULAR_PREFERRED):
-        ad.log.error("Set WFC mode failed.")
-        return False
     if wifi_ssid is not None:
         if not ensure_wifi_connected(log, ad, wifi_ssid, wifi_pwd):
             ad.log.error("Connect to WiFi failed.")
             return False
+    if not set_wfc_mode(log, ad, WFC_MODE_CELLULAR_PREFERRED):
+        ad.log.error("Set WFC mode failed.")
+        return False
     if not wait_for_not_network_rat(
             log, ad, RAT_FAMILY_WLAN, voice_or_data=NETWORK_SERVICE_DATA):
         ad.log.error("Data rat in iwlan mode.")
@@ -595,6 +604,10 @@ def phone_setup_volte(log, ad):
         True: if VoLTE is enabled successfully.
         False: for errors
     """
+    #TODO: get per sub_id carrier_config for multi-sim purpose
+    if CAPABILITY_VOLTE not in ad.telephony.get("capabilities", []):
+        ad.log.error("VoLTE is not supported, abort test.")
+        raise signals.TestSkip("VoLTE is not supported, abort test.")
     return phone_setup_volte_for_subscription(log, ad,
                                               get_outgoing_voice_sub_id(ad))
 
@@ -613,6 +626,9 @@ def phone_setup_volte_for_subscription(log, ad, sub_id):
     """
     if not phone_setup_4g_for_subscription(log, ad, sub_id):
         ad.log.error("Failed to set to 4G data.")
+        return False
+    if not wait_for_enhanced_4g_lte_setting(log, ad):
+        ad.log.error("Enhanced 4G LTE setting is not available")
         return False
     toggle_volte_for_subscription(log, ad, sub_id, True)
     return phone_idle_volte_for_subscription(log, ad, sub_id)
@@ -1173,7 +1189,7 @@ def is_phone_in_call_wcdma_for_subscription(log, ad, sub_id):
     return True
 
 
-def is_phone_in_call_iwlan(log, ad):
+def is_phone_in_call_iwlan(log, ad, call_id=None):
     """Return if phone is in WiFi call.
 
     Args:
@@ -1182,12 +1198,27 @@ def is_phone_in_call_iwlan(log, ad):
     if not ad.droid.telecomIsInCall():
         ad.log.error("Not in call.")
         return False
+    if not ad.droid.telephonyIsImsRegistered():
+        ad.log.info("IMS is not registered.")
+        return False
+    if not ad.droid.telephonyIsWifiCallingAvailable():
+        ad.log.info("IsWifiCallingAvailble is False")
+        return False
+    if not call_id:
+        call_ids = ad.droid.telecomCallGetCallIds()
+        if call_ids:
+            call_id = call_ids[-1]
+    if not call_id:
+        ad.log.error("Failed to get call id")
+        return False
+    else:
+        call_prop = ad.droid.telecomCallGetProperties(call_id)
+        if "WIFI" not in call_prop:
+            ad.log.info("callProperties = %s, expecting WIFI", call_prop)
+            return False
     nw_type = get_network_rat(log, ad, NETWORK_SERVICE_DATA)
     if nw_type != RAT_IWLAN:
         ad.log.error("Data rat on: %s. Expected: iwlan", nw_type)
-        return False
-    if not is_wfc_enabled(log, ad):
-        ad.log.error("WiFi Calling feature bit is False.")
         return False
     return True
 

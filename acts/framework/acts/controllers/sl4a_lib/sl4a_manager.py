@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 #   Copyright 2018 - The Android Open Source Project
 #
@@ -278,6 +278,10 @@ class Sl4aManager(object):
             max_connections=max_connections)
         self.sessions[session.uid] = session
         return session
+
+    def stop_service(self):
+        """Stops The SL4A Service."""
+        self._started = False
 
     def terminate_all_sessions(self):
         """Terminates all SL4A sessions gracefully."""

@@ -1,4 +1,4 @@
-# /usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 # Copyright (C) 2018 The Android Open Source Project
 #
@@ -40,14 +40,14 @@ class WlanWithHfpFunctionalityTest(CoexBaseTest):
 
     def setup_class(self):
         CoexBaseTest.setup_class(self)
-        req_params = ["sim_conf_file"]
+        req_params = ["sim_conf_file", "fping_drop_tolerance"]
         self.unpack_userparams(req_params)
         self.ag_phone_number, self.re_phone_number = setup_tel_config(
             self.pri_ad, self.sec_ad, self.sim_conf_file)
 
     def setup_test(self):
         CoexBaseTest.setup_test(self)
-        self.audio_receiver.pairing_mode()
+        self.audio_receiver.enter_pairing_mode()
         if not pair_and_connect_headset(
                 self.pri_ad, self.audio_receiver.mac_address,
                 set([BtEnum.BluetoothProfile.HEADSET.value])):
@@ -74,7 +74,7 @@ class WlanWithHfpFunctionalityTest(CoexBaseTest):
         if not initiate_call(self.log, self.sec_ad, self.ag_phone_number):
             self.log.error("Failed to initiate call")
             return False
-        if not self.audio_receiver.accept_call():
+        if not self.audio_receiver.press_accept_call():
             self.log.error("Failed to answer call from HF.")
             return False
         if not hangup_call(self.log, self.pri_ad):
@@ -661,13 +661,14 @@ class WlanWithHfpFunctionalityTest(CoexBaseTest):
 
         Test Id: Bt_CoEx_078
         """
-        args = [lambda: start_fping(self.pri_ad, self.iperf["duration"])]
-        self.run_thread(args)
-        if not initiate_disconnect_from_hf(
-                self.audio_receiver,self.pri_ad, self.sec_ad,
-                self.iperf["duration"]):
+        tasks = [(start_fping, (self.pri_ad, self.iperf["duration"],
+                                self.fping_drop_tolerance)),
+                 (initiate_disconnect_from_hf, (
+                     self.audio_receiver,self.pri_ad, self.sec_ad,
+                     self.iperf["duration"]))]
+        if not multithread_func(self.log, tasks):
             return False
-        return self.teardown_thread()
+        return True
 
     def test_hfp_call_toggle_screen_state_with_fping(self):
         """Starts fping with hfp call connection.
@@ -685,7 +686,8 @@ class WlanWithHfpFunctionalityTest(CoexBaseTest):
 
         Test Id: Bt_CoEx_081
         """
-        tasks = [(start_fping, (self.pri_ad, self.iperf["duration"])),
+        tasks = [(start_fping, (self.pri_ad, self.iperf["duration"],
+                                self.fping_drop_tolerance)),
                  (initiate_disconnect_from_hf, (
                      self.audio_receiver, self.pri_ad, self.sec_ad,
                      self.iperf["duration"])),

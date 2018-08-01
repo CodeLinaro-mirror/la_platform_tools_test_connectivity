@@ -1,4 +1,4 @@
-#/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 #   Copyright 2016 - The Android Open Source Project
 #
@@ -128,7 +128,7 @@ WCDMA_BAND_1 = 1
 WCDMA_BAND_2 = 2
 
 # Default Cell Parameters
-DEFAULT_OUTPUT_LEVEL = -20
+DEFAULT_OUTPUT_LEVEL = -30
 DEFAULT_1X_OUTPUT_LEVEL = -35
 DEFAULT_INPUT_LEVEL = 0
 DEFAULT_LTE_BAND = [2, 4]

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 # Copyright 2017 - The Android Open Source Project
 #
@@ -30,7 +30,7 @@ install_requires = [
     'mock<=1.0.1',
     'numpy',
     'pyserial',
-    'shellescape',
+    'shellescape>=3.4.1',
     'protobuf',
     'roman',
     'scapy-python3',

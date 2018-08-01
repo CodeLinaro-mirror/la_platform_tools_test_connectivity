@@ -70,11 +70,12 @@ class MockAdbProxy(object):
                  serial,
                  fail_br=False,
                  fail_br_before_N=False,
-                 build_id=MOCK_RELEASE_BUILD_ID):
+                 build_id=MOCK_RELEASE_BUILD_ID,
+                 return_value=None):
         self.serial = serial
         self.fail_br = fail_br
         self.fail_br_before_N = fail_br_before_N
-        self.return_value = None
+        self.return_value = return_value
         self.return_multiple = False
         self.build_id = build_id
 
@@ -259,7 +260,6 @@ class ActsAndroidDeviceTest(unittest.TestCase):
         self.assertEqual(ad.serial, 1)
         self.assertEqual(ad.model, "fakemodel")
         self.assertIsNone(ad.adb_logcat_process)
-        self.assertIsNone(ad.adb_logcat_file_path)
         expected_lp = os.path.join(logging.log_path,
                                    "AndroidDevice%s" % MOCK_SERIAL)
         self.assertEqual(ad.log_path, expected_lp)
@@ -283,26 +283,6 @@ class ActsAndroidDeviceTest(unittest.TestCase):
     @mock.patch(
         'acts.controllers.adb.AdbProxy',
         return_value=MockAdbProxy(MOCK_SERIAL, build_id=MOCK_DEV_BUILD_ID))
-    @mock.patch(
-        'acts.controllers.fastboot.FastbootProxy',
-        return_value=MockFastbootProxy(MOCK_SERIAL))
-    def test_AndroidDevice_build_info_release(self, MockFastboot,
-                                              MockAdbProxy):
-        """Verifies the AndroidDevice object's basic attributes are correctly
-        set after instantiation.
-        """
-        global MOCK_BUILD_ID
-        ad = android_device.AndroidDevice(serial=1)
-        old_mock_build_id = MOCK_BUILD_ID
-        MOCK_BUILD_ID = "ABC-MR1"
-        build_info = ad.build_info
-        self.assertEqual(build_info["build_id"], "123456789")
-        self.assertEqual(build_info["build_type"], "userdebug")
-        MOCK_BUILD_ID = old_mock_build_id
-
-    @mock.patch(
-        'acts.controllers.adb.AdbProxy',
-        return_value=MockAdbProxy(MOCK_SERIAL))
     @mock.patch(
         'acts.controllers.fastboot.FastbootProxy',
         return_value=MockFastbootProxy(MOCK_SERIAL))
@@ -335,7 +315,6 @@ class ActsAndroidDeviceTest(unittest.TestCase):
     @mock.patch(
         'acts.controllers.fastboot.FastbootProxy',
         return_value=MockFastbootProxy(MOCK_SERIAL))
-
     @mock.patch('acts.utils.create_dir')
     @mock.patch('acts.utils.exe_cmd')
     def test_AndroidDevice_take_bug_report(self, exe_mock, create_dir_mock,
@@ -419,8 +398,8 @@ class ActsAndroidDeviceTest(unittest.TestCase):
                                          "adblog,fakemodel,%s.txt" % ad.serial)
         creat_dir_mock.assert_called_with(os.path.dirname(expected_log_path))
         adb_cmd = 'adb -s %s logcat -T 1 -v year -b all >> %s'
-        start_proc_mock.assert_called_with(adb_cmd % (ad.serial,
-                                                      expected_log_path))
+        start_proc_mock.assert_called_with(
+            adb_cmd % (ad.serial, expected_log_path))
         self.assertEqual(ad.adb_logcat_file_path, expected_log_path)
         expected_msg = ("Android device .* already has an adb logcat thread "
                         "going on. Cannot start another one.")
@@ -467,8 +446,8 @@ class ActsAndroidDeviceTest(unittest.TestCase):
                                          "adblog,fakemodel,%s.txt" % ad.serial)
         creat_dir_mock.assert_called_with(os.path.dirname(expected_log_path))
         adb_cmd = 'adb -s %s logcat -T 1 -v year -b radio >> %s'
-        start_proc_mock.assert_called_with(adb_cmd % (ad.serial,
-                                                      expected_log_path))
+        start_proc_mock.assert_called_with(
+            adb_cmd % (ad.serial, expected_log_path))
         self.assertEqual(ad.adb_logcat_file_path, expected_log_path)
 
     @mock.patch(

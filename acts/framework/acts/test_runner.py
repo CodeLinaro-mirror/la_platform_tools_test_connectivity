@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 #   Copyright 2016 - The Android Open Source Project
 #
@@ -34,6 +34,7 @@ from acts import logger
 from acts import records
 from acts import signals
 from acts import utils
+from acts import error
 
 
 def _find_test_class():
@@ -397,8 +398,11 @@ class TestRunner(object):
             name = self.get_module_reference_name(controller_module)
             if hasattr(controller_module, 'get_post_job_info'):
                 self.log.debug('Getting post job info for %s', name)
-                name, value = controller_module.get_post_job_info(controllers)
-                self.results.set_extra_data(name, value)
+                try:
+                    name, value = controller_module.get_post_job_info(controllers)
+                    self.results.set_extra_data(name, value)
+                except:
+                    self.log.error("Fail to get post job info for %s", name)
             try:
                 self.log.debug('Destroying %s.', name)
                 controller_module.destroy(controllers)
@@ -541,6 +545,9 @@ class TestRunner(object):
                 for module in self._import_builtin_controllers():
                     self.register_controller(module, builtin=True)
                 self.run_test_class(test_cls_name, test_case_names)
+            except error.ActsError as e:
+                self.results.errors.append(e)
+                self.log.error("Test Runner Error: %s" % e.message)
             except signals.TestAbortAll as e:
                 self.log.warning(
                     "Abort all subsequent test classes. Reason: %s", e)

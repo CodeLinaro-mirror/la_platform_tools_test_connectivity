@@ -1,4 +1,4 @@
-#/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 # Copyright (C) 2018 The Android Open Source Project
 #
@@ -14,21 +14,25 @@
 # License for the specific language governing permissions and limitations under
 # the License.
 
+import json
 import os
 import threading
 import time
 
 from acts.base_test import BaseTestClass
-from acts.controllers.iperf_client import IPerfClient
 from acts.test_utils.bt.bt_test_utils import disable_bluetooth
 from acts.test_utils.bt.bt_test_utils import enable_bluetooth
 from acts.test_utils.bt.bt_test_utils import setup_multiple_devices_for_bt_test
 from acts.test_utils.bt.bt_test_utils import take_btsnoop_logs
+from acts.test_utils.coex.coex_test_utils import a2dp_dumpsys_parser
+from acts.test_utils.coex.coex_test_utils import (
+    collect_bluetooth_manager_dumpsys_logs)
 from acts.test_utils.coex.coex_test_utils import configure_and_start_ap
 from acts.test_utils.coex.coex_test_utils import iperf_result
 from acts.test_utils.coex.coex_test_utils import get_phone_ip
 from acts.test_utils.coex.coex_test_utils import wifi_connection_check
 from acts.test_utils.coex.coex_test_utils import xlsheet
+from acts.test_utils.wifi import wifi_retail_ap as retail_ap
 from acts.test_utils.wifi.wifi_test_utils import reset_wifi
 from acts.test_utils.wifi.wifi_test_utils import wifi_connect
 from acts.test_utils.wifi.wifi_test_utils import wifi_test_device_init
@@ -40,12 +44,13 @@ from acts.utils import stop_standing_subprocess
 TEST_CASE_TOKEN = "[Test Case]"
 RESULT_LINE_TEMPLATE = TEST_CASE_TOKEN + " %s %s"
 IPERF_SERVER_WAIT_TIME = 5
+AVRCP_WAIT_TIME = 2
 
 
 class CoexBaseTest(BaseTestClass):
 
     def __init__(self, controllers):
-        BaseTestClass.__init__(self, controllers)
+        super().__init__(controllers)
         self.pri_ad = self.android_devices[0]
         if len(self.android_devices) == 2:
             self.sec_ad = self.android_devices[1]
@@ -56,28 +61,40 @@ class CoexBaseTest(BaseTestClass):
         self.tag = 0
         self.iperf_result = {}
         self.thread_list = []
+        self.log_files = []
         if not setup_multiple_devices_for_bt_test(self.android_devices):
             self.log.error("Failed to setup devices for bluetooth test")
             return False
         req_params = ["network", "iperf"]
-        self.unpack_userparams(req_params)
-        if "RelayDevice" in self.user_params:
+        opt_params = ["AccessPoint", "RetailAccessPoints", "RelayDevice"]
+        self.unpack_userparams(req_params, opt_params)
+        if hasattr(self, "RelayDevice"):
             self.audio_receiver = self.relay_devices[0]
+            self.audio_receiver.power_on()
         else:
             self.log.warning("Missing Relay config file.")
-        if "music_file" in self.user_params:
-            self.push_music_to_android_device(self.pri_ad)
         self.path = self.pri_ad.log_path
-        if "AccessPoints" in self.user_params:
+        if hasattr(self, "AccessPoint"):
             self.ap = self.access_points[0]
             configure_and_start_ap(self.ap, self.network)
+        elif hasattr(self, "RetailAccessPoints"):
+            self.access_points = retail_ap.create(self.RetailAccessPoints)
+            self.access_point = self.access_points[0]
+            band = self.access_point.band_lookup_by_channel(
+                self.network["channel"])
+            self.access_point.set_channel(band, self.network["channel"])
+        else:
+            self.log.warning("config file have no access point information")
         wifi_test_device_init(self.pri_ad)
         wifi_connect(self.pri_ad, self.network)
 
     def setup_test(self):
+        self.result = {}
         self.received = []
         for a in self.android_devices:
             a.ed.clear_all_events()
+        self.json_file = "{}/{}.json".format(self.pri_ad.log_path,
+                                             self.current_test_name)
         if not wifi_connection_check(self.pri_ad, self.network["SSID"]):
             self.log.error("Wifi connection does not exist")
             return False
@@ -86,13 +103,20 @@ class CoexBaseTest(BaseTestClass):
             return False
 
     def teardown_test(self):
+        if "a2dp_streaming" in self.current_test_name:
+            if not collect_bluetooth_manager_dumpsys_logs(
+                    self.pri_ad, self.current_test_name):
+                return False
+            self.result["a2dp_packet_drop"] = a2dp_dumpsys_parser()
+        with open(self.json_file, 'w+') as results_file:
+            json.dump(self.result, results_file, indent=4)
         if not disable_bluetooth(self.pri_ad.droid):
             self.log.info("Failed to disable bluetooth")
             return False
         self.teardown_thread()
 
     def teardown_class(self):
-        if "AccessPoints" in self.user_params:
+        if hasattr(self, "AccessPoint"):
             self.ap.close()
         reset_wifi(self.pri_ad)
         wifi_toggle_state(self.pri_ad, False)
@@ -105,19 +129,18 @@ class CoexBaseTest(BaseTestClass):
         Args:
             server_port: Port in which server should be started.
         """
-        log_path = os.path.join(self.pri_ad.log_path, "iPerf{}".format(
-            server_port))
+        log_path = os.path.join(self.pri_ad.log_path,
+                                "iPerf{}".format(server_port))
         iperf_server = "iperf3 -s -p {} -J".format(server_port)
-        log_files = []
         create_dir(log_path)
         out_file_name = "IPerfServer,{},{},{}.log".format(
-            server_port, self.tag, log_files)
+            server_port, self.tag, len(self.log_files))
         self.tag = self.tag + 1
-        full_out_path = os.path.join(log_path, out_file_name)
+        self.iperf_server_path = os.path.join(log_path, out_file_name)
         cmd = "adb -s {} shell {} > {}".format(
-            self.pri_ad.serial, iperf_server, full_out_path)
+            self.pri_ad.serial, iperf_server, self.iperf_server_path)
         self.iperf_process.append(start_standing_subprocess(cmd))
-        log_files.append(full_out_path)
+        self.log_files.append(self.iperf_server_path)
         time.sleep(IPERF_SERVER_WAIT_TIME)
 
     def stop_iperf_server_on_shell(self):
@@ -126,7 +149,7 @@ class CoexBaseTest(BaseTestClass):
             for process in self.iperf_process:
                 stop_standing_subprocess(process)
         except Exception:
-            self.log.info("Iperf server already killed")
+            pass
 
     def run_iperf_and_get_result(self):
         """Frames iperf command based on test and starts iperf client on
@@ -144,7 +167,7 @@ class CoexBaseTest(BaseTestClass):
                 self.iperf["duration"], self.iperf["port_1"],
                 self.iperf["tcp_window_size"])
         else:
-            self.iperf_args = ("-t {} -p {} -u {} --get-server-output -J"
+            self.iperf_args = ("-t {} -p {} -u {} -J"
                                .format(self.iperf["duration"],
                                        self.iperf["port_1"],
                                        self.iperf["udp_bandwidth"]))
@@ -157,7 +180,7 @@ class CoexBaseTest(BaseTestClass):
                 self.iperf["duration"], self.iperf["port_2"],
                 self.iperf["tcp_window_size"])
         else:
-            self.bidirectional_args = ("-t {} -p {} -u {} --get-server-output"
+            self.bidirectional_args = ("-t {} -p {} -u {}"
                                        " -J".format(self.iperf["duration"],
                                                     self.iperf["port_2"],
                                                     self.iperf["udp_bandwidth"]
@@ -169,43 +192,51 @@ class CoexBaseTest(BaseTestClass):
 
         if self.stream[0] == "bidirectional":
             args = [
-                lambda: self.run_iperf(self.iperf_args, self.iperf["port_1"]),
-                lambda: self.run_iperf(self.bidirectional_args,
-                                       self.iperf["port_2"])
+                lambda: self.run_iperf(self.iperf_args),
+                lambda: self.run_iperf(self.bidirectional_args)
             ]
             self.run_thread(args)
         else:
             args = [
-                lambda: self.run_iperf(self.iperf_args, self.iperf["port_1"])
+                lambda: self.run_iperf(self.iperf_args)
             ]
             self.run_thread(args)
+        return True
 
-    def run_iperf(self, iperf_args, server_port):
+    def run_iperf(self, iperf_args):
         """Gets android device ip and start iperf client from host machine to
         that ip and parses the iperf result.
 
         Args:
             iperf_args: Iperf parameters to run traffic.
-            server_port: Iperf port to start client.
         """
         ip = get_phone_ip(self.pri_ad)
-        iperf_client = IPerfClient(server_port, ip, self.pri_ad.log_path)
-        result = iperf_client.start(iperf_args)
-        try:
-            sent, received = iperf_result(result, self.stream)
-            self.received.append(str(round(received, 2)) + "Mb/s")
-            self.log.info("Sent: {} Mb/s, Received: {} Mb/s".format(
-                sent, received))
-            self.flag_list.append(True)
-
-        except TypeError:
-            self.log.error("Iperf failed/stopped.")
+        iperf_client = self.iperf_clients[0]
+        self.iperf_client_path = iperf_client.start(iperf_args, self.pri_ad, ip)
+        if self.protocol[0] == "udp":
+            if "-R" in iperf_args:
+                received = iperf_result(self.iperf_client_path)
+            else:
+                received = iperf_result(self.iperf_server_path)
+        else:
+            received = iperf_result(self.iperf_client_path)
+        if received == False:
+            self.log.error("Iperf failed/stopped")
             self.flag_list.append(False)
             self.received.append("Iperf Failed")
-
+        else:
+            self.received.append(str(round(received, 2)) + "Mb/s")
+            self.log.info("Received: {} Mb/s".format(received))
+            self.flag_list.append(True)
         self.iperf_result[self.current_test_name] = self.received
 
     def on_fail(self, record, test_name, begin_time):
+        """A function that is executed upon a test case failure.
+
+        Args:
+            test_name: Name of the test that triggered this function.
+            begin_time: Logline format timestamp taken when the test started.
+        """
         self.log.info(
             "Test {} failed, Fetching Btsnoop logs and bugreport".format(
                 test_name))
@@ -224,7 +255,7 @@ class CoexBaseTest(BaseTestClass):
         if record.details:
             self.log.error(record.details)
         self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
-        self.on_fail(record, record.test_name, record.log_begin_time)
+        self.on_fail(record, record.test_name, record.begin_time)
 
     def _on_pass(self, record):
         """Proxy function to guarantee the base implementation of on_pass is
@@ -298,24 +329,60 @@ class CoexBaseTest(BaseTestClass):
 
         Returns: True if successful, otherwise False.
         """
-        #TODO: Validate the success state of functionalities performed.
-        self.audio_receiver.volume_up()
-        time.sleep(2)
-        self.audio_receiver.volume_down()
-        time.sleep(2)
-        self.audio_receiver.skip_next()
-        time.sleep(2)
-        self.audio_receiver.skip_previous()
-        time.sleep(2)
+        if "Volume_up" and "Volume_down" in (
+                self.relay_devices[0].relays.keys()):
+            current_volume = self.pri_ad.droid.getMediaVolume()
+            self.audio_receiver.press_volume_up()
+            if current_volume == self.pri_ad.droid.getMediaVolume():
+                self.log.error("Increase volume failed")
+                return False
+            time.sleep(AVRCP_WAIT_TIME)
+            current_volume = self.pri_ad.droid.getMediaVolume()
+            self.audio_receiver.press_volume_down()
+            if current_volume == self.pri_ad.droid.getMediaVolume():
+                self.log.error("Decrease volume failed")
+                return False
+        else:
+            self.log.warning("No volume control pins specfied in relay config.")
+
+        if "Next" and "Previous" in self.relay_devices[0].relays.keys():
+            self.audio_receiver.press_next()
+            time.sleep(AVRCP_WAIT_TIME)
+            self.audio_receiver.press_previous()
+            time.sleep(AVRCP_WAIT_TIME)
+        else:
+            self.log.warning("No track change pins specfied in relay config.")
         return True
+
+    def get_call_volume(self):
+        """Function to get call volume when bluetooth headset connected.
+
+        Returns:
+            Call volume.
+        """
+        return self.pri_ad.adb.shell(
+            "settings list system|grep volume_bluetooth_sco_bt_sco_hs")
 
     def change_volume(self):
         """Changes volume with HFP call.
 
         Returns: True if successful, otherwise False.
         """
-        self.audio_receiver.volume_up()
-        time.sleep(2)
-        self.audio_receiver.volume_down()
-        time.sleep(2)
+        if "Volume_up" and "Volume_down" in (
+                self.relay_devices[0].relays.keys()):
+            current_volume = self.get_call_volume()
+            self.audio_receiver.press_volume_down()
+            time.sleep(AVRCP_WAIT_TIME)  # wait till volume_changes
+            if current_volume == self.get_call_volume():
+                self.log.error("Decrease volume failed")
+                return False
+            time.sleep(AVRCP_WAIT_TIME)
+            current_volume = self.get_call_volume()
+            self.audio_receiver.press_volume_up()
+            time.sleep(AVRCP_WAIT_TIME)  # wait till volume_changes
+            if current_volume == self.get_call_volume():
+                self.log.error("Increase volume failed")
+                return False
+        else:
+            self.log.warning("No volume control pins specfied in relay config.")
         return True

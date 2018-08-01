@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 # Copyright 2016 - The Android Open Source Project
 #
@@ -18,10 +18,8 @@
 
 import json
 import logging
-import pprint
 
 from acts import logger
-from acts import signals
 from acts import utils
 
 
@@ -99,8 +97,9 @@ class TestResultRecord(object):
         self.result = result
         if self.additional_errors:
             self.result = TestResultEnums.TEST_RESULT_UNKNOWN
-        if isinstance(e, signals.TestSignal):
+        if hasattr(e, 'details'):
             self.details = e.details
+        if hasattr(e, 'extras'):
             self.extras = e.extras
         elif e:
             self.details = str(e)
@@ -237,6 +236,7 @@ class TestResult(object):
         self.controller_info = {}
         self.post_run_data = {}
         self.extras = {}
+        self.errors = []
 
     def __add__(self, r):
         """Overrides '+' operator for TestResult class.
@@ -337,6 +337,7 @@ class TestResult(object):
         d["Results"] = [record.to_dict() for record in self.executed]
         d["Summary"] = self.summary_dict()
         d["Extras"] = self.extras
+        d["Errors"] = self.errors_list()
         json_str = json.dumps(d, indent=4, sort_keys=True)
         return json_str
 
@@ -375,4 +376,11 @@ class TestResult(object):
         d["Skipped"] = len(self.skipped)
         d["Blocked"] = len(self.blocked)
         d["Unknown"] = len(self.unknown)
+        d["Errors"] = len(self.errors)
         return d
+
+    def errors_list(self):
+        l = list()
+        for e in self.errors:
+            l.append({"Error Code": e.error_code, "Message": e.message})
+        return l

@@ -31,8 +31,10 @@ from acts.test_utils.tel.tel_test_utils import ensure_wifi_connected
 from acts.test_utils.tel.tel_test_utils import is_sim_ready
 from acts.test_utils.tel.tel_test_utils import log_screen_shot
 from acts.test_utils.tel.tel_test_utils import multithread_func
+from acts.test_utils.tel.tel_test_utils import reboot_device
 from acts.test_utils.tel.tel_test_utils import refresh_droid_config
 from acts.test_utils.tel.tel_test_utils import send_dialer_secret_code
+from acts.test_utils.tel.tel_test_utils import toggle_airplane_mode_by_adb
 from acts.test_utils.tel.tel_test_utils import wait_for_state
 
 CARRIER_AUTO = "auto"
@@ -50,6 +52,26 @@ _SWITCHING_PREF_FILE = (
 _INTENT_FLAGS = int(0x00008000 | 0x10000000 | 0x00080000 | 0x00020000)
 _TYCHO_PKG = 'com.google.android.apps.tycho'
 _MAX_WAIT_TIME = 600
+_TYCHO_VERBOSE_LOGGING_CMDS = [
+    "setprop log.tag.Tycho VERBOSE",
+    "CLASSPATH=/system/framework/am.jar su root app_process "
+    "/system/bin com.android.commands.am.Am broadcast -a "
+    "com.google.gservices.intent.action.GSERVICES_OVERRIDE "
+    "-e tycho.enable_request_logging true",
+    "CLASSPATH=/system/framework/am.jar su root app_process "
+    "/system/bin com.android.commands.am.Am broadcast -a "
+    "com.google.gservices.intent.action.GSERVICES_OVERRIDE "
+    "-e tycho.enable_sensitive_logging true",
+    "CLASSPATH=/system/framework/am.jar su root app_process "
+    "/system/bin com.android.commands.am.Am broadcast -a "
+    "com.google.gservices.intent.action.GSERVICES_OVERRIDE "
+    "-e tycho.enable_ample_logging true"
+]
+
+_TYCHO_SERVER_LAB_OVERRIDE_CMD = (
+    "am broadcast -a com.google.gservices.intent.action.GSERVICES_OVERRIDE -e "
+    "url:tycho_server_endpoint https://android.googleapis.com/nova/nfe/ rewrite"
+    " https://android.googleapis.com/lab/nova/nfe/")
 
 
 class TychoClassId(object):
@@ -72,14 +94,7 @@ class ActionTypeId(object):
 
 class TelLiveProjectFiTest(TelephonyBaseTest):
     def setup_class(self):
-        self.wifi_network_ssid = self.user_params.get(
-            "wifi_network_ssid") or self.user_params.get(
-                "wifi_network_ssid_2g") or self.user_params.get(
-                    "wifi_network_ssid_5g")
-        self.wifi_network_pass = self.user_params.get(
-            "wifi_network_pass") or self.user_params.get(
-                "wifi_network_pass_2g") or self.user_params.get(
-                    "wifi_network_ssid_5g")
+        self.activation_attemps = self.user_params.get("activation_attemps", 3)
 
     def _add_google_account(self, ad, retries=3):
         for _ in range(3):
@@ -108,7 +123,7 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
             ad.log.error(
                 "com.google.android.tradefed.account is not installed")
             return False
-        for _ in range(3):
+        for _ in range(retries):
             ad.ensure_screen_on()
             output = ad.adb.shell(
                 'am instrument -w '
@@ -125,7 +140,7 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
             account_util = account_util[0]
         ad.log.info("Install account_util %s", account_util)
         ad.ensure_screen_on()
-        ad.adb.install("-r %s" % account_util, timeout=180)
+        ad.adb.install("-r %s" % account_util, timeout=300, ignore_status=True)
         time.sleep(3)
         if not ad.is_apk_installed("com.google.android.tradefed.account"):
             ad.log.info("com.google.android.tradefed.account is not installed")
@@ -133,6 +148,9 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
         return True
 
     def _account_registration(self, ad):
+        toggle_airplane_mode_by_adb(self.log, ad, new_state=False)
+        for cmd in _TYCHO_VERBOSE_LOGGING_CMDS:
+            ad.adb.shell(cmd)
         if hasattr(ad, "user_account"):
             ad.exit_setup_wizard()
             if not ad.is_apk_installed("com.google.android.tradefed.account"
@@ -160,11 +178,24 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
                 'com.google.android.tradefed.account/.AddAccount' %
                 (ad.user_account, ad.user_password))
             ad.log.info("Enable and activate tycho apk")
-            ad.adb.shell('pm enable %s' % _TYCHO_PKG)
-            self.activate_fi_account(ad)
-            if not self.check_project_fi_activated(ad):
-                ad.log.error("Fail to activate Fi account")
+            if not ad.is_apk_installed(_TYCHO_PKG):
+                ad.log.info("%s is not installed", _TYCHO_PKG)
                 return False
+            ad.adb.shell('pm enable %s' % _TYCHO_PKG)
+            #ad.adb.shell(_TYCHO_SERVER_LAB_OVERRIDE_CMD)
+            for i in range(1, self.activation_attemps + 1):
+                if i == self.activation_attemps:
+                    ad.log.info("Reboot and try Fi activation again")
+                    reboot_device(ad)
+                self.activate_fi_account(ad)
+                if not self.check_project_fi_activated(ad):
+                    ad.log.error("Fail to activate Fi account on attempt-%s",
+                                 i)
+                    if i == self.activation_attemps:
+                        return False
+                else:
+                    ad.log.info("Fi account is activated successfully")
+                    break
         elif "Fi Network" in ad.adb.getprop("gsm.sim.operator.alpha"):
             ad.log.error("Google account is not provided for Fi Network")
             return False
@@ -185,9 +216,10 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
           action_type: The action type id to create the intent
         """
         ad.log.info('Starting service %s/.%s.', package, service_id)
-        intent = ad.droid.makeIntent(action_type, None, None, extras, [
-            'android.intent.category.DEFAULT'
-        ], package, package + '.' + service_id, _INTENT_FLAGS)
+        intent = ad.droid.makeIntent(action_type, None, None, extras,
+                                     ['android.intent.category.DEFAULT'],
+                                     package, package + '.' + service_id,
+                                     _INTENT_FLAGS)
         ad.droid.startServiceIntent(intent)
 
     def start_activity(self, ad, package, activity_id, extras=None):
@@ -200,9 +232,10 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
           extras: (dict) extras needed to specify with the activity id
         """
         ad.log.info('Starting activity %s/.%s.', package, activity_id)
-        intent = ad.droid.makeIntent(ActionTypeId.MAIN, None, None, extras, [
-            'android.intent.category.LAUNCHER'
-        ], package, package + '.' + activity_id, _INTENT_FLAGS)
+        intent = ad.droid.makeIntent(ActionTypeId.MAIN, None, None, extras,
+                                     ['android.intent.category.LAUNCHER'],
+                                     package, package + '.' + activity_id,
+                                     _INTENT_FLAGS)
         ad.droid.startActivityIntent(intent, False)
 
     def activate_fi_account(self, ad):
@@ -217,6 +250,8 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
         Args:
           ad: Android device need to start Tycho InitActivity.
         """
+        ad.force_stop_apk(_TYCHO_PKG)
+        ad.send_keycode("HOME")
         extra = {'in_setup_wizard': False, 'force_show_account_chooser': False}
         self.start_activity(ad, _TYCHO_PKG, TychoClassId.INIT_ACTIVITY, extra)
         for _ in range(30):
@@ -224,9 +259,15 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
             time.sleep(1)
             current_window = ad.get_my_current_focus_window()
             log_screen_shot(ad, self.test_name)
+            if ad.adb.shell(
+                    "settings get global device_provisioning_mobile_data"
+            ) != "1":
+                ad.adb.shell(
+                    "settings put global device_provisioning_mobile_data 1")
             if 'SwitchConfirmDialogActivity' in current_window:
                 ad.log.info("In Switch Confirmation Dialog")
-                if ad.adb.getprop("ro.build.version.release")[0] not in ("8", "O"):
+                if ad.adb.getprop("ro.build.version.release")[0] not in ("8",
+                                                                         "O"):
                     ad.send_keycode("TAB")
                 ad.send_keycode("TAB")
                 ad.send_keycode("ENTER")
@@ -244,8 +285,8 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
                 ad.log.info("Finished activation process")
                 return
 
-    def check_project_fi_activated(self, ad):
-        for _ in range(20):
+    def check_project_fi_activated(self, ad, retries=20):
+        for _ in range(retries):
             if is_sim_ready(self.log, ad) and (
                     ad.droid.telephonyGetSimOperatorName() == "Fi Network"):
                 ad.log.info("SIM state is READY, SIM operator is Fi")
@@ -470,8 +511,12 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
             ad.send_keycode("ENTER")
             return True
         else:
-            ad.log.error("Carrier is %s. Fail to switch to %s",
-                         self.get_active_carrier(ad), carrier)
+            active_carrier = self.get_active_carrier(ad)
+            if active_carrier == carrier:
+                ad.log.info("Switched to %s successfully", carrier)
+                return True
+            ad.log.error("Carrier is %s. Fail to switch to %s", active_carrier,
+                         carrier)
             return False
 
     def operator_network_switch(self, ad, carrier):
@@ -509,7 +554,11 @@ class TelLiveProjectFiTest(TelephonyBaseTest):
         """
         tasks = [(self._account_registration, [ad])
                  for ad in self.android_devices]
-        if not multithread_func(self.log, tasks):
+        try:
+            if not multithread_func(self.log, tasks):
+                abort_all_tests(self.log, "Unable to activate Fi account!")
+        except Exception as e:
+            self.log.error(e)
             abort_all_tests(self.log, "Unable to activate Fi account!")
         return True
 

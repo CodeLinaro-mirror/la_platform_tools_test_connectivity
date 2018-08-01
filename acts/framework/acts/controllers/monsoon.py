@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 #   Copyright 2016 - The Android Open Source Project
 #
@@ -43,7 +43,7 @@ ACTS_CONTROLLER_REFERENCE_NAME = "monsoons"
 def create(configs):
     objs = []
     for c in configs:
-        objs.append(Monsoon(serial=c))
+        objs.append(Monsoon(serial=int(c)))
     return objs
 
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 #
 #   Copyright 2016 - The Android Open Source Project
 #
@@ -17,8 +17,8 @@
 import base64
 import concurrent.futures
 import datetime
-import json
 import functools
+import json
 import logging
 import os
 import random
@@ -31,12 +31,11 @@ import traceback
 import zipfile
 
 from acts.controllers import adb
-from acts import tracelogger
+from acts.libs.proc import job
+
 
 # File name length is limited to 255 chars on some OS, so we need to make sure
 # the file names we output fits within the limit.
-from acts.libs.proc import job
-
 MAX_FILENAME_LEN = 255
 
 
@@ -217,7 +216,7 @@ def find_files(paths, file_predicate):
     return file_list
 
 
-def load_config(file_full_path):
+def load_config(file_full_path, log_errors=True):
     """Loads a JSON config file.
 
     Returns:
@@ -225,11 +224,11 @@ def load_config(file_full_path):
     """
     with open(file_full_path, 'r') as f:
         try:
-            conf = json.load(f)
+            return json.load(f)
         except Exception as e:
-            logging.error("Exception error to load %s: %s", f, e)
+            if log_errors:
+                logging.error("Exception error to load %s: %s", f, e)
             raise
-        return conf
 
 
 def load_file_to_base64_str(f_path):
@@ -260,6 +259,37 @@ def dump_string_to_file(content, file_path, mode='w'):
     full_path = abs_path(file_path)
     with open(full_path, mode) as f:
         f.write(content)
+
+
+def list_of_dict_to_dict_of_dict(list_of_dicts, dict_key):
+    """Transforms a list of dicts to a dict of dicts.
+
+    For instance:
+    >>> list_of_dict_to_dict_of_dict([{'a': '1', 'b':'2'},
+    >>>                               {'a': '3', 'b':'4'}],
+    >>>                              'b')
+
+    returns:
+
+    >>> {'2': {'a': '1', 'b':'2'},
+    >>>  '4': {'a': '3', 'b':'4'}}
+
+    Args:
+        list_of_dicts: A list of dictionaries.
+        dict_key: The key in the inner dict to be used as the key for the
+                  outer dict.
+    Returns:
+        A dict of dicts.
+    """
+    return {d[dict_key]: d for d in list_of_dicts}
+
+
+def dict_purge_key_if_value_is_none(dictionary):
+    """Removes all pairs with value None from dictionary."""
+    for k, v in dict(dictionary).items():
+        if v is None:
+            del dictionary[k]
+    return dictionary
 
 
 def find_field(item_list, cond, comparator, target_field):
@@ -561,6 +591,7 @@ def force_airplane_mode(ad, new_state, timeout_value=60):
         True if success.
         False if timeout.
     """
+
     # Using timeout decorator.
     # Wait for device with timeout. If after <timeout_value> seconds, adb
     # is still waiting for device, throw TimeoutError exception.
@@ -802,26 +833,23 @@ def parse_ping_ouput(ad, count, out, loss_tolerance=20):
         False: if packet loss is more than loss_tolerance%
         True: if all good
     """
-    out = out.split('\n')[-3:]
-    stats = out[1].split(',')
-    # For failure case, line of interest becomes the last line
-    if len(stats) != 4:
-        stats = out[2].split(',')
-    packet_loss = float(stats[2].split('%')[0])
-    packet_xmit = int(stats[0].split()[0])
-    packet_rcvd = int(stats[1].split()[0])
-    min_packet_xmit_rcvd = (100 - loss_tolerance) * 0.01
+    result = re.search(
+        r"(\d+) packets transmitted, (\d+) received, (\d+)% packet loss", out)
+    if not result:
+        ad.log.info("Ping failed with %s", out)
+        return False
 
+    packet_loss = int(result.group(3))
+    packet_xmit = int(result.group(1))
+    packet_rcvd = int(result.group(2))
+    min_packet_xmit_rcvd = (100 - loss_tolerance) * 0.01
     if (packet_loss >= loss_tolerance
             or packet_xmit < count * min_packet_xmit_rcvd
             or packet_rcvd < count * min_packet_xmit_rcvd):
-        ad.log.error(
-            "More than %d %% packet loss seen, Expected Packet_count %d \
-            Packet loss %.2f%% Packets_xmitted %d Packets_rcvd %d",
-            loss_tolerance, count, packet_loss, packet_xmit, packet_rcvd)
+        ad.log.error("%s, ping failed with loss more than tolerance %s%%",
+                     result.group(0), loss_tolerance)
         return False
-    ad.log.info("Pkt_count %d Pkt_loss %.2f%% Pkt_xmit %d Pkt_rcvd %d", count,
-                packet_loss, packet_xmit, packet_rcvd)
+    ad.log.info("Ping succeed with %s", result.group(0))
     return True
 
 
@@ -843,19 +871,17 @@ def adb_shell_ping(ad,
     if count:
         ping_cmd += " -c %d" % count
     if dest_ip:
-        ping_cmd += " %s | tee /data/ping.txt" % dest_ip
+        ping_cmd += " %s" % dest_ip
     try:
         ad.log.info("Starting ping test to %s using adb command %s", dest_ip,
                     ping_cmd)
-        out = ad.adb.shell(ping_cmd, timeout=timeout)
+        out = ad.adb.shell(ping_cmd, timeout=timeout, ignore_status=True)
         if not parse_ping_ouput(ad, count, out, loss_tolerance):
             return False
         return True
     except Exception as e:
         ad.log.warning("Ping Test to %s failed with exception %s", dest_ip, e)
         return False
-    finally:
-        ad.adb.shell("rm /data/ping.txt", timeout=10, ignore_status=True)
 
 
 def unzip_maintain_permissions(zip_path, extract_location):
