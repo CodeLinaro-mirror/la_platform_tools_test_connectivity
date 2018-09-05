@@ -63,8 +63,10 @@ from acts.test_utils.tel.tel_test_utils import stop_qxdm_logger
 from acts.test_utils.tel.tel_test_utils import stop_tcpdumps
 from acts.test_utils.tel.tel_test_utils import synchronize_device_time
 from acts.test_utils.tel.tel_test_utils import unlock_sim
-from acts.test_utils.tel.tel_test_utils import wait_for_sim_ready_by_adb
-from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND
+from acts.test_utils.tel.tel_test_utils import wait_for_sim_ready_by_adb,\
+    wait_for_sims_ready_by_adb
+from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND,\
+    SINGLE_SIM_CONFIG, MULTI_SIM_CONFIG
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_FOREGROUND
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_RINGING
 from acts.test_utils.tel.tel_defines import SIM_STATE_ABSENT
@@ -95,6 +97,10 @@ class TelephonyBaseTest(BaseTestClass):
         self.skip_reset_between_cases = self.user_params.get(
             "skip_reset_between_cases", True)
         self.log_path = getattr(logging, "log_path", None)
+        self.sim_config = {
+                            "config":SINGLE_SIM_CONFIG,
+                            "number_of_sims":1
+                        }
 
     # Use for logging in the test cases to facilitate
     # faster log lookup and reduce ambiguity in logging.
@@ -181,6 +187,16 @@ class TelephonyBaseTest(BaseTestClass):
         unlock_sim(ad)
         ad.wakeup_screen()
         ad.adb.shell("input keyevent 82")
+        
+    #added by Code Aurora     
+    def wait_for_sim_ready(self,ad):
+        
+        wait_for_sim_ready_on_sim_config = {
+                            SINGLE_SIM_CONFIG : lambda:wait_for_sim_ready_by_adb(self.log,ad),
+                            MULTI_SIM_CONFIG : lambda:wait_for_sims_ready_by_adb(self.log,ad)
+            }
+        if not wait_for_sim_ready_on_sim_config[self.sim_config["config"]]:
+            raise signals.TestAbortClass("unable to load the SIM")
 
     def _setup_device(self, ad, sim_conf_file, qxdm_log_mask_cfg=None):
         if self.user_params.get("enable_connectivity_metrics", True):
@@ -196,8 +212,9 @@ class TelephonyBaseTest(BaseTestClass):
         if self.enable_radio_log_on:
             enable_radio_log_on(ad)
         if "sdm" in ad.model:
-            if ad.adb.getprop("persist.radio.multisim.config") != "ssss":
-                ad.adb.shell("setprop persist.radio.multisim.config ssss")
+            #added for dsds automation support
+            if ad.adb.getprop("persist.radio.multisim.config") != self.sim_config["config"]:
+                ad.adb.shell("setprop persist.radio.multisim.config %s"%self.sim_config["config"])
                 reboot_device(ad)
 
         stop_qxdm_logger(ad)
@@ -227,8 +244,8 @@ class TelephonyBaseTest(BaseTestClass):
             ensure_phone_idle(self.log, ad)
             setup_droid_properties(self.log, ad, sim_conf_file)
         else:
-            if not wait_for_sim_ready_by_adb(self.log, ad):
-                raise signals.TestAbortClass("unable to load the SIM")
+            #added for dsds automation support
+            self.wait_for_sim_ready(ad)
             ensure_phone_default_state(self.log, ad)
             setup_droid_properties(self.log, ad, sim_conf_file)
 
