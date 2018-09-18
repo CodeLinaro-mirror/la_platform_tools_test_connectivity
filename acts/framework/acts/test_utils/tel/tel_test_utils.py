@@ -2456,7 +2456,6 @@ def verify_internet_connection(log, ad, retries=3, expected_state=True):
     if ad.droid.connectivityNetworkIsConnected() != expected_state:
         ad.log.info("NetworkIsConnected = %s, expecting %s",
                     not expected_state, expected_state)
-        return False
     if verify_internet_connection_by_ping(
             log, ad, retries=retries, expected_state=expected_state):
         return True
@@ -2567,6 +2566,7 @@ def http_file_download_by_curl(ad,
     try:
         ad.log.info("Download %s to %s by adb shell command %s", url,
                     file_path, curl_cmd)
+
         ad.adb.shell(curl_cmd, timeout=timeout)
         if _check_file_existance(ad, file_path, expected_file_size):
             ad.log.info("%s is downloaded to %s successfully", url, file_path)
@@ -2576,6 +2576,13 @@ def http_file_download_by_curl(ad,
             return False
     except Exception as e:
         ad.log.warning("Download %s failed with exception %s", url, e)
+        for cmd in ("ls -lh /data/local/tmp/tcpdump/",
+                    "ls -lh /sdcard/Download/",
+                    "ls -lh /data/vendor/radio/diag_logs/logs/",
+                    "df -h",
+                    "du -d 4 -h /data"):
+            out = ad.adb.shell(cmd)
+            ad.log.debug("%s", out)
         return False
     finally:
         if remove_file_after_check:
@@ -2733,6 +2740,13 @@ def http_file_download_by_sl4a(ad,
             ad.data_droid.httpDownloadFile(url, file_path, timeout=timeout)
         except Exception as e:
             ad.log.warning("SL4A file download error: %s", e)
+            for cmd in ("ls -lh /data/local/tmp/tcpdump/",
+                        "ls -lh /sdcard/Download/",
+                        "ls -lh /data/vendor/radio/diag_logs/logs/",
+                        "df -h",
+                        "du -d 4 -h /data"):
+                out = ad.adb.shell(cmd)
+                ad.log.debug("%s", out)
             ad.data_droid.terminate()
             return False
         if _check_file_existance(ad, file_path, expected_file_size):
@@ -5977,6 +5991,8 @@ def start_adb_tcpdump(ad,
     else:
         ad.adb.shell(
             "find /data/local/tmp/tcpdump -type f -not -mtime -1800s -delete")
+        ad.adb.shell(
+            "find /data/local/tmp/tcpdump -type f -size +5G -delete")
 
     if not begin_time:
         begin_time = get_current_epoch_time()
