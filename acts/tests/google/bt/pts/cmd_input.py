@@ -1054,7 +1054,15 @@ class CmdInput(cmd.Cmd):
         """Get HID Report"""
         cmd = "Get HID Report"
         try:
-            self.pri_dut.droid.bluetoothHidSendData(device_id, "42")
+            self.pri_dut.droid.bluetoothHidSendData(self.mac_addr, "42")
+        except Exception as err:
+            self.log.info(FAILURE.format(cmd, err))
+
+    def do_hid_set_protocol_mode(self, line):
+        """HID set protocol mode (0 == report, 1 == boot, 225 == unsupported)"""
+        cmd = "Set protocol mode (0 == report, 1 == boot, 225 == unsupported)"
+        try:
+            self.pri_dut.droid.bluetoothHidSetProtocolMode(self.mac_addr, int(line))
         except Exception as err:
             self.log.info(FAILURE.format(cmd, err))
 
