@@ -76,7 +76,6 @@ class DoesNotExistError(AndroidDeviceError):
     """Raised when something that does not exist is referenced."""
 
 
-
 def create(configs):
     """Creates AndroidDevice controller objects.
 
@@ -445,6 +444,7 @@ class AndroidDevice:
         self.last_logcat_timestamp = None
         # Device info cache.
         self._user_added_device_info = {}
+        self._sdk_api_level = None
 
     def clean_up(self):
         """Cleans up the AndroidDevice object and releases any resources it
@@ -547,6 +547,16 @@ class AndroidDevice:
         }
         return info
 
+    def sdk_api_level(self):
+        if self._sdk_api_level is not None:
+            return self._sdk_api_level
+        if self.is_bootloader:
+            self.log.error('Device is in fastboot mode. Cannot get build info.')
+            return
+        self._sdk_api_level = int(
+            self.adb.shell('getprop ro.build.version.sdk'))
+        return self._sdk_api_level
+
     @property
     def is_bootloader(self):
         """True if the device is in bootloader mode.
@@ -625,6 +635,10 @@ class AndroidDevice:
                 self.log.info("Logcat to %s died", self.adb_logcat_file_path)
                 return False
         return False
+
+    def update_sdk_api_level(self):
+        self._sdk_api_level = None
+        self.sdk_api_level()
 
     def load_config(self, config):
         """Add attributes to the AndroidDevice object based on json config.
@@ -795,10 +809,10 @@ class AndroidDevice:
                               logcat is no longer running.
         """
         if self.is_adb_logcat_on:
-            raise AndroidDeviceError(
+            self.log.warn(
                 'Android device %s already has a running adb logcat thread. '
-                'Cannot start another one.' % self.serial,
-                serial=self.serial)
+                % self.serial)
+            return
         # Disable adb log spam filter. Have to stop and clear settings first
         # because 'start' doesn't support --clear option before Android N.
         self.adb.shell("logpersist.stop --clear")
@@ -829,10 +843,10 @@ class AndroidDevice:
         """Stops the adb logcat collection subprocess.
         """
         if not self.is_adb_logcat_on:
-            raise AndroidDeviceError(
+            self.log.warn(
                 'Android device %s does not have an ongoing adb logcat '
-                'collection.' % self.serial,
-                serial=self.serial)
+                % self.serial)
+            return
         # Set the last timestamp to the current timestamp. This may cause
         # a race condition that allows the same line to be logged twice,
         # but it does not pose a problem for our logging purposes.
