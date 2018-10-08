@@ -68,6 +68,7 @@ class WifiSoftApTest(WifiBaseTest):
         self.dut_client.droid.wifiEnableVerboseLogging(1)
         asserts.assert_equal(self.dut_client.droid.wifiGetVerboseLoggingLevel(), 1,
             "Failed to enable WiFi verbose logging on the client dut.")
+        wutils.wifi_toggle_state(self.dut_client, True)
 
     def teardown_class(self):
         wutils.stop_wifi_tethering(self.dut)
@@ -109,7 +110,7 @@ class WifiSoftApTest(WifiBaseTest):
         wutils.start_wifi_connection_scan_and_ensure_network_not_found(
             self.dut_client, ap_ssid);
 
-    def test_traffic_between_softap_clients(self, config):
+    def validate_traffic_between_softap_clients(self, config):
         """Send traffic between softAp clients.
 
         Connect SoftAp clients to the wifi hotspot; one android
@@ -181,7 +182,7 @@ class WifiSoftApTest(WifiBaseTest):
             self.dut_client.droid.wifiEnableNetwork(ret, 0)
         self.confirm_softap_in_scan_results(config[wutils.WifiEnums.SSID_KEY])
         if test_clients:
-            self.test_traffic_between_softap_clients(config)
+            self.validate_traffic_between_softap_clients(config)
         wutils.stop_wifi_tethering(self.dut)
         asserts.assert_false(self.dut.droid.wifiIsApEnabled(),
                              "SoftAp is still reported as running")
