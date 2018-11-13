@@ -30,6 +30,8 @@ from acts.event import event_bus
 from acts.event import subscription_bundle
 from acts.event.event import TestCaseBeginEvent
 from acts.event.event import TestCaseEndEvent
+from acts.event.event import TestClassBeginEvent
+from acts.event.event import TestClassEndEvent
 from acts.event.subscription_bundle import SubscriptionBundle
 
 
@@ -402,9 +404,7 @@ class BaseTestClass(object):
         self.log.info("%s %s", TEST_CASE_TOKEN, test_name)
         verdict = None
         try:
-            event_bus.post(TestCaseBeginEvent(self.testbed_name,
-                                              self.__class__.__name__,
-                                              test_name))
+            event_bus.post(TestCaseBeginEvent(self, test_func))
             try:
                 if hasattr(self, 'android_devices'):
                     for ad in self.android_devices:
@@ -457,7 +457,8 @@ class BaseTestClass(object):
             self._exec_procedure_func(self._on_blocked, tr_record)
         except error.ActsError as e:
             self.results.errors.append(e)
-            self.log.error("BaseTest execute_one_test_case error: %s" % e.message)
+            self.log.error(
+                'BaseTest execute_one_test_case error: %s' % e.message)
         except Exception as e:
             self.log.error(traceback.format_exc())
             # Exception happened during test.
@@ -473,9 +474,8 @@ class BaseTestClass(object):
             tr_record.test_fail()
             self._exec_procedure_func(self._on_fail, tr_record)
         finally:
-            event_bus.post(TestCaseEndEvent(self.testbed_name,
-                                            self.__class__.__name__,
-                                            test_name, signals.TestPass))
+            event_bus.post(TestCaseEndEvent(
+                self, test_func, signals.TestSignal))
             if not is_generate_trigger:
                 self.results.add_record(tr_record)
 
@@ -671,6 +671,7 @@ class BaseTestClass(object):
         """
         self.register_test_class_event_subscriptions()
         self.log.info("==========> %s <==========", self.TAG)
+        event_bus.post(TestClassBeginEvent(self))
         # Devise the actual test cases to run in the test class.
         if not test_names:
             if self.tests:
@@ -714,6 +715,7 @@ class BaseTestClass(object):
             raise e
         finally:
             self._exec_func(self.teardown_class)
+            event_bus.post(TestClassEndEvent(self, self.results))
             self.log.info("Summary for test class %s: %s", self.TAG,
                           self.results.summary_str())
 
