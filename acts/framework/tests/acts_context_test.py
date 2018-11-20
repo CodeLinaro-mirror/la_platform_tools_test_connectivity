@@ -21,12 +21,20 @@ import unittest
 from unittest import TestCase
 from acts.event.event import TestCaseEvent
 from acts.event.event import TestClassEvent
-from acts.metrics.context import get_context_for_event
-from acts.metrics.context import TestContext
-from acts.metrics.context import TestCaseContext
-from acts.metrics.context import TestClassContext
+from acts.context import get_context_for_event
+from acts.context import TestContext
+from acts.context import TestCaseContext
+from acts.context import TestClassContext
 
-LOGGING = 'acts.metrics.context.logging'
+LOGGING = 'acts.context.logging'
+
+
+class TestClass:
+    def __init__(self):
+        self.test_name = self.test_case.__name__
+
+    def test_case(self):
+        pass
 
 
 class ModuleTest(TestCase):
@@ -86,7 +94,7 @@ class TestContextTest(TestCase):
 
         self.assertEqual(context.get_output_dir(), mock_dir)
 
-    def test_get_full_output_path(self):
+    def test_get_full_output_path_returns_correct_path(self):
         context = TestContext()
         path = 'base/path'
         dir = 'output/dir'
@@ -95,6 +103,23 @@ class TestContextTest(TestCase):
 
         full_path = 'base/path/output/dir'
         self.assertEqual(context.get_full_output_path(), full_path)
+
+    @patch('os.path.exists')
+    @patch('os.makedirs')
+    def test_get_full_output_path_makes_directory(self, makedirs, exists):
+        exists.return_value = False
+
+        context = TestContext()
+        path = 'base/path'
+        dir = 'output/dir'
+        context.set_base_output_path(path)
+        context.set_output_dir(dir)
+
+        full_path = 'base/path/output/dir'
+        context.get_full_output_path()
+
+        self.assertTrue(makedirs.called)
+        self.assertEqual(makedirs.call_args[0][0], full_path)
 
     def test_identifier_not_implemented(self):
         context = TestContext()
@@ -140,9 +165,10 @@ class TestCaseContextTest(TestCase):
     """Unit tests for the TestCaseContext class."""
 
     def test_init_attributes(self):
-        test_class = Mock()
         test_case = Mock()
         test_case.__name__ = 'test_case_name'
+        test_class = Mock()
+        test_class.test_name = test_case.__name__
         context = TestCaseContext(test_class, test_case)
 
         self.assertEqual(context.test_class, test_class)
@@ -159,9 +185,6 @@ class TestCaseContextTest(TestCase):
         self.assertEqual(context.test_class_name, TestClass.__name__)
 
     def test_get_output_dir_is_class_and_test_case_name(self):
-        class TestClass:
-            def test_case(self):
-                pass
         test_class = TestClass()
         test_case = TestClass.test_case
         context = TestCaseContext(test_class, test_case)
@@ -170,9 +193,6 @@ class TestCaseContextTest(TestCase):
         self.assertEqual(context.get_output_dir(), output_dir)
 
     def test_identifier_is_class_and_test_case_name(self):
-        class TestClass:
-            def test_case(self):
-                pass
         test_class = TestClass()
         test_case = TestClass.test_case
         context = TestCaseContext(test_class, test_case)

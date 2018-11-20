@@ -37,6 +37,8 @@ class BlackboxMetricLogger(MetricLogger):
                      result is stored.
         metric_key: The metric key to use. If unset, the logger will use the
                     context's identifier.
+        metric_value: The metric value. If this value is set, result_attr is
+                      ignored.
     """
 
     PROTO_FILE = 'protos/acts_blackbox.proto'
@@ -63,6 +65,7 @@ class BlackboxMetricLogger(MetricLogger):
         self.metric_name = metric_name
         self.result_attr = result_attr
         self.metric_key = metric_key
+        self.metric_value = None
 
     def _get_metric_value(self):
         """Extracts the metric value from the current context."""
@@ -75,8 +78,11 @@ class BlackboxMetricLogger(MetricLogger):
         extracts an identifier from the context.
         """
         if self.metric_key:
-            return self.metric_key
-        return self.context.identifier
+            key = self.metric_key
+        else:
+            key = self.context.identifier
+        key = '%s.%s' % (key, self.metric_name)
+        return key
 
     def _get_file_name(self):
         """Gets the base file name to publish to."""
@@ -94,7 +100,10 @@ class BlackboxMetricLogger(MetricLogger):
         result = self.proto_module.ActsBlackboxMetricResult()
         result.test_identifier = self.context.identifier
         result.metric_key = self._get_metric_key()
-        result.metric_value = self._get_metric_value()
+        if self.result_attr is None or self.metric_value is not None:
+            result.metric_value = self.metric_value
+        else:
+            result.metric_value = self._get_metric_value()
 
         metric = ProtoMetric(
             name=self._get_file_name(),
