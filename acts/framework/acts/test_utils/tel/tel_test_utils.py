@@ -628,6 +628,19 @@ def wait_for_sims_ready_by_adb(log, ad, wait_time=90):
     return _wait_for_droid_in_state(log, ad, wait_time, is_sims_ready_by_adb)
 
 
+def is_sims_ready_by_adb(log, ad):
+    states = list(ad.adb.getprop("gsm.sim.state").split(","))
+    ad.log.info("gsm.sim.state = %s", states)
+    for state in states:
+        if state != SIM_STATE_READY and state != SIM_STATE_LOADED:
+            return False
+    return True
+
+
+def wait_for_sims_ready_by_adb(log, ad, wait_time=90):
+    return _wait_for_droid_in_state(log, ad, wait_time, is_sims_ready_by_adb)
+
+
 def get_service_state_by_adb(log, ad):
     output = ad.adb.shell("dumpsys telephony.registry | grep mServiceState")
     if "mVoiceRegState" in output:
@@ -1874,7 +1887,11 @@ def call_setup_teardown(log,
                         incall_ui_display=INCALL_UI_DISPLAY_FOREGROUND,
                         dialing_number_length=None,
                         video_state=None,
+<<<<<<< HEAD
                         slot_id_callee = None):
+=======
+                        slot_id_callee=None):
+>>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
     """ Call process, including make a phone call from caller,
     accept from callee, and hang up. The call is on default voice subscription
 
@@ -1904,7 +1921,15 @@ def call_setup_teardown(log,
 
     """
     subid_caller = get_outgoing_voice_sub_id(ad_caller)
+<<<<<<< HEAD
     subid_callee = get_incoming_voice_sub_id(ad_callee) if slot_id_callee is None else get_subid_from_slot_index(log,ad_callee,slot_id_callee) #modified by qcom
+=======
+    if slot_id_callee is None:
+        subid_callee = get_incoming_voice_sub_id(ad_callee)
+    else:
+        subid_callee = get_subid_from_slot_index(log, ad_callee, slot_id_callee)
+
+>>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
     return call_setup_teardown_for_subscription(
         log, ad_caller, ad_callee, subid_caller, subid_callee, ad_hangup,
         verify_caller_func, verify_callee_func, wait_time_in_call,
@@ -4012,7 +4037,11 @@ def sms_send_receive_verify(log,
                             array_message,
                             max_wait_time=MAX_WAIT_TIME_SMS_RECEIVE,
                             expected_result=True,
+<<<<<<< HEAD
                             slot_id_rx = None):
+=======
+                            slot_id_rx=None):
+>>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
     """Send SMS, receive SMS, and verify content and sender's number.
 
         Send (several) SMS from droid_tx to droid_rx.
@@ -4027,7 +4056,15 @@ def sms_send_receive_verify(log,
         slot_id_rx: the slot on the Receiver's android device (0/1)
     """
     subid_tx = get_outgoing_message_sub_id(ad_tx)
+<<<<<<< HEAD
     subid_rx = get_incoming_message_sub_id(ad_rx) if slot_id_rx is None else get_subid_from_slot_index(log,ad_rx,slot_id_rx)#modified by qcom
+=======
+    if slot_id_rx is None:
+        subid_rx = get_incoming_message_sub_id(ad_rx)
+    else:
+        subid_rx = get_subid_from_slot_index(log, ad_rx, slot_id_rx)
+
+>>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
     result = sms_send_receive_verify_for_subscription(
         log, ad_tx, ad_rx, subid_tx, subid_rx, array_message, max_wait_time)
     if result != expected_result:

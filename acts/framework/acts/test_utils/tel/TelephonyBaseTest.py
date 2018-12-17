@@ -63,10 +63,17 @@ from acts.test_utils.tel.tel_test_utils import stop_qxdm_logger
 from acts.test_utils.tel.tel_test_utils import stop_tcpdumps
 from acts.test_utils.tel.tel_test_utils import synchronize_device_time
 from acts.test_utils.tel.tel_test_utils import unlock_sim
+<<<<<<< HEAD
 from acts.test_utils.tel.tel_test_utils import wait_for_sim_ready_by_adb,\
     wait_for_sims_ready_by_adb
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND,\
     SINGLE_SIM_CONFIG, MULTI_SIM_CONFIG
+=======
+from acts.test_utils.tel.tel_test_utils import wait_for_sim_ready_by_adb
+from acts.test_utils.tel.tel_test_utils import wait_for_sims_ready_by_adb
+from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND
+from acts.test_utils.tel.tel_defines import SINGLE_SIM_CONFIG, MULTI_SIM_CONFIG
+>>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_FOREGROUND
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_RINGING
 from acts.test_utils.tel.tel_defines import SIM_STATE_ABSENT
@@ -198,6 +205,14 @@ class TelephonyBaseTest(BaseTestClass):
         if not wait_for_sim_ready_on_sim_config[self.sim_config["config"]]:
             raise signals.TestAbortClass("unable to load the SIM")
 
+    def wait_for_sim_ready(self,ad):
+        wait_for_sim_ready_on_sim_config = {
+              SINGLE_SIM_CONFIG : lambda:wait_for_sim_ready_by_adb(self.log,ad),
+              MULTI_SIM_CONFIG : lambda:wait_for_sims_ready_by_adb(self.log,ad)
+              }
+        if not wait_for_sim_ready_on_sim_config[self.sim_config["config"]]:
+            raise signals.TestAbortClass("unable to load the SIM")
+
     def _setup_device(self, ad, sim_conf_file, qxdm_log_mask_cfg=None):
         if self.user_params.get("enable_connectivity_metrics", True):
             enable_connectivity_metrics(ad)
@@ -212,9 +227,16 @@ class TelephonyBaseTest(BaseTestClass):
         if self.enable_radio_log_on:
             enable_radio_log_on(ad)
         if "sdm" in ad.model:
+<<<<<<< HEAD
             #added for dsds automation support
             if ad.adb.getprop("persist.radio.multisim.config") != self.sim_config["config"]:
                 ad.adb.shell("setprop persist.radio.multisim.config %s"%self.sim_config["config"])
+=======
+            if ad.adb.getprop("persist.radio.multisim.config") != \
+                              self.sim_config["config"]:
+                ad.adb.shell("setprop persist.radio.multisim.config %s" \
+                             % self.sim_config["config"])
+>>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
                 reboot_device(ad)
 
         stop_qxdm_logger(ad)
@@ -244,7 +266,10 @@ class TelephonyBaseTest(BaseTestClass):
             ensure_phone_idle(self.log, ad)
             setup_droid_properties(self.log, ad, sim_conf_file)
         else:
+<<<<<<< HEAD
             #added for dsds automation support
+=======
+>>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
             self.wait_for_sim_ready(ad)
             ensure_phone_default_state(self.log, ad)
             setup_droid_properties(self.log, ad, sim_conf_file)
