@@ -48,14 +48,9 @@ from acts.test_utils.tel.tel_defines import NETWORK_MODE_GSM_ONLY
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_GSM_UMTS
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_LTE_CDMA_EVDO
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_LTE_GSM_WCDMA
-<<<<<<< HEAD
-from acts.test_utils.tel.tel_subscription_utils import get_outgoing_voice_sub_id,\
-    get_subid_from_slot_index, set_subid_for_outgoing_call
-=======
 from acts.test_utils.tel.tel_subscription_utils import get_outgoing_voice_sub_id
 from acts.test_utils.tel.tel_subscription_utils import set_subid_for_outgoing_call
 from acts.test_utils.tel.tel_subscription_utils import get_subid_from_slot_index
->>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
 from acts.test_utils.tel.tel_subscription_utils import get_default_data_sub_id
 from acts.test_utils.tel.tel_test_utils import call_reject_leave_message
 from acts.test_utils.tel.tel_test_utils import call_setup_teardown
@@ -270,22 +265,6 @@ def two_phone_call_msim_short_seq(log,
         time.sleep(WAIT_TIME_BETWEEN_REG_AND_CALL)
 
         # Make call.
-<<<<<<< HEAD
-        log.info("---> Call test: %s to %s <---", param[0].serial,
-                 param[1].serial)
-        
-        slots = 2
-        for slot in range(slots):
-            set_subid_for_outgoing_call(ads[0],get_subid_from_slot_index(log,ads[0],slot))
-            set_subid_for_outgoing_call(ads[1],get_subid_from_slot_index(log,ads[1],slot))
-            time.sleep(1)
-            if not call_setup_teardown(
-                    log, *param,slot_id_callee = slot,  wait_time_in_call=wait_time_in_call):
-                log.error("Call Iteration Failed")
-                return False
-            if not call_setup_teardown(
-                    log, *param,slot_id_callee = 1-slot,  wait_time_in_call=wait_time_in_call):
-=======
         log.info("--> Call test: %s to %s <--", phone_a.serial, phone_b.serial)
         slots = 2
         for slot in range(slots):
@@ -300,15 +279,10 @@ def two_phone_call_msim_short_seq(log,
                 return False
             if not call_setup_teardown(log, *param,slot_id_callee = 1-slot,
                                        wait_time_in_call=wait_time_in_call):
->>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
                 log.error("Call Iteration Failed")
                 return False
     return True
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
 def two_phone_call_long_seq(log,
                             phone_a,
                             phone_a_idle_func,
@@ -811,21 +785,12 @@ def phone_setup_voice_general(log, ad):
     return phone_setup_voice_general_for_subscription(
         log, ad, get_outgoing_voice_sub_id(ad))
 
-<<<<<<< HEAD
 #added by Code Aurora
 def phone_setup_voice_general_for_slot(log,ad,slot_id):
     return phone_setup_voice_general_for_subscription(
         log, ad, get_subid_from_slot_index(log,ad,slot_id))
-    
-    
-=======
-
-def phone_setup_voice_general_for_slot(log,ad,slot_id):
-    return phone_setup_voice_general_for_subscription(
-        log, ad, get_subid_from_slot_index(log,ad,slot_id))
 
 
->>>>>>> 7d2aa96c6b9fd0c2824b4aab4b75a507ac9861ee
 def phone_setup_voice_general_for_subscription(log, ad, sub_id):
     """Setup phone for voice general call test for subscription id.
 
