@@ -122,10 +122,12 @@ class WifiChaosTest(WifiBaseTest):
         self.dut.droid.wakeUpNow()
 
     def on_pass(self, test_name, begin_time):
-        wutils.stop_pcap(self.pcap, self.pcap_pid, False)
+        wutils.stop_pcap(self.pcap, self.pcap_pid, True)
 
     def on_fail(self, test_name, begin_time):
         wutils.stop_pcap(self.pcap, self.pcap_pid, False)
+        self.dut.take_bug_report(test_name, begin_time)
+        self.dut.cat_adb_log(test_name, begin_time)
 
     def teardown_test(self):
         self.dut.droid.wakeLockRelease()
@@ -223,7 +225,8 @@ class WifiChaosTest(WifiBaseTest):
         ssid_info = ssid.split('_')
         self.band = ssid_info[-1]
         for item in ssid_info:
-            if 'ch' in item:
+            # Skip over the router model part.
+            if 'ch' in item and item != ssid_info[0]:
                 self.chan = re.search(r'(\d+)',item).group(0)
                 return
         raise signals.TestFailure("Channel information not found in SSID.")
