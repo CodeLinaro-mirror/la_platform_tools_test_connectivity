@@ -15,7 +15,7 @@
 #   limitations under the License.
 
 import os
-import math
+import statistics
 
 import acts.controllers.iperf_server as ipf
 
@@ -44,6 +44,7 @@ class IperfHelper(object):
             self.start_meas_time = config['start_meas_time']
         else:
             self.start_meas_time = 0
+        self.window = getattr(config, "window", None)
 
         iperf_args = '-i 1 -t {} -p {} -J'.format(self.duration, self.port)
 
@@ -55,6 +56,10 @@ class IperfHelper(object):
         # Set bandwidth in Mbit/s
         if self.bandwidth is not None:
             iperf_args = iperf_args + ' -b {}M'.format(self.bandwidth)
+
+        # Set the TCP window size
+        if self.window:
+            iperf_args += ' -w {}M'.format(self.window)
 
         # Parse the client side data to a file saved on the phone
         self.results_filename_phone = self.IPERF_CLIENT_RESULT_FILE_LOC_PHONE \
@@ -87,15 +92,26 @@ class IperfHelper(object):
         try:
             iperf_result = ipf.IPerfResult(iperf_file)
 
-            # Compute the throughput in Mbit/s
-            throughput = (math.fsum(
-                iperf_result.instantaneous_rates[self.start_meas_time:-1]
-            ) / len(iperf_result.instantaneous_rates[self.start_meas_time:-1])
-                          ) * 8 * (1.024**2)
+            # Get instantaneous rates after measuring starts
+            samples = iperf_result.instantaneous_rates[self.start_meas_time:-1]
 
-            log.info('The average throughput is {}'.format(throughput))
+            # Convert values to Mbit/s
+            samples = [rate * 8 * (1.024**2) for rate in samples]
+
+            # compute mean, var and max_dev
+            mean = statistics.mean(samples)
+            var = statistics.variance(samples)
+            max_dev = 0
+            for rate in samples:
+                if abs(rate - mean) > max_dev:
+                    max_dev = abs(rate - mean)
+
+            log.info('The average throughput is {}. Variance is {} and max '
+                     'deviation is {}.'.format(
+                         round(mean, 2), round(var, 2), round(max_dev, 2)))
 
         except:
-            log.warning('Cannot get iperf result. Setting to 0')
-            throughput = 0
-        return throughput
+            log.warning('Cannot get iperf result.')
+            mean = 0
+
+        return mean

@@ -126,7 +126,11 @@ class BlockingBrowser(splinter.driver.webdriver.chrome.WebDriver):
         self.quit()
         self.__enter__()
 
-    def visit_persistent(self, url, page_load_timeout, num_tries):
+    def visit_persistent(self,
+                         url,
+                         page_load_timeout,
+                         num_tries,
+                         backup_url="about:blank"):
         """Method to visit webpages and retry upon failure.
 
         The function visits a web page and checks the the resulting URL matches
@@ -136,18 +140,20 @@ class BlockingBrowser(splinter.driver.webdriver.chrome.WebDriver):
             url: the intended url
             page_load_timeout: timeout for page visits
             num_tries: number of tries before url is declared unreachable
+            backup_url: url to visit if first url is not reachable. This can be
+            use to simply refresh the browser and try again or to re-login to
+            the AP
         """
         self.driver.set_page_load_timeout(page_load_timeout)
         for idx in range(num_tries):
             try:
                 self.visit(url)
+                if self.url.split("/")[-1] == url.split("/")[-1]:
+                    break
+                else:
+                    self.visit(backup_url)
             except:
-                try:
-                    self.visit("about:blank")
-                except:
-                    self.restart()
-            if self.url.split("/")[-1] == url.split("/")[-1]:
-                break
+                self.restart()
             if idx == num_tries - 1:
                 self.log.error("URL unreachable. Current URL: {}".format(
                     self.url))
@@ -361,8 +367,9 @@ class NetgearR7000AP(WifiRetailAP):
         self.config_page_nologin = "{}://{}:{}/WLG_wireless_dual_band_r10.htm".format(
             self.ap_settings["protocol"], self.ap_settings["ip_address"],
             self.ap_settings["port"])
-        self.config_page_advanced = "{}://{}:{}/WLG_adv_dual_band2.htm".format(
-            self.ap_settings["protocol"], self.ap_settings["ip_address"],
+        self.config_page_advanced = "{}://{}:{}@{}:{}/WLG_adv_dual_band2.htm".format(
+            self.ap_settings["protocol"], self.ap_settings["admin_username"],
+            self.ap_settings["admin_password"], self.ap_settings["ip_address"],
             self.ap_settings["port"])
         self.networks = ["2G", "5G_1"]
         self.channel_band_map = {
@@ -438,8 +445,6 @@ class NetgearR7000AP(WifiRetailAP):
                              600) as browser:
             # Visit URL
             browser.visit_persistent(self.config_page, BROWSER_WAIT_MED, 10)
-            browser.visit_persistent(self.config_page_nologin,
-                                     BROWSER_WAIT_MED, 10)
 
             for key, value in self.config_page_fields.items():
                 if "status" in key:
@@ -448,7 +453,7 @@ class NetgearR7000AP(WifiRetailAP):
                     config_item = browser.find_by_name(value)
                     self.ap_settings["{}_{}".format(key[1], key[0])] = int(
                         config_item.first.checked)
-                    browser.visit_persistent(self.config_page_nologin,
+                    browser.visit_persistent(self.config_page,
                                              BROWSER_WAIT_MED, 10)
                 else:
                     config_item = browser.find_by_name(value)
@@ -483,7 +488,7 @@ class NetgearR7000AP(WifiRetailAP):
             # Visit URL
             browser.visit_persistent(self.config_page, BROWSER_WAIT_MED, 10)
             browser.visit_persistent(self.config_page_nologin,
-                                     BROWSER_WAIT_MED, 10)
+                                     BROWSER_WAIT_MED, 10, self.config_page)
 
             # Update region, and power/bandwidth for each network
             for key, value in self.config_page_fields.items():
@@ -606,11 +611,9 @@ class NetgearR7500AP(WifiRetailAP):
             self.ap_settings["protocol"], self.ap_settings["admin_username"],
             self.ap_settings["admin_password"], self.ap_settings["ip_address"],
             self.ap_settings["port"])
-        self.config_page_nologin = "{}://{}:{}/index.htm".format(
-            self.ap_settings["protocol"], self.ap_settings["ip_address"],
-            self.ap_settings["port"])
-        self.config_page_advanced = "{}://{}:{}/adv_index.htm".format(
-            self.ap_settings["protocol"], self.ap_settings["ip_address"],
+        self.config_page_advanced = "{}://{}:{}@{}:{}/adv_index.htm".format(
+            self.ap_settings["protocol"], self.ap_settings["admin_username"],
+            self.ap_settings["admin_password"], self.ap_settings["ip_address"],
             self.ap_settings["port"])
         self.networks = ["2G", "5G_1"]
         self.channel_band_map = {
@@ -821,7 +824,7 @@ class NetgearR7500AP(WifiRetailAP):
             browser.visit_persistent(self.config_page, BROWSER_WAIT_MED, 10)
             browser.visit_persistent(self.config_page_advanced,
                                      BROWSER_WAIT_MED, 10)
-            time.sleep(BROWSER_WAIT_SHORT)
+            time.sleep(BROWSER_WAIT_MED)
             wireless_button = browser.find_by_id("advanced_bt").first
             wireless_button.click()
             time.sleep(BROWSER_WAIT_SHORT)
@@ -859,6 +862,7 @@ class NetgearR7500AP(WifiRetailAP):
             browser.visit_persistent(self.config_page, BROWSER_WAIT_MED, 10)
             browser.visit_persistent(self.config_page_advanced,
                                      BROWSER_WAIT_MED, 10)
+            time.sleep(BROWSER_WAIT_MED)
             wireless_button = browser.find_by_id("advanced_bt").first
             wireless_button.click()
             time.sleep(BROWSER_WAIT_SHORT)
@@ -917,8 +921,9 @@ class NetgearR8000AP(NetgearR7000AP):
         self.config_page_nologin = "{}://{}:{}/WLG_wireless_dual_band_r8000.htm".format(
             self.ap_settings["protocol"], self.ap_settings["ip_address"],
             self.ap_settings["port"])
-        self.config_page_advanced = "{}://{}:{}/WLG_adv_dual_band2_r8000.htm".format(
-            self.ap_settings["protocol"], self.ap_settings["ip_address"],
+        self.config_page_advanced = "{}://{}:{}@{}:{}/WLG_adv_dual_band2_r8000.htm".format(
+            self.ap_settings["protocol"], self.ap_settings["admin_username"],
+            self.ap_settings["admin_password"], self.ap_settings["ip_address"],
             self.ap_settings["port"])
         self.networks = ["2G", "5G_1", "5G_2"]
         self.channel_band_map = {

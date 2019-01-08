@@ -14,6 +14,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+import re
 import sys
 import time
 
@@ -35,7 +36,7 @@ WAIT_BEFORE_CONNECTION = 1
 SINGLE_BAND = 1
 DUAL_BAND = 2
 
-TIMEOUT = 1
+TIMEOUT = 60
 PING_ADDR = 'www.google.com'
 
 
@@ -120,6 +121,12 @@ class WifiChaosTest(WifiBaseTest):
         self.dut.droid.wakeLockAcquireBright()
         self.dut.droid.wakeUpNow()
 
+    def on_pass(self, test_name, begin_time):
+        wutils.stop_pcap(self.pcap, self.pcap_pid, False)
+
+    def on_fail(self, test_name, begin_time):
+        wutils.stop_pcap(self.pcap, self.pcap_pid, False)
+
     def teardown_test(self):
         self.dut.droid.wakeLockRelease()
         self.dut.droid.goToSleepNow()
@@ -154,11 +161,32 @@ class WifiChaosTest(WifiBaseTest):
         if "100% packet loss" in result:
             raise signals.TestFailure("100% packet loss during ping")
 
-    def run_connect_disconnect(self, network):
+    def unlock_and_turn_off_ap(self, hostname, rpm_port, rpm_ip):
+        """UNlock the AP in datastore and turn off the AP.
+
+        Args:
+            hostname: Hostname of the AP.
+            rpm_port: Port number on the RPM for the AP.
+            rpm_ip: RPM's IP address.
+
+        """
+        # Un-Lock AP in datastore.
+        self.log.debug("Un-lock AP in datastore")
+        if not dutils.unlock_device(hostname):
+            self.log.warning("Failed to unlock %s AP. Check AP in datastore.")
+        # Turn OFF AP from the RPM port.
+        rutils.turn_off_ap(rpm_port, rpm_ip)
+
+    def run_connect_disconnect(self, network, hostname, rpm_port, rpm_ip,
+                               release_ap):
         """Run connect/disconnect to a given network in loop.
 
            Args:
-               network: dict, network information.
+               network: Dict, network information.
+               hostname: Hostanme of the AP to connect to.
+               rpm_port: Port number on the RPM for the AP.
+               rpm_ip: Port number on the RPM for the AP.
+               release_ap: Flag to determine if we should turn off the AP yet.
 
            Raises: TestFailure if the network connection fails.
 
@@ -181,7 +209,24 @@ class WifiChaosTest(WifiBaseTest):
                 # TODO:(bmahadev) Uncomment after scan issue is fixed.
                 # self.dut.take_bug_report(ssid, begin_time)
                 # self.dut.cat_adb_log(ssid, begin_time)
+                if release_ap:
+                    self.unlock_and_turn_off_ap(hostname, rpm_port, rpm_ip)
                 raise signals.TestFailure("Failed to connect to %s" % ssid)
+
+    def get_band_and_chan(self, ssid):
+        """Get the band and channel information from SSID.
+
+        Args:
+            ssid: SSID of the network.
+
+        """
+        ssid_info = ssid.split('_')
+        self.band = ssid_info[-1]
+        for item in ssid_info:
+            if 'ch' in item:
+                self.chan = re.search(r'(\d+)',item).group(0)
+                return
+        raise signals.TestFailure("Channel information not found in SSID.")
 
     def interop_base_test(self, ssid, hostname):
         """Base test for all the connect-disconnect interop tests.
@@ -201,6 +246,7 @@ class WifiChaosTest(WifiBaseTest):
         network = {}
         network['password'] = 'password'
         network['SSID'] = ssid
+        release_ap = False
         wutils.reset_wifi(self.dut)
 
         # Lock AP in datastore.
@@ -215,6 +261,9 @@ class WifiChaosTest(WifiBaseTest):
         band = SINGLE_BAND
         if ('ssid_2g' in ap_info) and ('ssid_5g' in ap_info):
             band = DUAL_BAND
+        if (band == SINGLE_BAND) or (
+                band == DUAL_BAND and '5G' in ssid):
+            release_ap = True
 
         # Get AP RPM attributes and Turn ON AP.
         rpm_ip = ap_info['rpm_ip']
@@ -222,20 +271,16 @@ class WifiChaosTest(WifiBaseTest):
 
         rutils.turn_on_ap(self.pcap, ssid, rpm_port, rpm_ip=rpm_ip)
         self.log.info("Finished turning ON AP.")
-        # Experimental to check if 2G connects better.
-        time.sleep(30)
+        # Experimental. Some APs take upto a min to come online.
+        time.sleep(60)
 
-        self.run_connect_disconnect(network)
+        self.get_band_and_chan(ssid)
+        self.pcap.configure_monitor_mode(self.band, self.chan)
+        self.pcap_pid = wutils.start_pcap(
+                self.pcap, self.band.lower(), self.log_path, self.test_name)
+        self.run_connect_disconnect(network, hostname, rpm_port, rpm_ip,
+                                    release_ap)
 
         # Un-lock only if it's a single band AP or we are running the last band.
-        if (band == SINGLE_BAND) or (
-                band == DUAL_BAND and hostapd_constants.BAND_5G in \
-                sys._getframe().f_code.co_name):
-
-            # Un-Lock AP in datastore.
-            self.log.debug("Un-lock AP in datastore")
-            if not dutils.unlock_device(hostname):
-                self.log.warning("Failed to unlock %s AP. Check AP in datastore.")
-
-            # Turn OFF AP from the RPM port.
-            rutils.turn_off_ap(rpm_port, rpm_ip)
+        if release_ap:
+            self.unlock_and_turn_off_ap(hostname, rpm_port, rpm_ip)
