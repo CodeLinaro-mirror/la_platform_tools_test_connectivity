@@ -27,13 +27,18 @@ import WifiManagerTest
 from acts import asserts
 from acts import signals
 from acts.test_decorators import test_tracker_info
+from acts.test_utils.tel.tel_test_utils import get_operator_name
 from acts.utils import force_airplane_mode
 
 WifiEnums = wutils.WifiEnums
 
 DEFAULT_TIMEOUT = 10
+OSU_TEST_TIMEOUT = 300
 GLOBAL_RE = 0
 BOINGO = 1
+ATT = 2
+
+OSU_BOINGO = 0
 UNKNOWN_FQDN = "@#@@!00fffffx"
 
 class WifiPasspointTest(acts.base_test.BaseTestClass):
@@ -189,11 +194,12 @@ class WifiPasspointTest(acts.base_test.BaseTestClass):
         6. Ensure all Passpoint configurations can be deleted.
 
         """
-        for passpoint_config in self.passpoint_networks:
+        for passpoint_config in self.passpoint_networks[:2]:
             self.install_passpoint_profile(passpoint_config)
             time.sleep(DEFAULT_TIMEOUT)
         configs = self.dut.droid.getPasspointConfigs()
-        if not len(configs) or len(configs) != len(self.passpoint_networks):
+        #  It is length -1 because ATT profile will be handled separately
+        if not len(configs) or len(configs) != len(self.passpoint_networks[:2]):
             raise signals.TestFailure("Failed to fetch some or all of the"
                                       " configured passpoint networks.")
         for config in configs:
@@ -230,7 +236,7 @@ class WifiPasspointTest(acts.base_test.BaseTestClass):
         """
         # Install both Passpoint profiles on the device.
         passpoint_ssid = list()
-        for passpoint_config in self.passpoint_networks:
+        for passpoint_config in self.passpoint_networks[:2]:
             passpoint_ssid.append(passpoint_config[WifiEnums.SSID_KEY])
             self.install_passpoint_profile(passpoint_config)
             time.sleep(DEFAULT_TIMEOUT)
@@ -248,7 +254,7 @@ class WifiPasspointTest(acts.base_test.BaseTestClass):
             expected_ssid = self.passpoint_networks[1][WifiEnums.SSID_KEY]
 
         # Remove the current Passpoint profile.
-        for network in self.passpoint_networks:
+        for network in self.passpoint_networks[:2]:
             if network[WifiEnums.SSID_KEY] == current_ssid:
                 if not wutils.delete_passpoint(self.dut, network["fqdn"]):
                     raise signals.TestFailure("Failed to delete Passpoint"
@@ -263,5 +269,75 @@ class WifiPasspointTest(acts.base_test.BaseTestClass):
                                       " passpoint network" % expected_ssid)
 
         # Delete the remaining Passpoint profile.
+        self.get_configured_passpoint_and_delete()
+        wutils.wait_for_disconnect(self.dut)
+
+    @test_tracker_info(uuid="e3e826d2-7c39-4c37-ab3f-81992d5aa0e8")
+    def test_att_passpoint_network(self):
+        """Add a AT&T Passpoint network and verify device connects to it.
+
+        Steps:
+            1. Install a AT&T Passpoint Profile.
+            2. Verify the device connects to the required Passpoint SSID.
+            3. Get the Passpoint configuration added above.
+            4. Delete Passpoint configuration using its FQDN.
+            5. Verify that we are disconnected from the Passpoint network.
+
+        """
+        carriers = ["att"]
+        operator = get_operator_name(self.log, self.dut)
+        asserts.skip_if(operator not in carriers,
+                        "Device %s does not have a ATT sim" % self.dut.model)
+
+        passpoint_config = self.passpoint_networks[ATT]
+        self.install_passpoint_profile(passpoint_config)
+        ssid = passpoint_config[WifiEnums.SSID_KEY]
+        self.check_passpoint_connection(ssid)
+        self.get_configured_passpoint_and_delete()
+        wutils.wait_for_disconnect(self.dut)
+
+    def test_start_subscription_provisioning(self):
+        """Start subscription provisioning with a default provider."""
+
+        self.unpack_userparams(('osu_configs',))
+        asserts.assert_true(
+            len(self.osu_configs) > 0,
+            "Need at least one osu config.")
+        osu_config = self.osu_configs[OSU_BOINGO]
+        # Clear all previous events.
+        self.dut.ed.clear_all_events()
+        self.dut.droid.startSubscriptionProvisioning(osu_config)
+        start_time = time.time()
+        while time.time() < start_time + OSU_TEST_TIMEOUT:
+            dut_event = self.dut.ed.pop_event("onProvisioningCallback",
+                                              DEFAULT_TIMEOUT * 18)
+            if dut_event['data']['tag'] == 'success':
+                self.log.info("Passpoint Provisioning Success")
+                break
+            if dut_event['data']['tag'] == 'failure':
+                raise signals.TestFailure(
+                    "Passpoint Provisioning is failed with %s" %
+                    dut_event['data'][
+                        'reason'])
+                break
+            if dut_event['data']['tag'] == 'status':
+                self.log.info(
+                    "Passpoint Provisioning status %s" % dut_event['data'][
+                        'status'])
+
+        # Clear all previous events.
+        self.dut.ed.clear_all_events()
+
+        # Verify device connects to the Passpoint network.
+        time.sleep(DEFAULT_TIMEOUT)
+
+        current_passpoint = self.dut.droid.wifiGetConnectionInfo()
+        if current_passpoint[WifiEnums.SSID_KEY] not in osu_config[
+            "expected_ssids"]:
+            raise signals.TestFailure("Device did not connect to the %s"
+                                      " passpoint network" % osu_config[
+                                          "expected_ssids"])
+
+        # Delete the Passpoint profile.
         self.get_configured_passpoint_and_delete()
         wutils.wait_for_disconnect(self.dut)
