@@ -48,6 +48,7 @@ from acts.test_utils.tel.tel_defines import CAPABILITY_VT
 from acts.test_utils.tel.tel_defines import CAPABILITY_WFC
 from acts.test_utils.tel.tel_defines import CAPABILITY_WFC_MODE_CHANGE
 from acts.test_utils.tel.tel_defines import CARRIER_UNKNOWN
+from acts.test_utils.tel.tel_defines import CARRIER_FRE
 from acts.test_utils.tel.tel_defines import COUNTRY_CODE_LIST
 from acts.test_utils.tel.tel_defines import DATA_STATE_CONNECTED
 from acts.test_utils.tel.tel_defines import DATA_STATE_DISCONNECTED
@@ -181,6 +182,7 @@ from acts.logger import epoch_to_log_line_timestamp
 from acts.logger import normalize_log_line_timestamp
 from acts.utils import get_current_epoch_time
 from acts.utils import exe_cmd
+
 
 WIFI_SSID_KEY = wifi_test_utils.WifiEnums.SSID_KEY
 WIFI_PWD_KEY = wifi_test_utils.WifiEnums.PWD_KEY
@@ -4413,7 +4415,8 @@ def mms_send_receive_verify_for_subscription(
                 ad_tx.log.warning("No %s or %s event.", EventMmsSentSuccess,
                                   EventMmsSentFailure)
 
-            if not wait_for_matching_mms(log, ad_rx, phonenumber_tx, message):
+            if not wait_for_matching_mms(log, ad_rx, phonenumber_tx,
+                                         message, max_wait_time):
                 return False
         except Exception as e:
             log.error("Exception error %s", e)
@@ -4655,6 +4658,9 @@ def ensure_network_generation_for_subscription(
         network_preference = network_preference_for_generation(
             generation, ad.telephony["subscription"][sub_id]["operator"],
             ad.telephony["subscription"][sub_id]["phone_type"])
+        if ad.telephony["subscription"][sub_id]["operator"] == CARRIER_FRE \
+            and generation == GEN_4G:
+            network_preference = NETWORK_MODE_LTE_ONLY
         ad.log.info("Network preference for %s is %s", generation,
                     network_preference)
         rat_family = rat_family_for_generation(
@@ -6159,8 +6165,9 @@ def fastboot_wipe(ad, skip_setup_wizard=True):
         ad.log.error("Failed to start adb logcat!")
     if skip_setup_wizard:
         ad.exit_setup_wizard()
-    set_qxdm_logger_command(ad, mask=getattr(ad, "qxdm_log_mask", None))
-    start_qxdm_logger(ad)
+    if getattr(ad, "qxdm_log", True):
+        set_qxdm_logger_command(ad, mask=getattr(ad, "qxdm_log_mask", None))
+        start_qxdm_logger(ad)
     # Setup VoWiFi MDN for Verizon. b/33187374
     if "Verizon" in ad.adb.getprop(
             "gsm.sim.operator.alpha") and ad.is_apk_installed(
@@ -6176,13 +6183,58 @@ def fastboot_wipe(ad, skip_setup_wizard=True):
     set_phone_silent_mode(ad.log, ad)
     return status
 
+def install_carriersettings_apk(ad, carriersettingsapk, skip_setup_wizard=True):
+    """ Carrier Setting Installation Steps
+
+    Pull sl4a apk from device. Terminate all sl4a sessions,
+    Reboot the device to bootloader, wipe the device by fastboot.
+    Reboot the device. wait for device to complete booting
+    """
+    status = True
+    if carriersettingsapk is None:
+        ad.log.warning("CarrierSettingsApk is not provided, aborting")
+        return False
+    ad.log.info("Push carriersettings apk to the Android device.")
+    android_apk_path = "/product/priv-app/CarrierSettings/CarrierSettings.apk"
+    ad.adb.push("%s %s" % (carriersettingsapk, android_apk_path))
+    ad.stop_services()
+
+    attempts = 3
+    for i in range(1, attempts + 1):
+        try:
+            if ad.serial in list_adb_devices():
+                ad.log.info("Reboot to bootloader")
+                ad.adb.reboot("bootloader", ignore_status=True)
+                time.sleep(30)
+            if ad.serial in list_fastboot_devices():
+                ad.log.info("Reboot in fastboot")
+                ad.fastboot.reboot()
+            ad.wait_for_boot_completion()
+            ad.root_adb()
+            if ad.is_sl4a_installed():
+                break
+            time.sleep(10)
+            break
+        except Exception as e:
+            ad.log.warning(e)
+            if i == attempts:
+                abort_all_tests(log, str(e))
+            time.sleep(5)
+    try:
+        ad.start_adb_logcat()
+    except:
+        ad.log.error("Failed to start adb logcat!")
+    if skip_setup_wizard:
+        ad.exit_setup_wizard()
+    return status
+
 
 def bring_up_sl4a(ad, attemps=3):
     for i in range(attemps):
         try:
             droid, ed = ad.get_droid()
             ed.start()
-            ad.log.info("Broght up new sl4a session")
+            ad.log.info("Brought up new sl4a session")
             break
         except Exception as e:
             if i < attemps - 1:
@@ -6766,3 +6818,67 @@ def get_screen_shot_log(ad, test_name="", begin_time=None):
 def get_screen_shot_logs(ads, test_name="", begin_time=None):
     for ad in ads:
         get_screen_shot_log(ad, test_name=test_name, begin_time=begin_time)
+
+
+def get_carrier_config_version(ad):
+    out = ad.adb.shell("dumpsys carrier_config | grep version_string")
+    if out and "-" in out:
+        version = out.split('-')[1]
+    else:
+        version = "0"
+    ad.log.debug("Carrier Config Version is %s", version)
+    return version
+
+
+def bring_up_connectivity_monitor(ad):
+    monitor_apk = None
+    for apk in ("com.google.telephonymonitor",
+                "com.google.android.connectivitymonitor"):
+        if ad.is_apk_installed(apk):
+            ad.log.info("apk %s is installed", apk)
+            monitor_apk = apk
+            break
+    if not monitor_apk:
+        ad.log.info("ConnectivityMonitor|TelephonyMonitor is not installed")
+        return False
+    toggle_connectivity_monitor_setting(ad, True)
+
+    if not ad.is_apk_running(monitor_apk):
+        ad.log.info("%s is not running", monitor_apk)
+        # Reboot
+        ad.log.info("reboot to bring up %s", monitor_apk)
+        reboot_device(ad)
+        for i in range(30):
+            if ad.is_apk_running(monitor_apk):
+                ad.log.info("%s is running after reboot", monitor_apk)
+                return True
+            else:
+                ad.log.info(
+                    "%s is not running after reboot. Wait and check again",
+                    monitor_apk)
+                time.sleep(30)
+        ad.log.error("%s is not running after reboot", monitor_apk)
+        return False
+    else:
+        ad.log.info("%s is running", monitor_apk)
+        return True
+
+
+def toggle_connectivity_monitor_setting(ad, state=True):
+    monitor_setting = ad.adb.getprop("persist.radio.enable_tel_mon")
+    ad.log.info("radio.enable_tel_mon setting is %s", monitor_setting)
+    current_state = True if monitor_setting == "user_enabled" else False
+    if current_state == state:
+        return True
+    elif state is None:
+        state = not current_state
+    expected_monitor_setting = "user_enabled" if state else "disabled"
+    cmd = "setprop persist.radio.enable_tel_mon %s" % expected_monitor_setting
+    ad.log.info("Toggle connectivity monitor by %s", cmd)
+    ad.adb.shell(
+        "am start -n com.android.settings/.DevelopmentSettings",
+        ignore_status=True)
+    ad.adb.shell(cmd)
+    monitor_setting = ad.adb.getprop("persist.radio.enable_tel_mon")
+    ad.log.info("radio.enable_tel_mon setting is %s", monitor_setting)
+    return monitor_setting == expected_monitor_setting

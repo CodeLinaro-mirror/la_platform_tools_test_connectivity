@@ -21,6 +21,7 @@ from acts.controllers.anritsu_lib.md8475a import MD8475A
 from acts.test_utils.power.tel_simulations.GsmSimulation import GsmSimulation
 from acts.test_utils.power.tel_simulations.LteSimulation import LteSimulation
 from acts.test_utils.power.tel_simulations.UmtsSimulation import UmtsSimulation
+from acts.test_utils.power.tel_simulations.LteCaSimulation import LteCaSimulation
 
 
 class PowerCellularLabBaseTest(PBT.PowerBaseTest):
@@ -34,6 +35,7 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
     # List of test name keywords that indicate the RAT to be used
 
     PARAM_SIM_TYPE_LTE = "lte"
+    PARAM_SIM_TYPE_LTE_CA = "lteca"
     PARAM_SIM_TYPE_UMTS = "umts"
     PARAM_SIM_TYPE_GSM = "gsm"
 
@@ -133,6 +135,8 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
         # Decide what type of simulation and instantiate it if needed
         if self.consume_parameter(self.PARAM_SIM_TYPE_LTE):
             self.init_simulation(self.PARAM_SIM_TYPE_LTE)
+        elif self.consume_parameter(self.PARAM_SIM_TYPE_LTE_CA):
+            self.init_simulation(self.PARAM_SIM_TYPE_LTE_CA)
         elif self.consume_parameter(self.PARAM_SIM_TYPE_UMTS):
             self.init_simulation(self.PARAM_SIM_TYPE_UMTS)
         elif self.consume_parameter(self.PARAM_SIM_TYPE_GSM):
@@ -146,8 +150,12 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
         self.simulation.detach()
 
         # Parse simulation parameters.
-        # This may return false if incorrect values are passed.
-        if not self.simulation.parse_parameters(self.parameters):
+        # This may throw a ValueError exception if incorrect values are passed
+        # or if required arguments are omitted.
+        try:
+            self.simulation.parse_parameters(self.parameters)
+        except ValueError as error:
+            self.log.error(str(error))
             return False
 
         # Wait for new params to settle
@@ -156,6 +164,8 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
         # Attach the phone to the basestation
         if not self.simulation.attach():
             return False
+
+        self.simulation.start_test_case()
 
         # Make the device go to sleep
         self.dut.droid.goToSleepNow()
@@ -222,6 +232,7 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
             self.PARAM_SIM_TYPE_LTE: LteSimulation,
             self.PARAM_SIM_TYPE_UMTS: UmtsSimulation,
             self.PARAM_SIM_TYPE_GSM: GsmSimulation,
+            self.PARAM_SIM_TYPE_LTE_CA: LteCaSimulation
         }
 
         if not sim_type in simulation_dictionary:

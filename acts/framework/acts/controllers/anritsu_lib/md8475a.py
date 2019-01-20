@@ -109,6 +109,7 @@ class BtsNumber(Enum):
     BTS2 = "BTS2"
     BTS3 = "BTS3"
     BTS4 = "BTS4"
+    BTS5 = "BTS5"
 
 
 class BtsTechnology(Enum):
@@ -2322,6 +2323,33 @@ class _BaseTransceiverStation(object):
         self._anritsu.send_command(cmd)
 
     @property
+    def dl_cc_enabled(self):
+        """ Checks if component carrier is enabled or disabled
+
+        Args:
+            None
+
+        Returns:
+            True if enabled, False if disabled
+        """
+        return (self._anritsu.send_query("TESTDLCC?" + self._bts_number) ==
+                "ENABLE")
+
+    @dl_cc_enabled.setter
+    def dl_cc_enabled(self, enabled):
+        """ Enables or disables the component carrier
+
+        Args:
+            enabled: True if it should be enabled, False if disabled
+
+        Returns:
+            None
+        """
+        cmd = "TESTDLCC {},{}".format("ENABLE" if enabled else "DISABLE",
+                                      self._bts_number)
+        self._anritsu.send_command(cmd)
+
+    @property
     def sector1_mcc(self):
         """ Gets the sector 1 MCC of the CDMA cell
 
@@ -3206,8 +3234,7 @@ class _BaseTransceiverStation(object):
         except:
             raise ValueError(
                 'The parameter slot has to be a tuple containing two ints '
-                'indicating (dl,ul) slots.'
-            )
+                'indicating (dl,ul) slots.')
 
         # Validate
         if dl < 1 or ul < 1 or dl + ul > 5:
