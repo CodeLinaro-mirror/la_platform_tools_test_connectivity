@@ -87,6 +87,15 @@ from acts.test_utils.tel.tel_voice_utils import phone_setup_volte
 from acts.test_utils.tel.tel_voice_utils import phone_idle_iwlan
 from acts.test_utils.tel.tel_voice_utils import phone_idle_volte
 from acts.test_utils.tel.tel_voice_utils import get_current_voice_rat
+from acts.test_utils.tel.tel_subscription_utils import get_default_data_sub_id
+from acts.test_utils.tel.tel_subscription_utils import get_outgoing_message_sub_id
+from acts.test_utils.tel.tel_subscription_utils import get_outgoing_voice_sub_id
+from acts.test_utils.tel.tel_subscription_utils import get_incoming_voice_sub_id
+from acts.test_utils.tel.tel_subscription_utils import get_incoming_message_sub_id
+from acts.test_utils.tel.tel_subscription_utils import get_subid_from_slot_index
+from acts.test_utils.tel.tel_subscription_utils import set_subid_for_data
+from acts.test_utils.tel.tel_subscription_utils import set_subid_for_message
+from acts.test_utils.tel.tel_subscription_utils import set_subid_for_outgoing_call
 from acts.utils import get_current_epoch_time
 from acts.utils import rand_ascii_str
 
@@ -137,8 +146,10 @@ class TelLiveStressTest(TelephonyBaseTest):
         self.crash_check_interval = int(
             self.user_params.get("crash_check_interval", 300))
         self.dut_incall = False
-        self.dut_capabilities = self.dut.telephony.get("capabilities", [])
-        self.dut_wfc_modes = self.dut.telephony.get("wfc_modes", [])
+        self.dsds_esim = self.user_params.get("dsds_esim", False)
+        telephony_info = getattr(self.dut, "telephony", {})
+        self.dut_capabilities = telephony_info.get("capabilities", [])
+        self.dut_wfc_modes = telephony_info.get("wfc_modes", [])
         self.gps_log_file = self.user_params.get("gps_log_file", None)
         return True
 
@@ -214,11 +225,19 @@ class TelLiveStressTest(TelephonyBaseTest):
         return True
 
     def _send_message(self, max_wait_time=2 * MAX_WAIT_TIME_SMS_RECEIVE):
+        slot_id_rx = None
         if self.single_phone_test:
             ads = [self.dut, self.dut]
         else:
             ads = self.android_devices[:]
             random.shuffle(ads)
+        slot_id = random.randint(0,1)
+        if self.dsds_esim:
+            sub_id = get_subid_from_slot_index(self.log, ads[0], slot_id)
+            ads[0].log.info("Message - MO - slot_Id %d", slot_id)
+            set_subid_for_message(ads[0], sub_id)
+            slot_id_rx = random.randint(0,1)
+            ads[1].log.info("Message - MT - slot_id %d", slot_id_rx)
         selection = random.randrange(0, 2)
         message_type_map = {0: "SMS", 1: "MMS"}
         max_length_map = {0: self.max_sms_length, 1: self.max_mms_length}
@@ -230,6 +249,11 @@ class TelLiveStressTest(TelephonyBaseTest):
             1: mms_send_receive_verify
         }
         rat = self.dut.adb.getprop("gsm.network.type")
+        if "," in rat:
+            if self.dsds_esim:
+                rat = rat.split(',')[slot_id]
+            else:
+                rat = rat.split(',')[0]
         self.dut.log.info("Network in RAT %s", rat)
         if self.dut_incall and not is_rat_svd_capable(rat.upper()):
             self.dut.log.info("In call data not supported, test SMS only")
@@ -270,7 +294,8 @@ class TelLiveStressTest(TelephonyBaseTest):
 
         result = message_func_map[selection](self.log, ads[0], ads[1],
                                              message_content_map[selection],
-                                             max_wait_time)
+                                             max_wait_time,
+                                             slot_id_rx=slot_id_rx)
         self.log.info("%s end", log_msg)
         for ad in self.android_devices:
             ad.messaging_droid.logI("[END]%s" % log_msg)
@@ -281,6 +306,11 @@ class TelLiveStressTest(TelephonyBaseTest):
                 self.result_info["%s Failure" % message_type] += 1
             else:
                 rat = self.dut.adb.getprop("gsm.network.type")
+                if "," in rat:
+                    if self.dsds_esim:
+                        rat = rat.split(',')[slot_id]
+                    else:
+                        rat = rat.split(',')[0]
                 self.dut.log.info("Network in RAT %s", rat)
                 if self.dut_incall and not is_rat_svd_capable(rat.upper()):
                     self.dut.log.info(
@@ -303,8 +333,16 @@ class TelLiveStressTest(TelephonyBaseTest):
 
     def _make_phone_call(self, call_verification_func=None):
         ads = self.android_devices[:]
+        slot_id_callee = None
         if not self.single_phone_test:
             random.shuffle(ads)
+        if self.dsds_esim:
+            slot_id = random.randint(0,1)
+            sub_id = get_subid_from_slot_index(self.log, ads[0], slot_id)
+            ads[0].log.info("Voice - MO - slot_Id %d", slot_id)
+            set_subid_for_outgoing_call(ads[0], sub_id)
+            slot_id_callee = random.randint(0,1)
+            ads[1].log.info("Voice - MT - slot_id %d", slot_id_callee)
         the_number = self.result_info["Call Total"] + 1
         duration = random.randrange(self.min_phone_call_duration,
                                     self.max_phone_call_duration)
@@ -350,7 +388,8 @@ class TelLiveStressTest(TelephonyBaseTest):
                 verify_caller_func=call_verification_func,
                 verify_callee_func=call_verification_func,
                 wait_time_in_call=0,
-                incall_ui_display=INCALL_UI_DISPLAY_BACKGROUND)
+                incall_ui_display=INCALL_UI_DISPLAY_BACKGROUND,
+                slot_id_callee=slot_id_callee)
         if not call_setup_result:
             get_telephony_signal_strength(ads[0])
             if not self.single_phone_test:
@@ -603,6 +642,8 @@ class TelLiveStressTest(TelephonyBaseTest):
 
     def call_test(self, call_verification_func=None):
         while time.time() < self.finishing_time:
+            time.sleep(
+                random.randrange(self.min_sleep_time, self.max_sleep_time))
             try:
                 self._make_phone_call(call_verification_func)
             except Exception as e:
@@ -612,8 +653,6 @@ class TelLiveStressTest(TelephonyBaseTest):
                 self.log.error("Too many exception errors, quit test")
                 return False
             self.log.info("%s", dict(self.result_info))
-            time.sleep(
-                random.randrange(self.min_sleep_time, self.max_sleep_time))
         if any([
                 self.result_info["Call Setup Failure"],
                 self.result_info["Call Maintenance Failure"],
@@ -645,6 +684,11 @@ class TelLiveStressTest(TelephonyBaseTest):
 
     def _data_download(self, file_names=["5MB", "10MB", "20MB", "50MB"]):
         begin_time = get_current_epoch_time()
+        slot_id = random.randint(0,1)
+        if self.dsds_esim:
+            sub_id = get_subid_from_slot_index(self.log, self.dut, slot_id)
+            self.dut.log.info("Data - slot_Id %d", slot_id)
+            set_subid_for_data(self.dut, sub_id)
         start_qxdm_loggers(self.log, self.android_devices)
         self.dut.log.info(dict(self.result_info))
         selection = random.randrange(0, len(file_names))
@@ -652,6 +696,11 @@ class TelLiveStressTest(TelephonyBaseTest):
         self.result_info["Internet Connection Check Total"] += 1
         if not self.internet_connection_check_method(self.log, self.dut):
             rat = self.dut.adb.getprop("gsm.network.type")
+            if "," in rat:
+                if self.dsds_esim:
+                    rat = rat.split(',')[slot_id]
+                else:
+                    rat = rat.split(',')[0]
             self.dut.log.info("Network in RAT %s", rat)
             if self.dut_incall and not is_rat_svd_capable(rat.upper()):
                 self.result_info[
@@ -822,7 +871,7 @@ class TelLiveStressTest(TelephonyBaseTest):
         if not call_verification_func:
             call_verification_func = is_phone_in_call
         self.finishing_time = time.time() + self.max_run_time
-        if self.check_incall_data():
+        if not self.dsds_esim and self.check_incall_data():
             self.log.info(
                 "==== Start parallel voice/message/data stress test ====")
             self.perf_data["testing method"] = "parallel"

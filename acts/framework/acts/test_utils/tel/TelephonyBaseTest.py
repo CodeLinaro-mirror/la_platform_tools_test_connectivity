@@ -91,7 +91,8 @@ class TelephonyBaseTest(BaseTestClass):
         self.log_path = getattr(logging, "log_path", None)
         self.qxdm_log = self.user_params.get("qxdm_log", True)
         self.enable_radio_log_on = self.user_params.get(
-            "enable_radio_log_on", True)
+            "enable_radio_log_on", False)
+        self.cbrs_esim = self.user_params.get("cbrs_esim", False)
         tasks = [(self._init_device, [ad]) for ad in self.android_devices]
         multithread_func(self.log, tasks)
         self.skip_reset_between_cases = self.user_params.get(
@@ -252,15 +253,15 @@ class TelephonyBaseTest(BaseTestClass):
         elif self.user_params.get("Attenuator"):
             ad.log.info("Device in chamber room")
             ensure_phone_idle(self.log, ad)
-            setup_droid_properties(self.log, ad, sim_conf_file)
+            setup_droid_properties(self.log, ad, sim_conf_file, self.cbrs_esim)
         else:
             #added for dsds automation support
             self.wait_for_sim_ready(ad)
             ensure_phone_default_state(self.log, ad)
-            setup_droid_properties(self.log, ad, sim_conf_file)
+            setup_droid_properties(self.log, ad, sim_conf_file, self.cbrs_esim)
 
         # Setup VoWiFi MDN for Verizon. b/33187374
-        if get_operator_name(self.log, ad) == "vzw" and ad.is_apk_installed(
+        if get_operator_name(self.log, ad, "1") == "vzw" and ad.is_apk_installed(
                 "com.google.android.wfcactivation"):
             ad.log.info("setup VoWiFi MDN per b/33187374")
         ad.adb.shell("setprop dbg.vzw.force_wfc_nv_enabled true")
@@ -461,6 +462,8 @@ class TelephonyBaseTest(BaseTestClass):
         return result
 
     def _take_bug_report(self, test_name, begin_time):
+        if self._skip_bug_report():
+            return
         test_log_path = os.path.join(self.log_path, test_name)
         utils.create_dir(test_log_path)
         # Extract test_run_info.txt, test_run_debug.txt
@@ -469,8 +472,6 @@ class TelephonyBaseTest(BaseTestClass):
                              os.path.join(test_log_path,
                                           "%s_%s" % (test_name, file_name)),
                              "\[Test Case\] %s " % test_name)
-        if self._skip_bug_report():
-            return
         dev_num = getattr(self, "number_of_devices", None) or len(
             self.android_devices)
         tasks = [(self._ad_take_bugreport, (ad, test_name, begin_time))
@@ -490,10 +491,10 @@ class TelephonyBaseTest(BaseTestClass):
         shutil.make_archive(file_name, "zip", src_dir)
         shutil.rmtree(src_dir)
 
-    def _block_all_test_cases(self, tests):
-        """Over-write _block_all_test_case in BaseTestClass."""
+    def _block_all_test_cases(self, tests, reason='Failed class setup'):
+        """Over-write _block_all_test_cases in BaseTestClass."""
         for (i, (test_name, test_func)) in enumerate(tests):
-            signal = signals.TestBlocked("Failed class setup")
+            signal = signals.TestBlocked(reason)
             record = records.TestResultRecord(test_name, self.TAG)
             record.test_begin()
             # mark all test cases as FAIL
