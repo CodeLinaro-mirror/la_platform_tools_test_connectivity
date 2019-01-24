@@ -15,18 +15,19 @@
 #   limitations under the License.
 
 import inspect
-import os
+import logging
 import tempfile
+from os import path
 
+from acts.context import get_context_for_event
+from acts.event import event_bus
+from acts.event import subscription_bundle
 from acts.event.decorators import subscribe
 from acts.event.event import TestCaseBeginEvent
 from acts.event.event import TestCaseEndEvent
 from acts.event.event import TestClassBeginEvent
 from acts.event.event import TestClassEndEvent
-from acts.event import subscription_bundle
-from acts.event import event_bus
 from acts.libs.proto.proto_utils import compile_import_proto
-from acts.metrics.context import get_context_for_event
 from acts.metrics.core import ProtoMetricPublisher
 
 
@@ -135,12 +136,12 @@ class MetricLogger(object):
         if not compiler_out:
             compiler_out = tempfile.mkdtemp()
 
-        if os.path.isabs(proto_path):
+        if path.isabs(proto_path):
             abs_proto_path = proto_path
         else:
             classfile = inspect.getfile(cls)
-            base_dir = os.path.dirname(os.path.realpath(classfile))
-            abs_proto_path = os.path.normpath(os.path.join(base_dir, proto_path))
+            base_dir = path.dirname(path.realpath(classfile))
+            abs_proto_path = path.normpath(path.join(base_dir, proto_path))
 
         return compile_import_proto(compiler_out, abs_proto_path)
 
@@ -191,7 +192,7 @@ class MetricLogger(object):
         """Get the default context for the given event."""
         return get_context_for_event(event)
 
-    def _get_default_publisher(self, event):
+    def _get_default_publisher(self, _):
         """Get the default publisher for the given event."""
         return ProtoMetricPublisher(self.context)
 
@@ -242,12 +243,13 @@ class LoggerProxy(object):
         self.__initialized = True
 
     def _setup_proxy(self, event):
-        """Creates and starts the underlying logger based on the triggering event.
+        """Creates and starts the underlying logger based on the event.
 
         Args:
-            event: The triggering event.
+            event: The event that triggered this logger.
         """
-        self._logger = self._logger_cls(event=event, *self._logger_args, **self._logger_kwargs)
+        self._logger = self._logger_cls(event=event, *self._logger_args,
+                                        **self._logger_kwargs)
         self._logger.start(event)
 
     def _teardown_proxy(self, event):
@@ -260,8 +262,22 @@ class LoggerProxy(object):
         Args:
             event: The triggering event.
         """
-        if self._logger:
-            self._logger.end(event)
+
+        # Here, we surround the logger's end() function with a catch-all try
+        # statement. This prevents logging failures from crashing the test class
+        # before all test cases have completed. Note that this has not been
+        # added to _setup_proxy. Failure in teardown is more likely due to
+        # failure to receive metric data (e.g., was unable to be gathered), or
+        # failure to log to the correct proto (e.g., incorrect format).
+
+        # noinspection PyBroadException
+        try:
+            if self._logger:
+                self._logger.end(event)
+        except Exception:
+            logging.exception('Unable to properly close logger %s.' %
+                              self._logger.__class__.__name__)
+        finally:
             self._logger = None
 
     def __getattr__(self, attr):
@@ -329,6 +345,7 @@ class TestCaseLoggerProxy(LoggerProxy):
         event_bus.unregister(self.__on_test_case_end)
         event_bus.unregister(self.__on_test_class_end)
 
+
 class TestClassLoggerProxy(LoggerProxy):
     """A LoggerProxy implementation to subscribe to test class events.
 
@@ -336,6 +353,7 @@ class TestClassLoggerProxy(LoggerProxy):
     end events respectively. The proxy will also unregister itself from the
     event bus at the end of the test class.
     """
+
     def __init__(self, logger_cls, logger_args, logger_kwargs):
         super().__init__(logger_cls, logger_args, logger_kwargs)
 
