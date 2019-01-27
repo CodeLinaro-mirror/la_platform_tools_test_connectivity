@@ -49,6 +49,8 @@ class LogStyles:
     TO_ACTS_LOG   = 0x1000
     ROTATE_LOGS   = 0x2000
 
+    ALL_FILE_LOGS = MONOLITH_LOG + TESTCLASS_LOG + TESTCASE_LOG
+
     LEVEL_NAMES = {
         LOG_DEBUG: 'debug',
         LOG_INFO: 'info',
@@ -84,7 +86,7 @@ class LogStyles:
 
 
 _log_streams = dict()
-
+_null_handler = logging.NullHandler()
 
 @subscribe_static(TestClassBeginEvent)
 def _on_test_class_begin(event):
@@ -110,8 +112,9 @@ def _on_test_case_end(event):
         log_stream.on_test_case_end(event)
 
 
-def create_logger(name, log_name=None, log_styles=LogStyles.NONE,
-                  stream_format=None, file_format=None):
+def create_logger(name, log_name=None, base_path=None,
+                  log_styles=LogStyles.NONE, stream_format=None,
+                  file_format=None):
     """Creates a Python Logger object with the given attributes.
 
     Creation through this method will automatically manage the logger in the
@@ -122,6 +125,7 @@ def create_logger(name, log_name=None, log_styles=LogStyles.NONE,
         name: The name of the LogStream. Used as the file name prefix.
         log_name: The name of the underlying logger. Use LogStream name as
             default.
+        base_path: The base path used by the logger.
         log_styles: An integer or array of integers that are the sum of
             corresponding flag values in LogStyles. Examples include:
 
@@ -134,15 +138,15 @@ def create_logger(name, log_name=None, log_styles=LogStyles.NONE,
         stream_format: Format used for log output to stream
         file_format: Format used for log output to files
     """
-    log_stream = _LogStream(name, log_name, log_styles, stream_format,
-                            file_format)
+    if name in _log_streams:
+        _log_streams[name].cleanup()
+    log_stream = _LogStream(name, log_name, base_path, log_styles,
+                            stream_format, file_format)
     _set_logger(log_stream)
     return log_stream.logger
 
 
 def _set_logger(log_stream):
-    if log_stream.name in _log_streams:
-        _log_streams[log_stream.name].cleanup()
     _log_streams[log_stream.name] = log_stream
     return log_stream
 
@@ -218,13 +222,16 @@ class _LogStream(object):
                 handler.setFormatter(self._file_format)
             return handler
 
-    def __init__(self, name, log_name=None, log_styles=LogStyles.NONE,
-                 stream_format=None, file_format=None):
+    def __init__(self, name, log_name=None, base_path=None,
+                 log_styles=LogStyles.NONE, stream_format=None,
+                 file_format=None):
         """Creates a LogStream.
 
         Args:
             name: The name of the LogStream. Used as the file name prefix.
             log_name: The name of the underlying logger. Use LogStream name
+                as default.
+            base_path: The base path used by the logger. Use logging.log_path
                 as default.
             log_styles: An integer or array of integers that are the sum of
                 corresponding flag values in LogStyles. Examples include:
@@ -243,9 +250,14 @@ class _LogStream(object):
             self.logger = logging.getLogger(log_name)
         else:
             self.logger = logging.getLogger(name)
+        # Add a NullHandler to suppress unwanted console output
+        self.logger.addHandler(_null_handler)
+        self.logger.propagate = False
+        self.base_path = base_path or logging.log_path
+        os.makedirs(self.base_path, exist_ok=True)
         self.stream_format = stream_format
         self.file_format = file_format
-        self.logger.propagate = False
+        self._test_run_only_log_handlers = []
         self._test_case_handler_descriptors = []
         self._test_case_log_handlers = []
         self._test_class_handler_descriptors = []
@@ -301,13 +313,16 @@ class _LogStream(object):
                                     (log_location, level))
                             else:
                                 levels_dict[level] |= log_location
-                    # Check that for a given log-level, not both TESTCLASS_LOG
-                    # and TESTCASE_LOG have been set.
-                    if not ~levels_dict[level] & (
-                            LogStyles.TESTCLASS_LOG | LogStyles.TESTCASE_LOG):
+                    # Check that for a given log-level, not more than one
+                    # of MONOLITH_LOG, TESTCLASS_LOG, TESTCASE_LOG is set.
+                    locations = levels_dict[level] & LogStyles.ALL_FILE_LOGS
+                    valid_locations = [
+                        LogStyles.TESTCASE_LOG, LogStyles.TESTCLASS_LOG,
+                        LogStyles.MONOLITH_LOG, LogStyles.NONE]
+                    if locations not in valid_locations:
                         invalid_style_error(
-                            'Both TESTCLASS_LOG and TESTCASE_LOG locations '
-                            'have been set for log level %s.' % level)
+                            'More than one of MONOLITH_LOG, TESTCLASS_LOG, '
+                            'TESTCASE_LOG is set for log level %s.' % level)
             if log_style & LogStyles.ALL_LEVELS == 0:
                 invalid_style_error('LogStyle %s needs to set a log '
                                     'level.' % log_style)
@@ -362,28 +377,33 @@ class _LogStream(object):
 
         # Handle streaming logs to log-level files
         for log_level in LogStyles.LOG_LEVELS:
-            if not log_style & log_level:
+            if not (log_style & log_level and
+                    log_style & LogStyles.ALL_FILE_LOGS):
                 continue
             descriptor = self.HandlerDescriptor(handler_creator, log_level,
                                                 self.name, self.file_format)
+
+            handler = descriptor.create(self.base_path)
+            self.logger.addHandler(handler)
+            if not log_style & LogStyles.MONOLITH_LOG:
+                self._test_run_only_log_handlers.append(handler)
             if log_style & LogStyles.TESTCASE_LOG:
                 self._test_case_handler_descriptors.append(descriptor)
                 self._test_class_only_handler_descriptors.append(descriptor)
             if log_style & LogStyles.TESTCLASS_LOG:
                 self._test_class_handler_descriptors.append(descriptor)
-            if log_style & LogStyles.MONOLITH_LOG:
-                handler = descriptor.create(logging.log_path)
-                self.logger.addHandler(handler)
 
     def __remove_handler(self, handler):
-        """Removes a handler from the logger."""
-        handler.close()
-        self.logger.removeHandler(handler)
+        """Removes a handler from the logger, unless it's a NullHandler."""
+        if handler is not _null_handler:
+            handler.close()
+            self.logger.removeHandler(handler)
 
     def __create_handlers_from_descriptors(self, descriptors, handlers, event):
         """Create new handlers as described in the descriptors list"""
         if descriptors:
             event_context = context.get_context_for_event(event)
+            event_context.set_base_output_path(self.base_path)
             output_path = event_context.get_full_output_path()
             for descriptor in descriptors:
                 handler = descriptor.create(output_path)
@@ -400,7 +420,7 @@ class _LogStream(object):
         """Internal use only. To be called when a test case has ended."""
         self.__clear_handlers(self._test_case_log_handlers)
 
-        # Re-add handlers residing only in test class level contexts
+        # Enable handlers residing only in test class level contexts
         for handler in self._test_class_only_log_handlers:
             self.logger.addHandler(handler)
 
@@ -409,7 +429,7 @@ class _LogStream(object):
         # Close test case handlers from previous tests.
         self.__clear_handlers(self._test_case_log_handlers)
 
-        # Remove handlers residing only in test class level contexts
+        # Disable handlers residing only in test class level contexts
         for handler in self._test_class_only_log_handlers:
             self.logger.removeHandler(handler)
 
@@ -423,11 +443,19 @@ class _LogStream(object):
         self.__clear_handlers(self._test_class_log_handlers)
         self.__clear_handlers(self._test_class_only_log_handlers)
 
+        # Enable handlers residing only in test run level contexts
+        for handler in self._test_run_only_log_handlers:
+            self.logger.addHandler(handler)
+
     def on_test_class_begin(self, test_class_event):
         """Internal use only. To be called when a test class has begun."""
-        # Close test case handlers from previous tests.
+        # Close test class handlers from previous tests.
         self.__clear_handlers(self._test_class_log_handlers)
         self.__clear_handlers(self._test_class_only_log_handlers)
+
+        # Disable handlers residing only in test run level contexts
+        for handler in self._test_run_only_log_handlers:
+            self.logger.removeHandler(handler)
 
         # Create new handlers for this test class.
         self.__create_handlers_from_descriptors(

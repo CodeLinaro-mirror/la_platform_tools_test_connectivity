@@ -301,6 +301,12 @@ class PowerBaseTest(base_test.BaseTestClass):
         The threshold is provided in the config file. In this class, result is
         current in mA.
         """
+
+        if not self.threshold or self.test_name not in self.threshold:
+            self.log.error("No threshold is provided for the test '{}' in "
+                           "the configuration file.".format(self.test_name))
+            return
+
         current_threshold = self.threshold[self.test_name]
         if self.test_result:
             asserts.assert_true(
@@ -470,7 +476,9 @@ class PowerBaseTest(base_test.BaseTestClass):
             self.brconfigs = wputils.ap_setup(ap, network, bandwidth=bandwidth)
         if connect:
             wutils.wifi_connect(self.dut, network, num_of_tries=3)
-        return self.brconfigs
+
+        if ap or (not ap and hasattr(self, 'access_points')):
+            return self.brconfigs
 
     def process_iperf_results(self):
         """Get the iperf results and process.
