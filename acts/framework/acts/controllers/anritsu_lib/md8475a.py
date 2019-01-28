@@ -109,6 +109,7 @@ class BtsNumber(Enum):
     BTS2 = "BTS2"
     BTS3 = "BTS3"
     BTS4 = "BTS4"
+    BTS5 = "BTS5"
 
 
 class BtsTechnology(Enum):
@@ -1702,6 +1703,32 @@ class _BaseTransceiverStation(object):
         self._anritsu.send_command(cmd)
 
     @property
+    def uldl_configuration(self):
+        """ Gets the UL/DL pattern configuration for TDD bands
+
+        Args:
+            None
+
+        Returns:
+            Configuration number
+        """
+        cmd = "ULDLCONFIGURATION? " + self._bts_number
+        return self._anritsu.send_query(cmd)
+
+    @uldl_configuration.setter
+    def uldl_configuration(self, configuration):
+        """ Sets the UL/DL pattern configuration for TDD bands
+
+        Args:
+            configuration: configuration number, from 0 to 6
+
+        Returns:
+            None
+        """
+        cmd = "ULDLCONFIGURATION {},{}".format(configuration, self._bts_number)
+        self._anritsu.send_command(cmd)
+
+    @property
     def dl_antenna(self):
         """ Gets the DL ANTENNA count of the cell
 
@@ -2296,6 +2323,33 @@ class _BaseTransceiverStation(object):
         self._anritsu.send_command(cmd)
 
     @property
+    def dl_cc_enabled(self):
+        """ Checks if component carrier is enabled or disabled
+
+        Args:
+            None
+
+        Returns:
+            True if enabled, False if disabled
+        """
+        return (self._anritsu.send_query("TESTDLCC?" + self._bts_number) ==
+                "ENABLE")
+
+    @dl_cc_enabled.setter
+    def dl_cc_enabled(self, enabled):
+        """ Enables or disables the component carrier
+
+        Args:
+            enabled: True if it should be enabled, False if disabled
+
+        Returns:
+            None
+        """
+        cmd = "TESTDLCC {},{}".format("ENABLE" if enabled else "DISABLE",
+                                      self._bts_number)
+        self._anritsu.send_command(cmd)
+
+    @property
     def sector1_mcc(self):
         """ Gets the sector 1 MCC of the CDMA cell
 
@@ -2689,6 +2743,58 @@ class _BaseTransceiverStation(object):
             None
         """
         cmd = "ULIMCS {},{}".format(mcs_ul, self._bts_number)
+        self._anritsu.send_command(cmd)
+
+    @property
+    def lte_dl_modulation_order(self):
+        """ Gets the DL modulation order of the LTE cell
+
+        Args:
+            None
+
+        Returns:
+            The DL modulation order
+        """
+        cmd = "DLRMC_MOD? " + self._bts_number
+        return self._anritsu.send_query(cmd)
+
+    @lte_dl_modulation_order.setter
+    def lte_dl_modulation_order(self, order):
+        """ Sets the DL modulation order of the LTE cell
+
+        Args:
+            order: the DL modulation order of the LTE cell
+
+        Returns:
+            None
+        """
+        cmd = "DLRMC_MOD {},{}".format(order, self._bts_number)
+        self._anritsu.send_command(cmd)
+
+    @property
+    def lte_ul_modulation_order(self):
+        """ Gets the UL modulation order of the LTE cell
+
+        Args:
+            None
+
+        Returns:
+            The UL modulation order
+        """
+        cmd = "ULRMC_MOD? " + self._bts_number
+        return self._anritsu.send_query(cmd)
+
+    @lte_ul_modulation_order.setter
+    def lte_ul_modulation_order(self, order):
+        """ Sets the UL modulation order of the LTE cell
+
+        Args:
+            order: the UL modulation order of the LTE cell
+
+        Returns:
+            None
+        """
+        cmd = "ULRMC_MOD {},{}".format(order, self._bts_number)
         self._anritsu.send_command(cmd)
 
     @property
@@ -3128,8 +3234,7 @@ class _BaseTransceiverStation(object):
         except:
             raise ValueError(
                 'The parameter slot has to be a tuple containing two ints '
-                'indicating (dl,ul) slots.'
-            )
+                'indicating (dl,ul) slots.')
 
         # Validate
         if dl < 1 or ul < 1 or dl + ul > 5:
