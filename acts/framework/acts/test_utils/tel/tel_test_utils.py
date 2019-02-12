@@ -79,6 +79,9 @@ from acts.test_utils.tel.tel_defines import MAX_WAIT_TIME_VOICE_MAIL_COUNT
 from acts.test_utils.tel.tel_defines import MAX_WAIT_TIME_VOLTE_ENABLED
 from acts.test_utils.tel.tel_defines import MAX_WAIT_TIME_WFC_DISABLED
 from acts.test_utils.tel.tel_defines import MAX_WAIT_TIME_WFC_ENABLED
+from acts.test_utils.tel.tel_defines import WAIT_TIME_FOR_DATA_STALL
+from acts.test_utils.tel.tel_defines import WAIT_TIME_FOR_NW_VALID_FAIL
+from acts.test_utils.tel.tel_defines import WAIT_TIME_FOR_DATA_STALL_RECOVERY
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_LTE_ONLY
 from acts.test_utils.tel.tel_defines import NETWORK_CONNECTION_TYPE_CELL
 from acts.test_utils.tel.tel_defines import NETWORK_CONNECTION_TYPE_WIFI
@@ -143,6 +146,8 @@ from acts.test_utils.tel.tel_defines import DataConnectionStateContainer
 from acts.test_utils.tel.tel_defines import MessageWaitingIndicatorContainer
 from acts.test_utils.tel.tel_defines import NetworkCallbackContainer
 from acts.test_utils.tel.tel_defines import ServiceStateContainer
+from acts.test_utils.tel.tel_defines import CARRIER_VZW, CARRIER_ATT, \
+    CARRIER_BELL, CARRIER_ROGERS, CARRIER_KOODO, CARRIER_VIDEOTRON, CARRIER_TELUS
 from acts.test_utils.tel.tel_lookup_tables import \
     connection_type_from_type_string
 from acts.test_utils.tel.tel_lookup_tables import is_valid_rat
@@ -590,6 +595,114 @@ def get_wifi_signal_strength(ad):
     signal_strength = ad.droid.wifiGetConnectionInfo()['rssi']
     ad.log.info("WiFi Signal Strength is %s" % signal_strength)
     return signal_strength
+
+
+def check_data_stall_detection(ad, wait_time=WAIT_TIME_FOR_DATA_STALL):
+    data_stall_detected = False
+    time_var = 1
+    try:
+        while (time_var < wait_time):
+            out = ad.adb.shell("dumpsys network_stack " \
+                              "| grep \"Suspecting data stall\"",
+                            ignore_status=True)
+            ad.log.debug("Output is %s", out)
+            if out:
+                ad.log.info("NetworkMonitor detected - %s", out)
+                ad.log.info("Time taken for Data Stall Detection %d secs", time_var)
+                data_stall_detected = True
+                break
+            time.sleep(30)
+            time_var += 30
+    except Exception as e:
+        ad.log.error(e)
+    return data_stall_detected
+
+
+def check_network_validation_fail(ad, begin_time=None,
+                                  wait_time=WAIT_TIME_FOR_NW_VALID_FAIL):
+    network_validation_fail = False
+    time_var = 1
+    try:
+        while (time_var < wait_time):
+            time_var += 30
+            nw_valid = ad.search_logcat("validation failed",
+                                         begin_time)
+            if nw_valid:
+                ad.log.info("Validation Failed received here - %s",
+                            nw_valid[0]["log_message"])
+                network_validation_fail = True
+                break
+            time.sleep(30)
+    except Exception as e:
+        ad.log.error(e)
+    return network_validation_fail
+
+
+def check_data_stall_recovery(ad, begin_time=None,
+                              wait_time=WAIT_TIME_FOR_DATA_STALL_RECOVERY):
+    data_stall_recovery = False
+    time_var = 1
+    try:
+        while (time_var < wait_time):
+            time_var += 30
+            recovery = ad.search_logcat("doRecovery() cleanup all connections",
+                                         begin_time)
+            if recovery:
+                ad.log.info("Recovery Performed here - %s",
+                            recovery[-1]["log_message"])
+                data_stall_recovery = True
+                break
+            time.sleep(30)
+    except Exception as e:
+        ad.log.error(e)
+    return data_stall_recovery
+
+
+def break_internet_except_sl4a_port(ad, sl4a_port):
+    ad.log.info("Breaking internet using iptables rules")
+    ad.adb.shell("iptables -I INPUT 1 -p tcp --dport %s -j ACCEPT" % sl4a_port,
+                 ignore_status=True)
+    ad.adb.shell("iptables -I INPUT 2 -p tcp --sport %s -j ACCEPT" % sl4a_port,
+                 ignore_status=True)
+    ad.adb.shell("iptables -I INPUT 3 -j DROP", ignore_status=True)
+    ad.adb.shell("ip6tables -I INPUT -j DROP", ignore_status=True)
+    return True
+
+
+def resume_internet_with_sl4a_port(ad, sl4a_port):
+    ad.log.info("Bring internet back using iptables rules")
+    ad.adb.shell("iptables -D INPUT -p tcp --dport %s -j ACCEPT" % sl4a_port,
+                 ignore_status=True)
+    ad.adb.shell("iptables -D INPUT -p tcp --sport %s -j ACCEPT" % sl4a_port,
+                 ignore_status=True)
+    ad.adb.shell("iptables -D INPUT -j DROP", ignore_status=True)
+    ad.adb.shell("ip6tables -D INPUT -j DROP", ignore_status=True)
+    return True
+
+
+def test_data_browsing_success_using_sl4a(log, ad):
+    result = True
+    web_page_list = ['https://www.google.com', 'https://www.yahoo.com',
+                     'https://www.amazon.com', 'https://www.nike.com',
+                     'https://www.facebook.com']
+    for website in web_page_list:
+        if not verify_http_connection(log, ad, website, retry=0):
+            ad.log.error("Failed to browse %s successfully!", website)
+            result = False
+    return result
+
+
+def test_data_browsing_failure_using_sl4a(log, ad):
+    result = True
+    web_page_list = ['https://www.youtube.com', 'https://www.cnn.com',
+                     'https://www.att.com', 'https://www.nbc.com',
+                     'https://www.verizonwireless.com']
+    for website in web_page_list:
+        if not verify_http_connection(log, ad, website, retry=0,
+                                      expected_state=False):
+            ad.log.error("Browsing to %s worked!", website)
+            result = False
+    return result
 
 
 def is_expected_event(event_to_check, events_list):
@@ -3459,6 +3572,58 @@ def set_wfc_mode(log, ad, wfc_mode):
     return True
 
 
+def activate_wfc_on_device(log, ad):
+    """ Activates WiFi calling on device.
+
+        Required for certain network operators.
+
+    Args:
+        log: Log object
+        ad: Android device object
+
+    """
+    activate_wfc_on_device_for_subscription(log, ad,
+                                            ad.droid.subscriptionGetDefaultSubId())
+
+
+def activate_wfc_on_device_for_subscription(log, ad, sub_id):
+    """ Activates WiFi calling on device for a subscription.
+
+    Args:
+        log: Log object
+        ad: Android device object
+        sub_id: Subscription id (integer)
+
+    """
+    if not sub_id or INVALID_SUB_ID == sub_id:
+        ad.log.error("Subscription id invalid")
+        return
+    operator_name = get_operator_name(log, ad, sub_id)
+    if operator_name in (CARRIER_VZW, CARRIER_ATT, CARRIER_BELL, CARRIER_ROGERS,
+                         CARRIER_TELUS, CARRIER_KOODO, CARRIER_VIDEOTRON, CARRIER_FRE):
+        ad.log.info("Activating WFC on operator : %s", operator_name)
+        if not ad.is_apk_installed("com.google.android.wfcactivation"):
+            ad.log.error("WFC Activation Failed, wfc activation apk not installed")
+            return
+        wfc_activate_cmd ="am start --ei EXTRA_LAUNCH_CARRIER_APP 0 --ei " \
+                    "android.telephony.extra.SUBSCRIPTION_INDEX {} -n ".format(sub_id)
+        if CARRIER_ATT == operator_name:
+            ad.adb.shell("setprop dbg.att.force_wfc_nv_enabled true")
+            wfc_activate_cmd = wfc_activate_cmd+\
+                               "\"com.google.android.wfcactivation/" \
+                               ".WfcActivationActivity\""
+        elif CARRIER_VZW == operator_name:
+            ad.adb.shell("setprop dbg.vzw.force_wfc_nv_enabled true")
+            wfc_activate_cmd = wfc_activate_cmd + \
+                               "\"com.google.android.wfcactivation/" \
+                               ".VzwEmergencyAddressActivity\""
+        else:
+            wfc_activate_cmd = wfc_activate_cmd+ \
+                               "\"com.google.android.wfcactivation/" \
+                               ".can.WfcActivationCanadaActivity\""
+        ad.adb.shell(wfc_activate_cmd)
+
+
 def toggle_video_calling(log, ad, new_state=None):
     """Toggle enable/disable Video calling for default voice subscription.
 
@@ -3983,7 +4148,7 @@ def get_operator_name(log, ad, subId=None):
         try:
             if subId is not None:
                 result = ad.droid.telephonyGetNetworkOperatorNameForSubscription(
-                    sub_id)
+                    subId)
             else:
                 result = ad.droid.telephonyGetNetworkOperatorName()
             result = operator_name_from_network_name(result)
@@ -6195,19 +6360,13 @@ def fastboot_wipe(ad, skip_setup_wizard=True):
     if getattr(ad, "qxdm_log", True):
         set_qxdm_logger_command(ad, mask=getattr(ad, "qxdm_log_mask", None))
         start_qxdm_logger(ad)
-    # Setup VoWiFi MDN for Verizon. b/33187374
-    if "Verizon" in ad.adb.getprop(
-            "gsm.sim.operator.alpha") and ad.is_apk_installed(
-                "com.google.android.wfcactivation"):
-        ad.log.info("setup VoWiFi MDN per b/33187374")
-    ad.adb.shell("setprop dbg.vzw.force_wfc_nv_enabled true")
-    ad.adb.shell("am start --ei EXTRA_LAUNCH_CARRIER_APP 0 -n "
-                 "\"com.google.android.wfcactivation/"
-                 ".VzwEmergencyAddressActivity\"")
     if ad.skip_sl4a: return status
     bring_up_sl4a(ad)
     synchronize_device_time(ad)
     set_phone_silent_mode(ad.log, ad)
+    # Activate WFC on Verizon, AT&T and Canada operators as per # b/33187374 &
+    # b/122327716
+    activate_wfc_on_device(ad.log, ad)
     return status
 
 def install_carriersettings_apk(ad, carriersettingsapk, skip_setup_wizard=True):
