@@ -212,11 +212,17 @@ def get_iccid_by_adb(ad):
 
 
 def get_operator_by_adb(ad):
-    return ad.adb.getprop("gsm.sim.operator.alpha")
+    operator = ad.adb.getprop("gsm.sim.operator.alpha")
+    if "," in operator:
+        operator = operator.strip()[0]
+    return operator
 
 
 def get_plmn_by_adb(ad):
-    return ad.adb.getprop("gsm.sim.operator.numeric")
+    plmn_id = ad.adb.getprop("gsm.sim.operator.numeric")
+    if "," in plmn_id:
+        plmn_id = plmn_id.strip()[0]
+    return plmn_id
 
 
 def get_sub_id_by_adb(ad):
@@ -255,13 +261,12 @@ def setup_droid_properties_by_adb(log, ad, sim_filename=None):
     setattr(ad, 'telephony', device_props)
 
 
-def setup_droid_properties(log, ad, sim_filename=None):
+def setup_droid_properties(log, ad, sim_filename=None, cbrs_esim=False):
 
     if ad.skip_sl4a:
         return setup_droid_properties_by_adb(
             log, ad, sim_filename=sim_filename)
-
-    refresh_droid_config(log, ad)
+    refresh_droid_config(log, ad, cbrs_esim)
     device_props = {}
     device_props['subscription'] = {}
 
@@ -273,9 +278,11 @@ def setup_droid_properties(log, ad, sim_filename=None):
             log.warning("Failed to load %s!", sim_filename)
     if not ad.telephony["subscription"]:
         abort_all_tests(ad.log, "No valid subscription")
+    ad.log.debug("Subscription DB %s", ad.telephony["subscription"])
     result = True
     active_sub_id = get_outgoing_voice_sub_id(ad)
     for sub_id, sub_info in ad.telephony["subscription"].items():
+        ad.log.debug("Loop for Subid %s", sub_id)
         sub_info["operator"] = get_operator_name(log, ad, sub_id)
         iccid = sub_info["iccid"]
         if not iccid:
@@ -326,12 +333,13 @@ def setup_droid_properties(log, ad, sim_filename=None):
     ad.log.debug("telephony = %s", ad.telephony)
 
 
-def refresh_droid_config(log, ad):
+def refresh_droid_config(log, ad, cbrs_esim=False):
     """ Update Android Device telephony records for each sub_id.
 
     Args:
         log: log object
         ad: android device object
+        cbrs_esim: special case for cbrs feature
 
     Returns:
         None
@@ -340,10 +348,23 @@ def refresh_droid_config(log, ad):
         setattr(ad, 'telephony', {"subscription": {}})
     droid = ad.droid
     sub_info_list = droid.subscriptionGetAllSubInfoList()
+    ad.log.info("SubInfoList is %s", sub_info_list)
+    if cbrs_esim:
+        ad.log.info("CBRS testing detected, removing it form SubInfoList")
+        if len(sub_info_list) > 1:
+            # Check for Display Name
+            index_to_delete = -1
+            for i, oper in enumerate(d['displayName'] for d in sub_info_list):
+                ad.log.info("Index %d Display %s", i, oper)
+                if "Google" in oper:
+                    index_to_delete = i
+            del sub_info_list[index_to_delete]
+        ad.log.info("Updated SubInfoList is %s", sub_info_list)
     active_sub_id = get_outgoing_voice_sub_id(ad)
     for sub_info in sub_info_list:
         sub_id = sub_info["subscriptionId"]
         sim_slot = sub_info["simSlotIndex"]
+
         if sim_slot != INVALID_SIM_SLOT_INDEX:
             if sub_id not in ad.telephony["subscription"]:
                 ad.telephony["subscription"][sub_id] = {}
@@ -4264,7 +4285,8 @@ def mms_send_receive_verify(log,
                             ad_rx,
                             array_message,
                             max_wait_time=MAX_WAIT_TIME_SMS_RECEIVE,
-                            expected_result=True):
+                            expected_result=True,
+                            slot_id_rx=None):
     """Send MMS, receive MMS, and verify content and sender's number.
 
         Send (several) MMS from droid_tx to droid_rx.
@@ -4277,9 +4299,14 @@ def mms_send_receive_verify(log,
         ad_rx: Receiver's Android Device Object
         array_message: the array of message to send/receive
     """
+    subid_tx = get_outgoing_message_sub_id(ad_tx)
+    if slot_id_rx is None:
+        subid_rx = get_incoming_message_sub_id(ad_rx)
+    else:
+        subid_rx = get_subid_from_slot_index(log, ad_rx, slot_id_rx)
+
     result = mms_send_receive_verify_for_subscription(
-        log, ad_tx, ad_rx, get_outgoing_message_sub_id(ad_tx),
-        get_incoming_message_sub_id(ad_rx), array_message, max_wait_time)
+        log, ad_tx, ad_rx, subid_tx, subid_rx, array_message, max_wait_time)
     if result != expected_result:
         log_messaging_screen_shot(ad_tx, test_name="mms_tx")
         log_messaging_screen_shot(ad_rx, test_name="mms_rx")
@@ -6551,7 +6578,7 @@ def flash_radio(ad, file_path, skip_setup_wizard=True):
         abort_all_tests(ad.log, msg)
     if not ad.ensure_screen_on():
         ad.log.error("User window cannot come up")
-    ad.start_services(ad.skip_sl4a, skip_setup_wizard=skip_setup_wizard)
+    ad.start_services(skip_setup_wizard=skip_setup_wizard)
     unlock_sim(ad)
 
 

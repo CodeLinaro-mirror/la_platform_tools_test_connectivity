@@ -16,9 +16,9 @@
 
 import json
 import os
+import queue
 import threading
 import time
-import queue
 
 from acts.base_test import BaseTestClass
 from acts.controllers import android_device
@@ -37,7 +37,6 @@ from acts.test_utils.coex.coex_test_utils import iperf_result
 from acts.test_utils.coex.coex_test_utils import get_phone_ip
 from acts.test_utils.coex.coex_test_utils import parse_fping_results
 from acts.test_utils.coex.coex_test_utils import wifi_connection_check
-from acts.test_utils.coex.coex_test_utils import xlsheet
 from acts.test_utils.wifi import wifi_retail_ap as retail_ap
 from acts.test_utils.wifi.wifi_test_utils import reset_wifi
 from acts.test_utils.wifi.wifi_test_utils import wifi_connect
@@ -45,9 +44,6 @@ from acts.test_utils.wifi.wifi_test_utils import wifi_test_device_init
 from acts.test_utils.wifi.wifi_test_utils import wifi_toggle_state
 from acts.utils import create_dir
 
-TEST_CASE_TOKEN = "[Test Case]"
-RESULT_LINE_TEMPLATE = TEST_CASE_TOKEN + " %s %s"
-IPERF_SERVER_WAIT_TIME = 5
 AVRCP_WAIT_TIME = 3
 
 
@@ -134,7 +130,6 @@ class CoexBaseTest(BaseTestClass):
             return False
         if hasattr(self, "required_devices"):
             if ("discovery" in self.current_test_name or
-                    "inquiry" in self.current_test_name or
                     "ble" in self.current_test_name):
                 self.create_android_relay_object()
         else:
@@ -159,8 +154,6 @@ class CoexBaseTest(BaseTestClass):
         """Resets wifi and store test results."""
         reset_wifi(self.pri_ad)
         wifi_toggle_state(self.pri_ad, False)
-        json_result = self.results.json_str()
-        xlsheet(self.pri_ad, json_result)
 
     def create_android_relay_object(self):
         """Creates android device object and relay device object if required
@@ -179,7 +172,6 @@ class CoexBaseTest(BaseTestClass):
         devices has android device and relay device."""
         if hasattr(self, "required_devices"):
             if ("discovery" in self.current_test_name or
-                    "inquiry" in self.current_test_name or
                     "ble" in self.current_test_name):
                 if hasattr(self, "inquiry_devices"):
                     for device in range(len(self.inquiry_devices)):
@@ -355,7 +347,7 @@ class CoexBaseTest(BaseTestClass):
             self.flag_list.append(True)
         self.result["throughput"] = self.iperf_variables.received
 
-    def on_fail(self, record, test_name, begin_time):
+    def on_fail(self, test_name, begin_time):
         """A function that is executed upon a test case failure.
 
         Args:
@@ -367,34 +359,6 @@ class CoexBaseTest(BaseTestClass):
                       format(test_name))
         take_btsnoop_logs(self.android_devices, self, test_name)
         self._take_bug_report(test_name, begin_time)
-        record.extras = self.iperf_variables.received
-
-    def _on_fail(self, record):
-        """Proxy function to guarantee the base implementation of on_fail is
-        called.
-
-        Args:
-            record: The records.TestResultRecord object for the failed test
-            case.
-        """
-        if record.details:
-            self.log.error(record.details)
-        self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
-        self.on_fail(record, record.test_name, record.begin_time)
-
-    def _on_pass(self, record):
-        """Proxy function to guarantee the base implementation of on_pass is
-        called.
-
-        Args:
-            record: The records.TestResultRecord object for the passed test
-            case.
-        """
-        msg = record.details
-        if msg:
-            self.log.info(msg)
-        self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
-        record.extras = self.iperf_variables.received
 
     def run_thread(self, kwargs):
         """Convenience function to start thread.
