@@ -104,7 +104,7 @@ class ApolloTestActions(BaseTestAction):
             apollo_status = self.dut.get_bt_status()
             if (time.time() - ini_time) > timeout:
                 self.logger.warning('Timeout waiting for the disconnection.')
-                result = False
+                return False
             time.sleep(1)
         return result
 
@@ -441,6 +441,7 @@ class ApolloTestActions(BaseTestAction):
         """
         # Need to check these two profiles
         pass_profiles = ['A2DP Pri', 'HFP Pri']
+        # TODO(b/122730302): Change to just raise an error
         ret = False
         try:
             ret = self._wait_for_bluetooth_profile_connection(
