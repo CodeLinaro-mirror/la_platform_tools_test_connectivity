@@ -16,9 +16,9 @@
 
 import json
 import os
+import queue
 import threading
 import time
-import queue
 
 from acts.base_test import BaseTestClass
 from acts.controllers import android_device
@@ -36,9 +36,7 @@ from acts.test_utils.coex.coex_test_utils import configure_and_start_ap
 from acts.test_utils.coex.coex_test_utils import iperf_result
 from acts.test_utils.coex.coex_test_utils import get_phone_ip
 from acts.test_utils.coex.coex_test_utils import parse_fping_results
-from acts.test_utils.coex.coex_test_utils import push_music_to_android_device
 from acts.test_utils.coex.coex_test_utils import wifi_connection_check
-from acts.test_utils.coex.coex_test_utils import xlsheet
 from acts.test_utils.wifi import wifi_retail_ap as retail_ap
 from acts.test_utils.wifi.wifi_test_utils import reset_wifi
 from acts.test_utils.wifi.wifi_test_utils import wifi_connect
@@ -46,9 +44,6 @@ from acts.test_utils.wifi.wifi_test_utils import wifi_test_device_init
 from acts.test_utils.wifi.wifi_test_utils import wifi_toggle_state
 from acts.utils import create_dir
 
-TEST_CASE_TOKEN = "[Test Case]"
-RESULT_LINE_TEMPLATE = TEST_CASE_TOKEN + " %s %s"
-IPERF_SERVER_WAIT_TIME = 5
 AVRCP_WAIT_TIME = 3
 
 
@@ -86,12 +81,13 @@ class CoexBaseTest(BaseTestClass):
         req_params = ["network", "iperf"]
         opt_params = [
             "AccessPoint", "RetailAccessPoints", "RelayDevice", "IPerfClient",
-            "required_devices", "audio_params"
+            "required_devices"
         ]
         self.unpack_userparams(req_params, opt_params)
         if hasattr(self, "RelayDevice"):
             self.audio_receiver = self.relay_devices[0]
             self.audio_receiver.power_on()
+            self.headset_mac_address = self.audio_receiver.mac_address
         else:
             self.log.warning("Missing Relay config file.")
         if hasattr(self, "AccessPoint"):
@@ -111,16 +107,6 @@ class CoexBaseTest(BaseTestClass):
             self.iperf_client = self.iperf_clients[0]
         else:
             self.log.warning("Iperfclient is not given in config file")
-        if hasattr(self, "audio_params"):
-            if self.audio_params["music_file"]:
-                self.music_file_to_play = push_music_to_android_device(
-                    self.pri_ad, self.audio_params)
-                if not self.music_file_to_play:
-                    self.log.error("Music file push failed.")
-                    return False
-        else:
-            self.log.warning("No Music files pushed to play.")
-
         wifi_test_device_init(self.pri_ad)
         wifi_connect(self.pri_ad, self.network)
 
@@ -144,7 +130,6 @@ class CoexBaseTest(BaseTestClass):
             return False
         if hasattr(self, "required_devices"):
             if ("discovery" in self.current_test_name or
-                    "inquiry" in self.current_test_name or
                     "ble" in self.current_test_name):
                 self.create_android_relay_object()
         else:
@@ -169,8 +154,6 @@ class CoexBaseTest(BaseTestClass):
         """Resets wifi and store test results."""
         reset_wifi(self.pri_ad)
         wifi_toggle_state(self.pri_ad, False)
-        json_result = self.results.json_str()
-        xlsheet(self.pri_ad, json_result)
 
     def create_android_relay_object(self):
         """Creates android device object and relay device object if required
@@ -189,7 +172,6 @@ class CoexBaseTest(BaseTestClass):
         devices has android device and relay device."""
         if hasattr(self, "required_devices"):
             if ("discovery" in self.current_test_name or
-                    "inquiry" in self.current_test_name or
                     "ble" in self.current_test_name):
                 if hasattr(self, "inquiry_devices"):
                     for device in range(len(self.inquiry_devices)):
@@ -231,7 +213,7 @@ class CoexBaseTest(BaseTestClass):
             server_port,
             self.tag,
         )
-        self.tag = self.tag + 1
+
         cmd = "adb -s {} shell {}".format(self.pri_ad.serial, self.iperf_server)
 
         def appender_iperf_logs(line):
@@ -319,12 +301,16 @@ class CoexBaseTest(BaseTestClass):
         """
         ip = get_phone_ip(self.pri_ad)
         if bidirectional:
+            self.tag = self.tag + 1
             self.iperf_variables.bidirectional_client_path = (
-                self.iperf_client.start(self.bidirectional_args, self.pri_ad,
-                                        ip, self.current_test_name))
+                    self.iperf_client.start(ip, self.bidirectional_args,
+                                            self.tag))
         else:
-            self.iperf_variables.iperf_client_path = self.iperf_client.start(
-                iperf_args, self.pri_ad, ip, self.current_test_name)
+            self.tag = self.tag + 1
+            self.iperf_variables.iperf_client_path = (
+                    self.iperf_client.start(ip, iperf_args,
+                                            self.tag))
+
         return True
 
     def result_parser(self, iperf_args, bidirectional=False):
@@ -357,7 +343,7 @@ class CoexBaseTest(BaseTestClass):
         if not received:
             self.log.error("Iperf failed/stopped")
             self.flag_list.append(False)
-            self.iperf_variables.received.append("Iperf Failed")
+            self.iperf_variables.received.append(0)
         else:
             self.iperf_variables.received.append(
                 str(round(received, 2)) + "Mb/s")
@@ -365,7 +351,7 @@ class CoexBaseTest(BaseTestClass):
             self.flag_list.append(True)
         self.result["throughput"] = self.iperf_variables.received
 
-    def on_fail(self, record, test_name, begin_time):
+    def on_fail(self, test_name, begin_time):
         """A function that is executed upon a test case failure.
 
         Args:
@@ -377,34 +363,6 @@ class CoexBaseTest(BaseTestClass):
                       format(test_name))
         take_btsnoop_logs(self.android_devices, self, test_name)
         self._take_bug_report(test_name, begin_time)
-        record.extras = self.iperf_variables.received
-
-    def _on_fail(self, record):
-        """Proxy function to guarantee the base implementation of on_fail is
-        called.
-
-        Args:
-            record: The records.TestResultRecord object for the failed test
-            case.
-        """
-        if record.details:
-            self.log.error(record.details)
-        self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
-        self.on_fail(record, record.test_name, record.begin_time)
-
-    def _on_pass(self, record):
-        """Proxy function to guarantee the base implementation of on_pass is
-        called.
-
-        Args:
-            record: The records.TestResultRecord object for the passed test
-            case.
-        """
-        msg = record.details
-        if msg:
-            self.log.info(msg)
-        self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
-        record.extras = self.iperf_variables.received
 
     def run_thread(self, kwargs):
         """Convenience function to start thread.
@@ -424,12 +382,12 @@ class CoexBaseTest(BaseTestClass):
             if not self.iperf_variables.received:
                 self.teardown_thread()
                 if not self.wifi_status_queue.empty():
-                    if not self.wifi_status_queue.get():
-                        return False
                     if self.iperf_variables.is_bidirectional:
                         self.result_parser(
                             self.bidirectional_args, bidirectional=True)
                     self.result_parser(self.iperf_args)
+                    if not self.wifi_status_queue.get():
+                        return False
                     if False in self.flag_list:
                         return False
         return True

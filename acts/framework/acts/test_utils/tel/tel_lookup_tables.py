@@ -150,7 +150,11 @@ class _TelTables():
         "AT&T": tel_defines.CARRIER_ATT,
         "Verizon": tel_defines.CARRIER_VZW,
         "Verizon Wireless": tel_defines.CARRIER_VZW,
-        "Sprint": tel_defines.CARRIER_SPT
+        "Sprint": tel_defines.CARRIER_SPT,
+        "ROGERS": tel_defines.CARRIER_ROGERS,
+        "Videotron PRTNR1": tel_defines.CARRIER_VIDEOTRON,
+        "Bell": tel_defines.CARRIER_BELL,
+        "Koodo": tel_defines.CARRIER_KOODO
     }
     operator_id_to_name = {
 
@@ -234,6 +238,9 @@ class _TelTables():
         '23432': tel_defines.CARRIER_EEUK,  #Virgin Mobile (MVNO)
         '23415': tel_defines.CARRIER_VFUK,
 
+        # Google Fi
+        '312580': tel_defines.CARRIER_FI,
+
         #USCC
         '311580': tel_defines.CARRIER_USCC,
 
@@ -260,6 +267,9 @@ class _TelTables():
         #Telenor (Norway)
         '24201': tel_defines.CARRIER_TEL,
         '24212': tel_defines.CARRIER_TEL,
+
+        #Canada Freedom
+        '302490': tel_defines.CARRIER_FRE,
 
         #Telstra (Australia)
         '50501': tel_defines.CARRIER_TSA

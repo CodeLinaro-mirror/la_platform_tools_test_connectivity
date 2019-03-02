@@ -61,6 +61,10 @@ class BaseTestClass(object):
         log: A logger object used for logging.
         results: A records.TestResult object for aggregating test results from
                  the execution of test cases.
+        consecutive_failures: Tracks the number of consecutive test case
+                              failures within this class.
+        size_limit_reached: True if the size of the log directory has reached
+                            its limit.
         current_test_name: A string that's the name of the test case currently
                            being executed. If no test is executing, this should
                            be None.
@@ -77,13 +81,15 @@ class BaseTestClass(object):
         if not self.TAG:
             self.TAG = self.__class__.__name__
         # Set all the controller objects and params.
+        self.user_params = {}
         for name, value in configs.items():
             setattr(self, name, value)
         self.results = records.TestResult()
         self.current_test_name = None
         self.log = tracelogger.TraceLogger(self.log)
+        self.consecutive_failures = 0
         self.size_limit_reached = False
-        if 'android_devices' in self.__dict__:
+        if hasattr(self, 'android_devices'):
             for ad in self.android_devices:
                 if ad.droid:
                     utils.set_location_service(ad, False)
@@ -150,6 +156,7 @@ class BaseTestClass(object):
         """Proxy function to guarantee the base implementation of setup_class
         is called.
         """
+        event_bus.post(TestClassBeginEvent(self))
         return self.setup_class()
 
     def setup_class(self):
@@ -163,6 +170,13 @@ class BaseTestClass(object):
         Implementation is optional.
         """
 
+    def _teardown_class(self):
+        """Proxy function to guarantee the base implementation of teardown_class
+        is called.
+        """
+        self.teardown_class()
+        event_bus.post(TestClassEndEvent(self, self.results))
+
     def teardown_class(self):
         """Teardown function that will be called after all the selected test
         cases in the test class have been executed.
@@ -175,6 +189,14 @@ class BaseTestClass(object):
         called.
         """
         self.current_test_name = test_name
+
+        event_bus.post(TestCaseBeginEvent(self, test_name))
+
+        # Block the test if the consecutive test case failure limit is reached.
+        fail_limit = self.user_params.get('consecutive_failure_limit', -1)
+        if self.consecutive_failures == fail_limit:
+            raise signals.TestBlocked('Consecutive test failure')
+
         try:
             # Write test start token to adb log if android device is attached.
             if hasattr(self, 'android_devices'):
@@ -225,6 +247,13 @@ class BaseTestClass(object):
         try:
             self.teardown_test()
         finally:
+            # TODO(markdr): pass the signal that was raised.
+            # Currently, this passes the TestSignal class, rather than the
+            # signal that was raised by the test case (or signal.TestPass if
+            # no signal was raised). This should be updated such that the signal
+            # is passed along to the event.
+            event_bus.post(TestCaseEndEvent(
+                self, test_name, signals.TestSignal))
             self.current_test_name = None
 
     def teardown_test(self):
@@ -242,6 +271,7 @@ class BaseTestClass(object):
             record: The records.TestResultRecord object for the failed test
                     case.
         """
+        self.consecutive_failures += 1
         if record.details:
             self.log.error(record.details)
         self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
@@ -265,6 +295,7 @@ class BaseTestClass(object):
             record: The records.TestResultRecord object for the passed test
                     case.
         """
+        self.consecutive_failures = 0
         msg = record.details
         if msg:
             self.log.info(msg)
@@ -390,7 +421,6 @@ class BaseTestClass(object):
         self.log.info("%s %s", TEST_CASE_TOKEN, test_name)
         verdict = None
         try:
-            event_bus.post(TestCaseBeginEvent(self, test_func))
             try:
                 if hasattr(self, 'android_devices'):
                     for ad in self.android_devices:
@@ -460,13 +490,6 @@ class BaseTestClass(object):
             tr_record.test_fail()
             self._exec_procedure_func(self._on_fail, tr_record)
         finally:
-            # TODO(markdr): pass the signal that was raised.
-            # Currently, this passes the TestSignal class, rather than the
-            # signal that was raised by the test case (or signal.TestPass if
-            # no signal was raised). This should be updated such that the signal
-            # is passed along to the event.
-            event_bus.post(TestCaseEndEvent(
-                self, test_func, signals.TestSignal))
             if not is_generate_trigger:
                 self.results.add_record(tr_record)
 
@@ -624,14 +647,16 @@ class BaseTestClass(object):
             self.log.info("Test case %s not found in %s.", test_name, self.TAG)
             return test_name, test_skip_func
 
-    def _block_all_test_cases(self, tests):
+    def _block_all_test_cases(self, tests, reason='Failed class setup'):
         """
         Block all passed in test cases.
         Args:
             tests: The tests to block.
+            reason: Message describing the reason that the tests are blocked.
+                Default is 'Failed class setup'
         """
         for test_name, test_func in tests:
-            signal = signals.TestBlocked("Failed class setup")
+            signal = signals.TestBlocked(reason)
             record = records.TestResultRecord(test_name, self.TAG)
             record.test_begin()
             if hasattr(test_func, 'gather'):
@@ -661,7 +686,6 @@ class BaseTestClass(object):
         """
         self.register_test_class_event_subscriptions()
         self.log.info("==========> %s <==========", self.TAG)
-        event_bus.post(TestClassBeginEvent(self))
         # Devise the actual test cases to run in the test class.
         if self.tests:
             # Specified by run list in class.
@@ -682,22 +706,28 @@ class BaseTestClass(object):
         tests = self._get_test_funcs(matches)
         # A TestResultRecord used for when setup_class fails.
         # Setup for the class.
+        setup_fail = False
         try:
             if self._setup_class() is False:
                 self.log.error("Failed to setup %s.", self.TAG)
                 self._block_all_test_cases(tests)
-                return self.results
+                setup_fail = True
         except signals.TestAbortClass:
             try:
-                self._exec_func(self.teardown_class)
+                self._exec_func(self._teardown_class)
             except Exception as e:
                 self.log.warning(e)
-            return self.results
+            setup_fail = True
         except Exception as e:
             self.log.exception("Failed to setup %s.", self.TAG)
-            self._exec_func(self.teardown_class)
             self._block_all_test_cases(tests)
+            self._exec_func(self._teardown_class)
+            setup_fail = True
+        if setup_fail:
+            self.log.info("Summary for test class %s: %s", self.TAG,
+                          self.results.summary_str())
             return self.results
+
         # Run tests in order.
         try:
             for test_name, test_func in tests:
@@ -712,8 +742,7 @@ class BaseTestClass(object):
             setattr(e, "results", self.results)
             raise e
         finally:
-            self._exec_func(self.teardown_class)
-            event_bus.post(TestClassEndEvent(self, self.results))
+            self._exec_func(self._teardown_class)
             self.log.info("Summary for test class %s: %s", self.TAG,
                           self.results.summary_str())
 
@@ -757,8 +786,19 @@ class BaseTestClass(object):
         return result
 
     def _skip_bug_report(self):
-        """A function to check whether we should skip creating a bug report."""
+        """A function to check whether we should skip creating a bug report.
+
+        Returns: True if bug report is to be skipped.
+        """
         if "no_bug_report_on_fail" in self.user_params:
+            return True
+
+        # If the current test case is found in the set of problematic test
+        # cases, we skip bugreport and other failure artifact creation.
+        full_test_name = '%s.%s' % (self.__class__.__name__, self.test_name)
+        if full_test_name in self.user_params.get('quiet_test_cases', []):
+            self.log.info(
+                "Skipping bug report, as directed for this test case.")
             return True
 
         # Once we hit a certain log path size, it's not going to get smaller.

@@ -16,7 +16,7 @@
 
 import os
 import statistics
-
+import time
 import acts.controllers.iperf_server as ipf
 
 
@@ -44,7 +44,6 @@ class IperfHelper(object):
             self.start_meas_time = config['start_meas_time']
         else:
             self.start_meas_time = 0
-        self.window = getattr(config, "window", None)
 
         iperf_args = '-i 1 -t {} -p {} -J'.format(self.duration, self.port)
 
@@ -58,6 +57,7 @@ class IperfHelper(object):
             iperf_args = iperf_args + ' -b {}M'.format(self.bandwidth)
 
         # Set the TCP window size
+        self.window = config.get("window", None)
         if self.window:
             iperf_args += ' -w {}M'.format(self.window)
 
@@ -75,6 +75,10 @@ class IperfHelper(object):
         Returns:
              throughput: the average throughput (Mbit/s).
         """
+        # Stopping the server (as safety to get the result file)
+        iperf_servers[self.server_idx].stop()
+        time.sleep(1)
+
         # Get IPERF results and add this to the plot title
         RESULTS_DESTINATION = os.path.join(
             iperf_servers[self.server_idx].log_path,

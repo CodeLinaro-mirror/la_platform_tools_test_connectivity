@@ -83,10 +83,11 @@ class BaseSimulation():
             self.log.warning("The '{} 'key is not set in the testbed "
                              "parameters. Setting to off by default. To "
                              "turn calibration on, include the key with "
-                             "a true/false value.".format(self.KEY_CALIBRATION))
+                             "a true/false value.".format(
+                                 self.KEY_CALIBRATION))
 
-        self.calibration_required = test_config.get(self.KEY_CALIBRATION, False)
-
+        self.calibration_required = test_config.get(self.KEY_CALIBRATION,
+                                                    False)
 
         # Gets BTS1 since this sim only has 1 BTS
         self.bts1 = self.anritsu.get_BTS(BtsNumber.BTS1)
@@ -187,10 +188,10 @@ class BaseSimulation():
 
         # Set signal levels obtained from the test parameters
         if self.sim_dl_power:
-            self.set_downlink_rx_power(self.sim_dl_power)
+            self.set_downlink_rx_power(self.bts1, self.sim_dl_power)
             time.sleep(2)
         if self.sim_ul_power:
-            self.set_uplink_tx_power(self.sim_ul_power)
+            self.set_uplink_tx_power(self.bts1, self.sim_ul_power)
             time.sleep(2)
 
         return True
@@ -236,11 +237,9 @@ class BaseSimulation():
 
         Args:
             parameters: list of parameters
-        Returns:
-            False if there was an error while parsing parameters
         """
 
-        return True
+        pass
 
     def consume_parameter(self, parameters, parameter_name, num_values=0):
         """ Parses a parameter from a list.
@@ -270,17 +269,17 @@ class BaseSimulation():
             for j in range(num_values + 1):
                 return_list.append(parameters.pop(i))
         except IndexError:
-            self.log.error(
+            raise ValueError(
                 "Parameter {} has to be followed by {} values.".format(
                     parameter_name, num_values))
-            raise ValueError()
 
         return return_list
 
-    def set_downlink_rx_power(self, signal_level):
+    def set_downlink_rx_power(self, bts, signal_level):
         """ Sets downlink rx power using calibration if available
 
         Args:
+            bts: the base station in which to change the signal level
             signal_level: desired downlink received power, can be either a
             key value pair, an int or a float
         """
@@ -310,7 +309,7 @@ class BaseSimulation():
             self.log.info(
                 "Requested phone DL Rx power of {} dBm, setting callbox Tx "
                 "power at {} dBm".format(power, calibrated_power))
-            self.bts1.output_level = calibrated_power
+            bts.output_level = calibrated_power
             time.sleep(2)
             # Power has to be a natural number so calibration wont be exact.
             # Inform the actual received power after rounding.
@@ -318,14 +317,15 @@ class BaseSimulation():
                 "Phone downlink received power is {0:.2f} dBm".format(
                     calibrated_power - self.dl_path_loss))
         except TypeError:
-            self.bts1.output_level = round(power)
+            bts.output_level = round(power)
             self.log.info("Phone downlink received power set to {} (link is "
                           "uncalibrated).".format(round(power)))
 
-    def set_uplink_tx_power(self, signal_level):
+    def set_uplink_tx_power(self, bts, signal_level):
         """ Sets uplink tx power using calibration if available
 
         Args:
+            bts: the base station in which to change the signal level
             signal_level: desired uplink transmitted power, can be either a
             key value pair, an int or a float
         """
@@ -353,7 +353,7 @@ class BaseSimulation():
             self.log.info(
                 "Requested phone UL Tx power of {} dBm, setting callbox Rx "
                 "power at {} dBm".format(power, calibrated_power))
-            self.bts1.input_level = calibrated_power
+            bts.input_level = calibrated_power
             time.sleep(2)
             # Power has to be a natural number so calibration wont be exact.
             # Inform the actual transmitted power after rounding.
@@ -361,7 +361,7 @@ class BaseSimulation():
                 "Phone uplink transmitted power is {0:.2f} dBm".format(
                     calibrated_power + self.ul_path_loss))
         except TypeError:
-            self.bts1.input_level = round(power)
+            bts.input_level = round(power)
             self.log.info("Phone uplink transmitted power set to {} (link is "
                           "uncalibrated).".format(round(power)))
 
@@ -369,6 +369,8 @@ class BaseSimulation():
         """ Calculates UL and DL path loss if it wasn't done before.
 
         """
+        # SET TBS pattern for calibration
+        self.bts1.tbs_pattern = "FULLALLOCATION" if self.tbs_pattern_on else "OFF"
 
         if self.dl_path_loss and self.ul_path_loss:
             self.log.info("Measurements are already calibrated.")
@@ -430,12 +432,14 @@ class BaseSimulation():
         time.sleep(2)
 
         # Starting first the IP traffic (UDP): Using always APN 1
-        try:
-            cmd = 'OPERATEIPTRAFFIC START,1'
-            self.anritsu.send_command(cmd)
-        except AnritsuError as inst:
-            self.log.warning("{}\n".format(inst))  # Typically RUNNING already
-        time.sleep(4)
+        if not self.tbs_pattern_on:
+            try:
+                cmd = 'OPERATEIPTRAFFIC START,1'
+                self.anritsu.send_command(cmd)
+            except AnritsuError as inst:
+                self.log.warning(
+                    "{}\n".format(inst))  # Typically RUNNING already
+            time.sleep(4)
 
         down_power_measured = []
         for i in range(0, self.NUM_DL_CAL_READS):
@@ -448,12 +452,14 @@ class BaseSimulation():
             time.sleep(5)
 
         # Stop the IP traffic (UDP)
-        try:
-            cmd = 'OPERATEIPTRAFFIC STOP,1'
-            self.anritsu.send_command(cmd)
-        except AnritsuError as inst:
-            self.log.warning("{}\n".format(inst))  # Typically STOPPED already
-        time.sleep(2)
+        if not self.tbs_pattern_on:
+            try:
+                cmd = 'OPERATEIPTRAFFIC STOP,1'
+                self.anritsu.send_command(cmd)
+            except AnritsuError as inst:
+                self.log.warning(
+                    "{}\n".format(inst))  # Typically STOPPED already
+            time.sleep(2)
 
         # Reset phone and bts to original settings
         self.dut.droid.goToSleepNow()
@@ -514,12 +520,14 @@ class BaseSimulation():
         time.sleep(2)
 
         # Starting first the IP traffic (UDP): Using always APN 1
-        try:
-            cmd = 'OPERATEIPTRAFFIC START,1'
-            self.anritsu.send_command(cmd)
-        except AnritsuError as inst:
-            self.log.warning("{}\n".format(inst))  # Typically RUNNING already
-        time.sleep(4)
+        if not self.tbs_pattern_on:
+            try:
+                cmd = 'OPERATEIPTRAFFIC START,1'
+                self.anritsu.send_command(cmd)
+            except AnritsuError as inst:
+                self.log.warning(
+                    "{}\n".format(inst))  # Typically RUNNING already
+            time.sleep(4)
 
         up_power_per_chain = []
         # Get the number of chains
@@ -544,12 +552,14 @@ class BaseSimulation():
             time.sleep(3)
 
         # Stop the IP traffic (UDP)
-        try:
-            cmd = 'OPERATEIPTRAFFIC STOP,1'
-            self.anritsu.send_command(cmd)
-        except AnritsuError as inst:
-            self.log.warning("{}\n".format(inst))  # Typically STOPPED already
-        time.sleep(2)
+        if not self.tbs_pattern_on:
+            try:
+                cmd = 'OPERATEIPTRAFFIC STOP,1'
+                self.anritsu.send_command(cmd)
+            except AnritsuError as inst:
+                self.log.warning(
+                    "{}\n".format(inst))  # Typically STOPPED already
+            time.sleep(2)
 
         # Reset phone and bts to original settings
         self.dut.droid.goToSleepNow()
@@ -577,7 +587,7 @@ class BaseSimulation():
 
         return up_call_path_loss
 
-    def set_band(self, bts, band):
+    def set_band(self, bts, band, calibrate_if_necessary=True):
         """ Sets the band used for communication.
 
         When moving to a new band, recalibrate the link.
@@ -585,22 +595,18 @@ class BaseSimulation():
         Args:
             bts: basestation handle
             band: desired band
+            calibrate_if_necessary: if False calibration will be skipped
         """
 
-        # Change band only if it is needed
-        if band != self.current_calibrated_band:
-            bts.band = band
-            self.current_calibrated_band = band
-            time.sleep(5)  # It takes some time to propagate the new band
+        bts.band = band
+        time.sleep(5)  # It takes some time to propagate the new band
 
-            # Invalidate the calibration values
-            self.dl_path_loss = None
-            self.ul_path_loss = None
+        # Invalidate the calibration values
+        self.dl_path_loss = None
+        self.ul_path_loss = None
 
-        # self.dl_path_loss and self.ul_path_loss will be none if the band has
-        # just changed or calibration for this band failed in previous tests.
-        if (self.calibration_required and
-                (not self.dl_path_loss or not self.ul_path_loss)):
+        # Only calibrate when required.
+        if self.calibration_required and calibrate_if_necessary:
             # Try loading the path loss values from the calibration table. If
             # they are not available, use the automated calibration procedure.
             try:
@@ -643,3 +649,11 @@ class BaseSimulation():
             Maximum throughput in mbps
         """
         raise NotImplementedError()
+
+    def start_test_case(self):
+        """ Starts a test case in the current simulation.
+
+        Requires the phone to be attached.
+        """
+
+        pass

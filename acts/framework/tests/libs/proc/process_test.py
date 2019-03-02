@@ -18,7 +18,7 @@ import unittest
 import mock
 import subprocess
 from acts.libs.proc.process import Process
-
+from acts.libs.proc.process import ProcessError
 
 class FakeThread(object):
     def __init__(self, target=None):
@@ -78,6 +78,25 @@ class ProcessTest(unittest.TestCase):
 
     # start
 
+    def test_start_raises_if_called_back_to_back(self):
+        """Tests that start raises an exception if it has already been called
+        prior.
+
+        This is required to prevent references to processes and threads from
+        being overwritten, potentially causing ACTS to hang."""
+        process = Process('cmd')
+
+        # Here we need the thread to start the process object.
+        class FakeThreadImpl(FakeThread):
+            def _on_start(self):
+                process._process = mock.Mock()
+
+        with self.patch('Thread', FakeThreadImpl):
+            process.start()
+            expected_msg = 'Process has already started.'
+            with self.assertRaisesRegex(ProcessError, expected_msg):
+                process.start()
+
     def test_start_starts_listening_thread(self):
         """Tests that start starts the _exec_popen_loop function."""
         process = Process('cmd')
@@ -94,6 +113,17 @@ class ProcessTest(unittest.TestCase):
         self.assertEqual(process._listening_thread.target, process._exec_loop)
 
     # wait
+
+    def test_wait_raises_if_called_back_to_back(self):
+        """Tests that wait raises an exception if it has already been called
+        prior."""
+        process = Process('cmd')
+        process._process = mock.Mock()
+
+        process.wait(0)
+        expected_msg = 'Process is already being stopped.'
+        with self.assertRaisesRegex(ProcessError, expected_msg):
+            process.wait(0)
 
     def test_wait_kills_after_timeout(self):
         """Tests that if a TimeoutExpired error is thrown during wait, the
@@ -207,6 +237,7 @@ class ProcessTest(unittest.TestCase):
         process._process = mock.Mock()
         process._process.poll.return_value = None
         process._process.kill = test_call_order
+        process._process.wait.side_effect = subprocess.TimeoutExpired('', '')
 
         process.stop()
 
@@ -278,16 +309,16 @@ class ProcessTest(unittest.TestCase):
     def test_exec_loop_loops_if_not_stopped(self):
         process = Process('1st')
         Process._Process__start_process = mock.Mock()
-        process._on_terminate_callback = mock.Mock(side_effect=['2nd', None])
+        process._on_terminate_callback = mock.Mock(side_effect=[['2nd'], None])
 
         with self.patch('Thread', FakeThread):
             process._exec_loop()
 
         self.assertEqual(Process._Process__start_process.call_count, 2)
         self.assertEqual(Process._Process__start_process.call_args_list[0][0],
-                         ('1st', ))
+                         (['1st'], ))
         self.assertEqual(Process._Process__start_process.call_args_list[1][0],
-                         ('2nd', ))
+                         (['2nd'], ))
 
     def test_exec_loop_does_not_loop_if_stopped(self):
         process = Process('1st')
@@ -302,7 +333,7 @@ class ProcessTest(unittest.TestCase):
         self.assertEqual(Process._Process__start_process.call_count, 1)
         self.assertEqual(
             Process._Process__start_process.call_args_list[0][0],
-            ('1st',))
+            (['1st'],))
 
 
 if __name__ == '__main__':

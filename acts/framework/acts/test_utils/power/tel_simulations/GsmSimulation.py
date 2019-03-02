@@ -87,25 +87,20 @@ class GsmSimulation(BaseSimulation):
 
         Args:
             parameters: list of parameters
-        Returns:
-            False if there was an error while parsing the config
         """
 
-        if not super().parse_parameters(parameters):
-            return False
+        super().parse_parameters(parameters)
 
         # Setup band
 
-        try:
-            values = self.consume_parameter(parameters, self.PARAM_BAND, 1)
-            band = self.bands_parameter_mapping[values[1]]
-        except:
-            self.log.error(
-                "The test name needs to include parameter {} followed by the "
-                "required band.".format(self.PARAM_BAND))
-            return False
-        else:
-            self.set_band(self.bts1, band)
+        values = self.consume_parameter(parameters, self.PARAM_BAND, 1)
+
+        if not values:
+            raise ValueError(
+                "The test name needs to include parameter '{}' followed by "
+                "the required band number.".format(self.PARAM_BAND))
+
+        self.set_band(self.bts1, values[1])
 
         # Setup GPRS mode
 
@@ -116,26 +111,19 @@ class GsmSimulation(BaseSimulation):
         elif self.consume_parameter(parameters, self.PARAM_NO_GPRS):
             self.bts1.gsm_gprs_mode = BtsGprsMode.NO_GPRS
         else:
-            self.log.error(
+            raise ValueError(
                 "GPRS mode needs to be indicated in the test name with either "
                 "{}, {} or {}.".format(self.PARAM_GPRS, self.PARAM_EGPRS,
                                        self.PARAM_NO_GPRS))
-            return False
 
         # Setup slot allocation
 
-        try:
-            values = self.consume_parameter(parameters, self.PARAM_SLOTS, 2)
-            dl = int(values[1])
-            ul = int(values[2])
-        except:
-            self.log.error(
+        values = self.consume_parameter(parameters, self.PARAM_SLOTS, 2)
+
+        if not values:
+            raise ValueError(
                 "The test name needs to include parameter {} followed by two "
                 "int values indicating DL and UL slots.".format(
                     self.PARAM_SLOTS))
-            return False
-        else:
-            self.bts1.gsm_slots = (dl, ul)
 
-        # No errors were found
-        return True
+        self.bts1.gsm_slots = (int(values[1]), int(values[2]))

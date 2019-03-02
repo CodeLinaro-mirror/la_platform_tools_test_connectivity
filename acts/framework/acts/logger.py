@@ -188,7 +188,7 @@ def get_log_file_timestamp(delta=None):
     Returns:
         A timestamp in log file name format with an offset.
     """
-    return _get_timestamp("%Y-%m-%d-%Y_%H-%M-%S-%f", delta)
+    return _get_timestamp("%Y-%m-%d_%H-%M-%S-%f", delta)
 
 
 def _setup_test_logger(log_path, prefix=None):
@@ -203,7 +203,7 @@ def _setup_test_logger(log_path, prefix=None):
         prefix: A prefix for each log line in terminal.
     """
     logging.log_path = log_path
-    log_styles = [LogStyles.LOG_DEBUG + LogStyles.TO_STDOUT,
+    log_styles = [LogStyles.LOG_INFO + LogStyles.TO_STDOUT,
                   LogStyles.DEFAULT_LEVELS + LogStyles.MONOLITH_LOG]
     terminal_format = log_line_format
     if prefix:

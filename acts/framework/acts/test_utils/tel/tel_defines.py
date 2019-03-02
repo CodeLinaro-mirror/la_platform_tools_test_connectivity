@@ -62,6 +62,9 @@ MAX_WAIT_TIME_CALL_INITIATION = 90
 # Time to wait after change Mode Pref for Stress Test
 WAIT_TIME_AFTER_MODE_CHANGE = 60
 
+# Max time to wait for Carrier Config Version to Update in mins
+WAIT_TIME_FOR_CARRIERCONFIG_CHANGE = 20
+
 # Max time to wait after toggle airplane mode and before
 # get expected event
 MAX_WAIT_TIME_AIRPLANEMODE_EVENT = 90
@@ -172,6 +175,21 @@ WAIT_TIME_TETHERING_AFTER_REBOOT = 10
 # Time to wait after changing data sub id
 WAIT_TIME_CHANGE_DATA_SUB_ID = 30
 
+# Wait time for Data Stall to detect
+WAIT_TIME_FOR_DATA_STALL = 300
+
+# Wait time for Network Validation Failed detection
+WAIT_TIME_FOR_NW_VALID_FAIL = 300
+
+# Wait time for Data Stall to recover
+WAIT_TIME_FOR_DATA_STALL_RECOVERY = 360
+
+# Callbox Power level which will cause no service on device
+POWER_LEVEL_OUT_OF_SERVICE = -100
+
+# Callbox Power level which will ensure full service on device
+POWER_LEVEL_FULL_SERVICE = -20
+
 # These are used in phone_number_formatter
 PHONE_NUMBER_STRING_FORMAT_7_DIGIT = 7
 PHONE_NUMBER_STRING_FORMAT_10_DIGIT = 10
@@ -261,6 +279,12 @@ CARRIER_TEL = 'tel'
 CARRIER_TSA = 'tsa'
 CARRIER_USCC = 'uscc'
 CARRIER_ROGERS = 'ROGERS'
+CARRIER_TELUS = 'tls'
+CARRIER_KOODO = 'kdo'
+CARRIER_VIDEOTRON = 'vtrn'
+CARRIER_BELL = 'bell'
+CARRIER_FRE = 'fre'
+CARRIER_FI = 'fi'
 
 RAT_FAMILY_CDMA = 'cdma'
 RAT_FAMILY_CDMA2000 = 'cdma2000'
@@ -283,6 +307,10 @@ CAPABILITY_WFC_MODE_CHANGE = 'wfc_mode_change'
 CAPABILITY_CONFERENCE = 'conference'
 CAPABILITY_VOLTE_PROVISIONING = 'volte_provisioning'
 CAPABILITY_VOLTE_OVERRIDE_WFC_PROVISIONING = 'volte_override_wfc_provisioning'
+
+# Carrier Config Versions
+VZW_CARRIER_CONFIG_VERSION = "29999999999.1"
+ATT_CARRIER_CONFIG_VERSION = "28888888888.1"
 
 # Constant for operation direction
 DIRECTION_MOBILE_ORIGINATED = "MO"

@@ -96,34 +96,37 @@ class WifiRvrTest(base_test.BaseTestClass):
     def process_testclass_results(self):
         """Saves plot with all test results to enable comparison."""
         # Plot and save all results
-        x_data = []
-        y_data = []
-        legends = []
+        plot_data = collections.OrderedDict()
+        plots = []
         for result in self.testclass_results:
+            testcase_params = self.parse_test_params(result["test_name"])
+            plot_id = (testcase_params["channel"], testcase_params["mode"])
+            if plot_id not in plot_data:
+                plot_data[plot_id] = {"x_data": [], "y_data": [], "legend": []}
             total_attenuation = [
                 att + result["fixed_attenuation"]
                 for att in result["attenuation"]
             ]
-            x_data.append(total_attenuation)
-            y_data.append(result["throughput_receive"])
-            legends.append(result["test_name"])
-        x_label = 'Attenuation (dB)'
-        y_label = 'Throughput (Mbps)'
-        data_sets = [x_data, y_data]
-        fig_property = {
-            "title": "RvR Results",
-            "x_label": x_label,
-            "y_label": y_label,
-            "linewidth": 3,
-            "markersize": 10
-        }
+            plot_data[plot_id]["x_data"].append(total_attenuation)
+            plot_data[plot_id]["y_data"].append(result["throughput_receive"])
+            plot_data[plot_id]["legend"].append(result["test_name"])
+        for plot_id, plot_data in plot_data.items():
+            data_set = [plot_data["x_data"], plot_data["y_data"]]
+            fig_property = {
+                "title": "Channel {} - {}".format(plot_id[0], plot_id[1]),
+                "x_label": 'Attenuation (dB)',
+                "y_label": 'Throughput (Mbps)',
+                "linewidth": 3,
+                "markersize": 10
+            }
+            plots.append(
+                wputils.bokeh_plot(
+                    data_set,
+                    plot_data["legend"],
+                    fig_property,
+                    shaded_region=None))
         output_file_path = os.path.join(self.log_path, 'results.html')
-        wputils.bokeh_plot(
-            data_sets,
-            legends,
-            fig_property,
-            shaded_region=None,
-            output_file_path=output_file_path)
+        wputils.save_bokeh_plots(plots, output_file_path)
 
     def pass_fail_check(self, rvr_result):
         """Check the test result and decide if it passed or failed.
@@ -290,11 +293,11 @@ class WifiRvrTest(base_test.BaseTestClass):
         self.log.info("Start running RvR")
         zero_counter = 0
         throughput = []
-        for atten in self.atten_range:
+        for atten in testcase_params["atten_range"]:
             # Set Attenuation
             self.log.info("Setting attenuation to {} dB".format(atten))
             for attenuator in self.attenuators:
-                attenuator.set_atten(atten)
+                attenuator.set_atten(atten, strict=False)
             # Start iperf session
             self.iperf_server.start(tag=str(atten))
             try:
@@ -337,18 +340,19 @@ class WifiRvrTest(base_test.BaseTestClass):
             if zero_counter == self.MAX_CONSECUTIVE_ZEROS:
                 self.log.info(
                     "Throughput stable at 0 Mbps. Stopping test now.")
-                throughput.extend([0] *
-                                  (len(self.atten_range) - len(throughput)))
+                throughput.extend(
+                    [0] *
+                    (len(testcase_params["atten_range"]) - len(throughput)))
                 break
         for attenuator in self.attenuators:
-            attenuator.set_atten(0)
+            attenuator.set_atten(0, strict=False)
         # Compile test result and meta data
         rvr_result = collections.OrderedDict()
         rvr_result["test_name"] = self.current_test_name
         rvr_result["ap_settings"] = self.access_point.ap_settings.copy()
         rvr_result["fixed_attenuation"] = self.testbed_params[
             "fixed_attenuation"][str(testcase_params["channel"])]
-        rvr_result["attenuation"] = list(self.atten_range)
+        rvr_result["attenuation"] = list(testcase_params["atten_range"])
         rvr_result["throughput_receive"] = throughput
         return rvr_result
 
@@ -388,7 +392,12 @@ class WifiRvrTest(base_test.BaseTestClass):
             self.testclass_params["country_code"])
         self.main_network[band]["channel"] = testcase_params["channel"]
         wutils.wifi_connect(
-            self.client_dut, self.main_network[band], num_of_tries=5)
+            self.client_dut,
+            self.main_network[band],
+            num_of_tries=5,
+            check_connectivity=False)
+        self.dut_ip = self.client_dut.droid.connectivityGetIPv4Addresses(
+            'wlan0')[0]
         time.sleep(self.MED_SLEEP)
 
     def setup_rvr_test(self, testcase_params):
@@ -397,20 +406,12 @@ class WifiRvrTest(base_test.BaseTestClass):
         Args:
             testcase_params: dict containing test-specific parameters
         """
-        #Initialize RvR test parameters
-        num_atten_steps = int(
-            (testcase_params["atten_stop"] - testcase_params["atten_start"]) /
-            testcase_params["atten_step"])
-        self.atten_range = [
-            testcase_params["atten_start"] + x * testcase_params["atten_step"]
-            for x in range(0, num_atten_steps)
-        ]
         # Configure AP
         self.setup_ap(testcase_params)
         # Set attenuator to 0 dB
         for attenuator in self.attenuators:
-            attenuator.set_atten(0)
-        # Resest, configure, and connect DUT
+            attenuator.set_atten(0, strict=False)
+        # Reset, configure, and connect DUT
         self.setup_dut(testcase_params)
 
     def parse_test_params(self, test_name):
@@ -419,6 +420,14 @@ class WifiRvrTest(base_test.BaseTestClass):
         testcase_params = collections.OrderedDict()
         testcase_params["channel"] = int(test_name_params[4][2:])
         testcase_params["mode"] = test_name_params[5]
+        num_atten_steps = int((self.testclass_params["atten_stop"] -
+                               self.testclass_params["atten_start"]) /
+                              self.testclass_params["atten_step"])
+        testcase_params["atten_range"] = [
+            self.testclass_params["atten_start"] +
+            x * self.testclass_params["atten_step"]
+            for x in range(0, num_atten_steps)
+        ]
         testcase_params["iperf_args"] = '-i 1 -t {} -J '.format(
             self.testclass_params["iperf_duration"])
         if test_name_params[2] == "UDP":
