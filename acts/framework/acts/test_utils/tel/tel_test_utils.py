@@ -6698,6 +6698,9 @@ def build_id_override(ad, new_build_id=None, postfix=None):
     else:
         build_id = None
     existing_build_id = ad.adb.getprop("ro.build.id")
+    if postfix in build_id:
+        ad.log.info("Build id already contains %s", postfix)
+        return
     if not new_build_id:
         if postfix and build_id:
             new_build_id = "%s.%s" % (build_id, postfix)
@@ -7095,6 +7098,18 @@ def install_googleaccountutil_apk(ad, account_util):
     return True
 
 
+def install_googlefi_apk(ad, fi_util):
+    ad.log.info("Install fi_util %s", fi_util)
+    ad.ensure_screen_on()
+    ad.adb.install("-r -g --user 0 %s" % fi_util,
+                   timeout=300, ignore_status=True)
+    time.sleep(3)
+    if not ad.is_apk_installed("com.google.android.apps.tycho"):
+        ad.log.info("com.google.android.apps.tycho is not installed")
+        return False
+    return True
+
+
 def add_google_account(ad, retries=3):
     if not ad.is_apk_installed("com.google.android.tradefed.account"):
         ad.log.error("GoogleAccountUtil is not installed")
@@ -7127,6 +7142,74 @@ def remove_google_account(ad, retries=3):
             return True
     ad.log.error("Fail to remove google account due to %s", output)
     return False
+
+
+def my_current_screen_content(ad, content):
+    ad.adb.shell("uiautomator dump --window=WINDOW")
+    out = ad.adb.shell("cat /sdcard/window_dump.xml | grep -E '%s'" % content)
+    if not out:
+        ad.log.warning("Matching %s not found on current screen", content)
+        return False
+    return True
+
+
+def activate_google_fi_account(ad, retries=3):
+    _FI_APK = "com.google.android.apps.tycho"
+    _FI_ACTIVATE_CMD = ('am start -c android.intent.category.DEFAULT -n '
+                        'com.google.android.apps.tycho/.InitActivity --ez '
+                        'in_setup_wizard false --ez force_show_account_chooser '
+                        'false')
+    ad.adb.shell("settings put system screen_off_timeout 1800000")
+    page_match_dict = {
+       "Setup" : "Activate Google Fi to use your device for calls",
+       "Switch" : "Switch to the Google Fi mobile network",
+       "Activate" : "This takes a minute or two, sometimes longer",
+       "Welcome" : "Welcome to Google Fi",
+    }
+    page_title_list = ["Setup", "Switch", "Activate", "Welcome"]
+    for _ in range(retries):
+        ad.force_stop_apk(_FI_APK)
+        ad.ensure_screen_on()
+        ad.send_keycode("HOME")
+        ad.adb.shell(_FI_ACTIVATE_CMD)
+        time.sleep(15)
+        for page in page_title_list:
+            if my_current_screen_content(ad, page_match_dict[page]):
+                ad.log.info("Ready for Step %s", page)
+                log_screen_shot(ad, "fi_activation_step_%s" % page)
+                if page in ("Setup", "Switch"):
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("ENTER")
+                    time.sleep(30)
+                elif page == "Welcome":
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("ENTER")
+                    ad.log.info("Activation SUCCESS using Fi App")
+                    time.sleep(5)
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("ENTER")
+                    return True
+                elif page == "Activate":
+                    time.sleep(60)
+                    if my_current_screen_content(ad, page_match_dict[page]):
+                        time.sleep(60)
+            else:
+                ad.log.info("Page %s not matching any content", page)
+                log_screen_shot(ad, "fi_activation_step_%s_failure" % page)
+    return False
+
+
+def check_google_fi_activated(ad, retries=20):
+    for _ in range(retries):
+        if is_sim_ready(ad.log, ad) and (
+                ad.droid.telephonyGetSimOperatorName() == "Google Fi"):
+            ad.log.info("SIM state is READY, SIM operator is Fi")
+            return True
+        time.sleep(5)
 
 
 def bring_up_connectivity_monitor(ad):
