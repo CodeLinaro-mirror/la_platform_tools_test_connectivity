@@ -26,7 +26,7 @@ from acts import utils
 from acts.controllers import iperf_server as ipf
 from acts.metrics.loggers.blackbox import BlackboxMetricLogger
 from acts.test_decorators import test_tracker_info
-from acts.test_utils.wifi import wifi_power_test_utils as wputils
+from acts.test_utils.wifi import wifi_performance_test_utils as wputils
 from acts.test_utils.wifi import wifi_retail_ap as retail_ap
 from acts.test_utils.wifi import wifi_test_utils as wutils
 
@@ -41,10 +41,10 @@ class WifiRvrTest(base_test.BaseTestClass):
     example_connectivity_performance_ap_sta.json.
     """
 
-    TEST_TIMEOUT = 10
+    TEST_TIMEOUT = 5
     SHORT_SLEEP = 1
-    MED_SLEEP = 5
-    MAX_CONSECUTIVE_ZEROS = 5
+    RSSI_POLL_INTERVAL = 1
+    MAX_CONSECUTIVE_ZEROS = 3
 
     def __init__(self, controllers):
         base_test.BaseTestClass.__init__(self, controllers)
@@ -66,6 +66,7 @@ class WifiRvrTest(base_test.BaseTestClass):
         self.testclass_params = self.rvr_test_params
         self.num_atten = self.attenuators[0].instrument.num_atten
         self.iperf_server = self.iperf_servers[0]
+        self.iperf_client = self.iperf_clients[0]
         self.access_points = retail_ap.create(self.RetailAccessPoints)
         self.access_point = self.access_points[0]
         self.log.info("Access Point Configuration: {}".format(
@@ -293,33 +294,27 @@ class WifiRvrTest(base_test.BaseTestClass):
         self.log.info("Start running RvR")
         zero_counter = 0
         throughput = []
+        rssi = []
         for atten in testcase_params["atten_range"]:
             # Set Attenuation
-            self.log.info("Setting attenuation to {} dB".format(atten))
             for attenuator in self.attenuators:
                 attenuator.set_atten(atten, strict=False)
             # Start iperf session
             self.iperf_server.start(tag=str(atten))
-            try:
-                client_output = ""
-                client_status, client_output = self.client_dut.run_iperf_client(
-                    self.testbed_params["iperf_server_address"],
-                    testcase_params["iperf_args"],
-                    timeout=self.testclass_params["iperf_duration"] +
-                    self.TEST_TIMEOUT)
-            except:
-                self.log.warning("TimeoutError: Iperf measurement timed out.")
-            client_output_path = os.path.join(
-                self.iperf_server.log_path, "iperf_client_output_{}_{}".format(
-                    self.current_test_name, str(atten)))
-            with open(client_output_path, 'w') as out_file:
-                out_file.write("\n".join(client_output))
-            self.iperf_server.stop()
+            rssi_future = wputils.get_connected_rssi_nb(
+                self.client_dut, testcase_params["iperf_duration"] - 1, 1, 1)
+            client_output_path = self.iperf_client.start(
+                testcase_params["iperf_server_address"],
+                testcase_params["iperf_args"], str(atten),
+                testcase_params["iperf_duration"] + self.TEST_TIMEOUT)
+            server_output_path = self.iperf_server.stop()
+            current_rssi = rssi_future.result()["signal_poll_rssi"]["mean"]
+            rssi.append(current_rssi)
             # Parse and log result
             if testcase_params["use_client_output"]:
                 iperf_file = client_output_path
             else:
-                iperf_file = self.iperf_server.log_files[-1]
+                iperf_file = server_output_path
             try:
                 iperf_result = ipf.IPerfResult(iperf_file)
                 curr_throughput = (math.fsum(iperf_result.instantaneous_rates[
@@ -331,8 +326,9 @@ class WifiRvrTest(base_test.BaseTestClass):
                     "ValueError: Cannot get iperf result. Setting to 0")
                 curr_throughput = 0
             throughput.append(curr_throughput)
-            self.log.info("Throughput at {0:.2f} dB is {1:.2f} Mbps".format(
-                atten, curr_throughput))
+            self.log.info(
+                "Throughput at {0:.2f} dB is {1:.2f} Mbps. RSSI = {2:.2f}".
+                format(atten, curr_throughput, current_rssi))
             if curr_throughput == 0:
                 zero_counter = zero_counter + 1
             else:
@@ -353,6 +349,7 @@ class WifiRvrTest(base_test.BaseTestClass):
         rvr_result["fixed_attenuation"] = self.testbed_params[
             "fixed_attenuation"][str(testcase_params["channel"])]
         rvr_result["attenuation"] = list(testcase_params["atten_range"])
+        rvr_result["rssi"] = rssi
         rvr_result["throughput_receive"] = throughput
         return rvr_result
 
@@ -398,7 +395,6 @@ class WifiRvrTest(base_test.BaseTestClass):
             check_connectivity=False)
         self.dut_ip = self.client_dut.droid.connectivityGetIPv4Addresses(
             'wlan0')[0]
-        time.sleep(self.MED_SLEEP)
 
     def setup_rvr_test(self, testcase_params):
         """Function that gets devices ready for the test.
@@ -413,6 +409,12 @@ class WifiRvrTest(base_test.BaseTestClass):
             attenuator.set_atten(0, strict=False)
         # Reset, configure, and connect DUT
         self.setup_dut(testcase_params)
+        # Get iperf_server address
+        if isinstance(self.iperf_server, ipf.IPerfServerOverAdb):
+            testcase_params["iperf_server_address"] = self.dut_ip
+        else:
+            testcase_params["iperf_server_address"] = self.testbed_params[
+                "iperf_server_address"]
 
     def parse_test_params(self, test_name):
         """Function that generates test params based on the test name."""
@@ -434,7 +436,10 @@ class WifiRvrTest(base_test.BaseTestClass):
             testcase_params[
                 "iperf_args"] = testcase_params["iperf_args"] + "-u -b {}".format(
                     self.testclass_params["UDP_rates"][testcase_params["mode"]])
-        if test_name_params[3] == "DL":
+        if (test_name_params[3] == "DL"
+                and not isinstance(self.iperf_server, ipf.IPerfServerOverAdb)
+            ) or (test_name_params[3] == "UL"
+                  and isinstance(self.iperf_server, ipf.IPerfServerOverAdb)):
             testcase_params[
                 "iperf_args"] = testcase_params["iperf_args"] + ' -R'
             testcase_params["use_client_output"] = True
