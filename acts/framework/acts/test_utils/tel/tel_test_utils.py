@@ -176,6 +176,8 @@ from acts.test_utils.tel.tel_subscription_utils import \
     get_incoming_voice_sub_id
 from acts.test_utils.tel.tel_subscription_utils import \
     get_incoming_message_sub_id
+from acts.test_utils.tel.tel_subscription_utils import \
+    set_subid_for_outgoing_call
 from acts.test_utils.wifi import wifi_test_utils
 from acts.test_utils.wifi import wifi_constants
 from acts.utils import adb_shell_ping
@@ -363,6 +365,11 @@ def refresh_droid_config(log, ad, cbrs_esim=False):
                 ad.log.info("Index %d Display %s", i, oper)
                 if "Google" in oper:
                     index_to_delete = i
+                elif sub_info_list[i]['simSlotIndex'] != -1:
+                    ad.log.info("Workaround for b/122979645, setting default" \
+                      " Voice Sub ID to %s", sub_info_list[i]['subscriptionId'])
+                    set_subid_for_outgoing_call(ad,
+                                             sub_info_list[i]['subscriptionId'])
             del sub_info_list[index_to_delete]
         ad.log.info("Updated SubInfoList is %s", sub_info_list)
     active_sub_id = get_outgoing_voice_sub_id(ad)
@@ -608,7 +615,6 @@ def check_data_stall_detection(ad, wait_time=WAIT_TIME_FOR_DATA_STALL):
             ad.log.debug("Output is %s", out)
             if out:
                 ad.log.info("NetworkMonitor detected - %s", out)
-                ad.log.info("Time taken for Data Stall Detection %d secs", time_var)
                 data_stall_detected = True
                 break
             time.sleep(30)
@@ -3040,6 +3046,67 @@ def trigger_modem_crash_by_modem(ad, timeout=120):
     else:
         ad.log.warning("There is no modem subsystem failure reason logcat")
         return False
+
+
+def phone_switch_to_msim_mode(ad, retries=3, timeout=60):
+    result = False
+    for i in range(retries):
+        ad.adb.shell(
+        "setprop persist.vendor.sys.modem.diag.mdlog false", ignore_status=True)
+        ad.adb.shell(
+        "setprop persist.sys.modem.diag.mdlog false", ignore_status=True)
+        disable_qxdm_logger(ad)
+        cmd = ('am instrument -w -e request "WriteEFS" -e item '
+               '"/google/pixel_multisim_config" -e data  "02 00 00 00" '
+               '"com.google.mdstest/com.google.mdstest.instrument.'
+               'ModemConfigInstrumentation"')
+        ad.log.info("Switch to MSIM mode by using %s", cmd)
+        ad.adb.shell(cmd, ignore_status=True)
+        time.sleep(timeout)
+        ad.adb.shell("setprop persist.radio.multisim.config dsds")
+        reboot_device(ad)
+        # Verify if device is really in msim mode
+        rat = ad.adb.getprop("gsm.network.type")
+        if "," in rat:
+            ad.log.info("Device correctly switched to MSIM mode")
+            result = True
+            break
+        else:
+            ad.log.warning("Attempt %d - failed to switch to MSIM", (i + 1))
+    return result
+
+
+def phone_switch_to_ssim_mode(ad, retries=3, timeout=30):
+    result = False
+    for i in range(retries):
+        ad.adb.shell(
+        "setprop persist.vendor.sys.modem.diag.mdlog false", ignore_status=True)
+        ad.adb.shell(
+        "setprop persist.sys.modem.diag.mdlog false", ignore_status=True)
+        disable_qxdm_logger(ad)
+        cmds = ('am instrument -w -e request "WriteEFS" -e item '
+                '"/google/pixel_multisim_config" -e data  "01 00 00 00" '
+                '"com.google.mdstest/com.google.mdstest.instrument.'
+                'ModemConfigInstrumentation"',
+                'am instrument -w -e request "WriteEFS" -e item "/nv/item_files'
+                '/modem/uim/uimdrv/uim_extended_slot_mapping_config" -e data '
+                '"00 01 02 01" "com.google.mdstest/com.google.mdstest.'
+                'instrument.ModemConfigInstrumentation"')
+        for cmd in cmds:
+            ad.log.info("Switch to SSIM mode by using %s", cmd)
+            ad.adb.shell(cmd, ignore_status=True)
+            time.sleep(timeout)
+        ad.adb.shell("setprop persist.radio.multisim.config ssss")
+        reboot_device(ad)
+        # Verify if device is really in ssim mode
+        rat = ad.adb.getprop("gsm.network.type")
+        if "," not in rat:
+            ad.log.info("Device correctly switched to SSIM mode")
+            result = True
+            break
+        else:
+            ad.log.warning("Attempt %d - failed to switch to SSIM", (i + 1))
+    return result
 
 
 def lock_lte_band_by_mds(ad, band):
@@ -6434,7 +6501,8 @@ def bring_up_sl4a(ad, attemps=3):
 def reboot_device(ad, recover_sim_state=True):
     sim_state = is_sim_ready(ad.log, ad)
     ad.reboot()
-    start_qxdm_logger(ad)
+    if ad.qxdm_log:
+        start_qxdm_logger(ad)
     ad.unlock_screen()
     if recover_sim_state:
         if not unlock_sim(ad):
@@ -6630,6 +6698,9 @@ def build_id_override(ad, new_build_id=None, postfix=None):
     else:
         build_id = None
     existing_build_id = ad.adb.getprop("ro.build.id")
+    if postfix in build_id:
+        ad.log.info("Build id already contains %s", postfix)
+        return
     if not new_build_id:
         if postfix and build_id:
             new_build_id = "%s.%s" % (build_id, postfix)
@@ -7014,6 +7085,131 @@ def get_carrier_config_version(ad):
         version = "0"
     ad.log.debug("Carrier Config Version is %s", version)
     return version
+
+
+def install_googleaccountutil_apk(ad, account_util):
+    ad.log.info("Install account_util %s", account_util)
+    ad.ensure_screen_on()
+    ad.adb.install("-r %s" % account_util, timeout=300, ignore_status=True)
+    time.sleep(3)
+    if not ad.is_apk_installed("com.google.android.tradefed.account"):
+        ad.log.info("com.google.android.tradefed.account is not installed")
+        return False
+    return True
+
+
+def install_googlefi_apk(ad, fi_util):
+    ad.log.info("Install fi_util %s", fi_util)
+    ad.ensure_screen_on()
+    ad.adb.install("-r -g --user 0 %s" % fi_util,
+                   timeout=300, ignore_status=True)
+    time.sleep(3)
+    if not ad.is_apk_installed("com.google.android.apps.tycho"):
+        ad.log.info("com.google.android.apps.tycho is not installed")
+        return False
+    return True
+
+
+def add_google_account(ad, retries=3):
+    if not ad.is_apk_installed("com.google.android.tradefed.account"):
+        ad.log.error("GoogleAccountUtil is not installed")
+        return False
+    for _ in range(retries):
+        ad.ensure_screen_on()
+        output = ad.adb.shell(
+            'am instrument -w -e account "%s@gmail.com" -e password '
+            '"%s" -e sync true -e wait-for-checkin false '
+            'com.google.android.tradefed.account/.AddAccount' %
+            (ad.user_account, ad.user_password))
+        if "result=SUCCESS" in output:
+            ad.log.info("Google account is added successfully")
+            return True
+    ad.log.error("Failed to add google account - %s", output)
+    return False
+
+
+def remove_google_account(ad, retries=3):
+    if not ad.is_apk_installed("com.google.android.tradefed.account"):
+        ad.log.error("GoogleAccountUtil is not installed")
+        return False
+    for _ in range(retries):
+        ad.ensure_screen_on()
+        output = ad.adb.shell(
+            'am instrument -w '
+            'com.google.android.tradefed.account/.RemoveAccounts')
+        if "result=SUCCESS" in output:
+            ad.log.info("google account is removed successfully")
+            return True
+    ad.log.error("Fail to remove google account due to %s", output)
+    return False
+
+
+def my_current_screen_content(ad, content):
+    ad.adb.shell("uiautomator dump --window=WINDOW")
+    out = ad.adb.shell("cat /sdcard/window_dump.xml | grep -E '%s'" % content)
+    if not out:
+        ad.log.warning("Matching %s not found on current screen", content)
+        return False
+    return True
+
+
+def activate_google_fi_account(ad, retries=3):
+    _FI_APK = "com.google.android.apps.tycho"
+    _FI_ACTIVATE_CMD = ('am start -c android.intent.category.DEFAULT -n '
+                        'com.google.android.apps.tycho/.InitActivity --ez '
+                        'in_setup_wizard false --ez force_show_account_chooser '
+                        'false')
+    ad.adb.shell("settings put system screen_off_timeout 1800000")
+    page_match_dict = {
+       "Setup" : "Activate Google Fi to use your device for calls",
+       "Switch" : "Switch to the Google Fi mobile network",
+       "Activate" : "This takes a minute or two, sometimes longer",
+       "Welcome" : "Welcome to Google Fi",
+    }
+    page_title_list = ["Setup", "Switch", "Activate", "Welcome"]
+    for _ in range(retries):
+        ad.force_stop_apk(_FI_APK)
+        ad.ensure_screen_on()
+        ad.send_keycode("HOME")
+        ad.adb.shell(_FI_ACTIVATE_CMD)
+        time.sleep(15)
+        for page in page_title_list:
+            if my_current_screen_content(ad, page_match_dict[page]):
+                ad.log.info("Ready for Step %s", page)
+                log_screen_shot(ad, "fi_activation_step_%s" % page)
+                if page in ("Setup", "Switch"):
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("ENTER")
+                    time.sleep(30)
+                elif page == "Welcome":
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("ENTER")
+                    ad.log.info("Activation SUCCESS using Fi App")
+                    time.sleep(5)
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("ENTER")
+                    return True
+                elif page == "Activate":
+                    time.sleep(60)
+                    if my_current_screen_content(ad, page_match_dict[page]):
+                        time.sleep(60)
+            else:
+                ad.log.info("Page %s not matching any content", page)
+                log_screen_shot(ad, "fi_activation_step_%s_failure" % page)
+    return False
+
+
+def check_google_fi_activated(ad, retries=20):
+    for _ in range(retries):
+        if is_sim_ready(ad.log, ad) and (
+                ad.droid.telephonyGetSimOperatorName() == "Google Fi"):
+            ad.log.info("SIM state is READY, SIM operator is Fi")
+            return True
+        time.sleep(5)
 
 
 def bring_up_connectivity_monitor(ad):

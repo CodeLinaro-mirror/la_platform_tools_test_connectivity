@@ -19,24 +19,20 @@ import json
 import logging
 import math
 import os
-import re
 import statistics
-import time
 from acts import asserts
 from acts import base_test
 from acts import utils
+from acts.controllers import iperf_server as ipf
 from acts.metrics.loggers.blackbox import BlackboxMetricLogger
 from acts.test_decorators import test_tracker_info
-from acts.test_utils.wifi import wifi_power_test_utils as wputils
+from acts.test_utils.wifi import wifi_performance_test_utils as wputils
 from acts.test_utils.wifi import wifi_retail_ap as retail_ap
 from acts.test_utils.wifi import wifi_test_utils as wutils
+from concurrent.futures import ThreadPoolExecutor
 
 SHORT_SLEEP = 1
 MED_SLEEP = 6
-STATION_DUMP = "iw wlan0 station dump"
-SCAN = "wpa_cli scan"
-SCAN_RESULTS = "wpa_cli scan_results"
-SIGNAL_POLL = "wpa_cli signal_poll"
 CONST_3dB = 3.01029995664
 RSSI_ERROR_VAL = float("nan")
 
@@ -71,15 +67,15 @@ class WifiRssiTest(base_test.BaseTestClass):
     def setup_class(self):
         self.dut = self.android_devices[0]
         req_params = [
-            "RetailAccessPoints", "rssi_test_params", "testbed_params",
-            "main_network"
+            "RemoteServer", "RetailAccessPoints", "rssi_test_params",
+            "main_network", "testbed_params"
         ]
         self.unpack_userparams(req_params)
         self.test_params = self.rssi_test_params
         self.num_atten = self.attenuators[0].instrument.num_atten
         self.iperf_server = self.iperf_servers[0]
-        self.access_points = retail_ap.create(self.RetailAccessPoints)
-        self.access_point = self.access_points[0]
+        self.iperf_client = self.iperf_clients[0]
+        self.access_point = retail_ap.create(self.RetailAccessPoints)[0]
         self.log_path = os.path.join(logging.log_path, "results")
         utils.create_dir(self.log_path)
         self.log.info("Access Point Configuration: {}".format(
@@ -364,12 +360,12 @@ class WifiRssiTest(base_test.BaseTestClass):
                     ]
                 else:
                     rssi_time_series[key] = postprocessed_results[key]["data"]
-            time = [
+            time_vec = [
                 self.test_params["polling_frequency"] * x
                 for x in range(len(rssi_time_series[key]))
             ]
             if len(rssi_time_series[key]) > 0:
-                x_data.append(time)
+                x_data.append(time_vec)
                 y_data.append(rssi_time_series[key])
                 legends.append(key)
         data_sets = [x_data, y_data]
@@ -388,133 +384,6 @@ class WifiRssiTest(base_test.BaseTestClass):
             fig_property,
             shaded_region=None,
             output_file_path=output_file_path)
-
-    @staticmethod
-    def empty_rssi_result():
-        return collections.OrderedDict([("data", []), ("mean", None), ("stdev",
-                                                                       None)])
-
-    def get_scan_rssi(self, tracked_bssids, num_measurements=1):
-        """Gets scan RSSI for specified BSSIDs.
-
-        Args:
-            tracked_bssids: array of BSSIDs to gather RSSI data for
-            num_measurements: number of scans done, and RSSIs collected
-        Returns:
-            scan_rssi: dict containing the measurement results as well as the
-            statistics of the scan RSSI for all BSSIDs in tracked_bssids
-        """
-        scan_rssi = collections.OrderedDict()
-        for bssid in tracked_bssids:
-            scan_rssi[bssid] = self.empty_rssi_result()
-        for idx in range(num_measurements):
-            scan_output = self.dut.adb.shell(SCAN)
-            time.sleep(MED_SLEEP)
-            scan_output = self.dut.adb.shell(SCAN_RESULTS)
-            for bssid in tracked_bssids:
-                bssid_result = re.search(
-                    bssid + ".*", scan_output, flags=re.IGNORECASE)
-                if bssid_result:
-                    bssid_result = bssid_result.group(0).split("\t")
-                    scan_rssi[bssid]["data"].append(int(bssid_result[2]))
-                else:
-                    scan_rssi[bssid]["data"].append(RSSI_ERROR_VAL)
-        # Compute mean RSSIs. Only average valid readings.
-        # Output RSSI_ERROR_VAL if no readings found.
-        for key, val in scan_rssi.items():
-            filtered_rssi_values = [
-                x for x in val["data"] if not math.isnan(x)
-            ]
-            if filtered_rssi_values:
-                scan_rssi[key]["mean"] = statistics.mean(filtered_rssi_values)
-                if len(filtered_rssi_values) > 1:
-                    scan_rssi[key]["stdev"] = statistics.stdev(
-                        filtered_rssi_values)
-                else:
-                    scan_rssi[key]["stdev"] = 0
-            else:
-                scan_rssi[key]["mean"] = RSSI_ERROR_VAL
-                scan_rssi[key]["stdev"] = RSSI_ERROR_VAL
-        return scan_rssi
-
-    def get_connected_rssi(self,
-                           num_measurements=1,
-                           polling_frequency=SHORT_SLEEP):
-        """Gets all RSSI values reported for the connected access point/BSSID.
-
-        Args:
-            num_measurements: number of scans done, and RSSIs collected
-            polling_frequency: time to wait between RSSI measurements
-        Returns:
-            connected_rssi: dict containing the measurements results for
-            all reported RSSI values (signal_poll, per chain, etc.) and their
-            statistics
-        """
-        # yapf: disable
-        connected_rssi = collections.OrderedDict(
-            [("signal_poll_rssi", self.empty_rssi_result()),
-             ("signal_poll_avg_rssi", self.empty_rssi_result()),
-             ("chain_0_rssi", self.empty_rssi_result()),
-             ("chain_1_rssi", self.empty_rssi_result())])
-        # yapf: enable
-        for idx in range(num_measurements):
-            measurement_start_time = time.time()
-            # Get signal poll RSSI
-            signal_poll_output = self.dut.adb.shell(SIGNAL_POLL)
-            match = re.search("RSSI=.*", signal_poll_output)
-            if match:
-                temp_rssi = int(match.group(0).split("=")[1])
-                if temp_rssi == -9999:
-                    connected_rssi["signal_poll_rssi"]["data"].append(
-                        RSSI_ERROR_VAL)
-                else:
-                    connected_rssi["signal_poll_rssi"]["data"].append(
-                        temp_rssi)
-            else:
-                connected_rssi["signal_poll_rssi"]["data"].append(
-                    RSSI_ERROR_VAL)
-            match = re.search("AVG_RSSI=.*", signal_poll_output)
-            if match:
-                connected_rssi["signal_poll_avg_rssi"]["data"].append(
-                    int(match.group(0).split("=")[1]))
-            else:
-                connected_rssi["signal_poll_avg_rssi"]["data"].append(
-                    RSSI_ERROR_VAL)
-            # Get per chain RSSI
-            per_chain_rssi = self.dut.adb.shell(STATION_DUMP)
-            match = re.search(".*signal avg:.*", per_chain_rssi)
-            if match:
-                per_chain_rssi = per_chain_rssi[per_chain_rssi.find("[") + 1:
-                                                per_chain_rssi.find("]")]
-                per_chain_rssi = per_chain_rssi.split(", ")
-                connected_rssi["chain_0_rssi"]["data"].append(
-                    int(per_chain_rssi[0]))
-                connected_rssi["chain_1_rssi"]["data"].append(
-                    int(per_chain_rssi[1]))
-            else:
-                connected_rssi["chain_0_rssi"]["data"].append(RSSI_ERROR_VAL)
-                connected_rssi["chain_1_rssi"]["data"].append(RSSI_ERROR_VAL)
-            measurement_elapsed_time = time.time() - measurement_start_time
-            time.sleep(max(0, polling_frequency - measurement_elapsed_time))
-
-        # Compute mean RSSIs. Only average valid readings.
-        # Output RSSI_ERROR_VAL if no valid connected readings found.
-        for key, val in connected_rssi.copy().items():
-            filtered_rssi_values = [
-                x for x in val["data"] if not math.isnan(x)
-            ]
-            if filtered_rssi_values:
-                connected_rssi[key]["mean"] = statistics.mean(
-                    filtered_rssi_values)
-                if len(filtered_rssi_values) > 1:
-                    connected_rssi[key]["stdev"] = statistics.stdev(
-                        filtered_rssi_values)
-                else:
-                    connected_rssi[key]["stdev"] = 0
-            else:
-                connected_rssi[key]["mean"] = RSSI_ERROR_VAL
-                connected_rssi[key]["stdev"] = RSSI_ERROR_VAL
-        return connected_rssi
 
     def rssi_test(self, iperf_traffic, connected_measurements,
                   scan_measurements, bssids, polling_frequency,
@@ -542,31 +411,63 @@ class WifiRssiTest(base_test.BaseTestClass):
         # Start iperf traffic if required by test
         if self.iperf_traffic:
             self.iperf_server.start(tag=0)
-            self.dut.run_iperf_client_nb(
-                self.testbed_params["iperf_server_address"],
-                self.iperf_args,
-                timeout=3600)
+            if isinstance(self.iperf_server, ipf.IPerfServerOverAdb):
+                iperf_server_address = self.dut_ip
+            else:
+                iperf_server_address = self.testbed_params[
+                    "iperf_server_address"]
+            executor = ThreadPoolExecutor(max_workers=1)
+            thread_future = executor.submit(
+                self.iperf_client.start, iperf_server_address, self.iperf_args,
+                0, self.iperf_timeout + SHORT_SLEEP)
+            executor.shutdown(wait=False)
         for atten in self.rssi_atten_range:
             # Set Attenuation
             self.log.info("Setting attenuation to {} dB".format(atten))
             for attenuator in self.attenuators:
                 attenuator.set_atten(atten)
-            time.sleep(first_measurement_delay)
             current_rssi = collections.OrderedDict()
-            current_rssi = self.get_connected_rssi(connected_measurements,
-                                                   polling_frequency)
-            current_rssi["scan_rssi"] = self.get_scan_rssi(
-                bssids, scan_measurements)
+            current_rssi = wputils.get_connected_rssi(
+                self.dut, connected_measurements, polling_frequency,
+                first_measurement_delay)
+            current_rssi["scan_rssi"] = wputils.get_scan_rssi(
+                self.dut, bssids, scan_measurements)
             rssi_result.append(current_rssi)
             self.log.info("Connected RSSI at {0:.2f} dB is {1:.2f} dB".format(
                 atten, current_rssi["signal_poll_rssi"]["mean"]))
         # Stop iperf traffic if needed
-        if self.iperf_traffic:
-            self.iperf_server.stop()
-            self.dut.adb.shell("pkill iperf3")
         for attenuator in self.attenuators:
             attenuator.set_atten(0)
+        if self.iperf_traffic:
+            thread_future.result()
+            self.iperf_server.stop()
         return rssi_result
+
+    def setup_ap(self):
+        """Function that gets devices ready for the test."""
+        band = self.access_point.band_lookup_by_channel(self.channel)
+        if "2G" in band:
+            frequency = wutils.WifiEnums.channel_2G_to_freq[self.channel]
+        else:
+            frequency = wutils.WifiEnums.channel_5G_to_freq[self.channel]
+        if frequency in wutils.WifiEnums.DFS_5G_FREQUENCIES:
+            self.access_point.set_region(self.testbed_params["DFS_region"])
+        else:
+            self.access_point.set_region(self.testbed_params["default_region"])
+        self.access_point.set_channel(band, self.channel)
+        self.access_point.set_bandwidth(band, self.mode)
+        self.log.info("Access Point Configuration: {}".format(
+            self.access_point.ap_settings))
+
+    def setup_dut(self):
+        """Sets up the DUT in the configuration required by the test."""
+        band = self.access_point.band_lookup_by_channel(self.channel)
+        wutils.wifi_toggle_state(self.dut, True)
+        wutils.reset_wifi(self.dut)
+        self.main_network[band]["channel"] = self.channel
+        self.dut.droid.wifiSetCountryCode(self.test_params["country_code"])
+        wutils.wifi_connect(self.dut, self.main_network[band], num_of_tries=5)
+        self.dut_ip = self.dut.droid.connectivityGetIPv4Addresses('wlan0')[0]
 
     def rssi_test_func(self, iperf_traffic, connected_measurements,
                        scan_measurements, bssids, polling_frequency,
@@ -583,30 +484,14 @@ class WifiRssiTest(base_test.BaseTestClass):
         #Initialize test settings
         rssi_result = collections.OrderedDict()
         # Configure AP
-        band = self.access_point.band_lookup_by_channel(self.channel)
-        if "2G" in band:
-            frequency = wutils.WifiEnums.channel_2G_to_freq[self.channel]
-        else:
-            frequency = wutils.WifiEnums.channel_5G_to_freq[self.channel]
-        if frequency in wutils.WifiEnums.DFS_5G_FREQUENCIES:
-            self.access_point.set_region(self.testbed_params["DFS_region"])
-        else:
-            self.access_point.set_region(self.testbed_params["default_region"])
-        self.access_point.set_channel(band, self.channel)
-        self.access_point.set_bandwidth(band, self.mode)
-        self.log.info("Access Point Configuration: {}".format(
-            self.access_point.ap_settings))
-        # Set attenuator to starting attenuation
+        self.setup_ap()
+        # Initialize attenuators
         for attenuator in self.attenuators:
             attenuator.set_atten(self.rssi_atten_range[0])
         # Connect DUT to Network
-        wutils.wifi_toggle_state(self.dut, True)
-        wutils.reset_wifi(self.dut)
-        self.main_network[band]["channel"] = self.channel
-        self.dut.droid.wifiSetCountryCode(self.test_params["country_code"])
-        wutils.wifi_connect(self.dut, self.main_network[band], num_of_tries=5)
-        time.sleep(MED_SLEEP)
-        # Run RvR and log result
+        self.setup_dut()
+        # Run test and log result
+        band = self.access_point.band_lookup_by_channel(self.channel)
         rssi_result["test_name"] = self.current_test_name
         rssi_result["ap_settings"] = self.access_point.ap_settings.copy()
         rssi_result["attenuation"] = list(self.rssi_atten_range)
@@ -628,6 +513,27 @@ class WifiRssiTest(base_test.BaseTestClass):
         self.testclass_results.append(rssi_result)
         return rssi_result
 
+    def get_iperf_timeout(self, atten_range, connected_measurements,
+                          polling_frequency, first_measurement_delay,
+                          scan_measurements):
+        """Function to comput iperf session length required in RSSI test.
+
+        Args:
+            atten_range: array of attenuations
+            connected_measurements: number of measurements per atten step
+            polling_frequency: interval between RSSI measurements
+            first_measurement_delay: delay before first measurements
+            scan_measurements: number of scan RSSI measurements per atten step
+        Returns:
+            iperf_timeout: length of iperf session required in rssi test
+        """
+        atten_step_duration = first_measurement_delay + (
+            connected_measurements *
+            polling_frequency) + scan_measurements * MED_SLEEP
+        iperf_timeout = len(atten_range) * atten_step_duration + MED_SLEEP
+        self.log.info("iperf timeout is {}".format(iperf_timeout))
+        return iperf_timeout
+
     def _test_rssi_vs_atten(self):
         """ Function that gets called for each test case of rssi_vs_atten
 
@@ -638,7 +544,6 @@ class WifiRssiTest(base_test.BaseTestClass):
         self.channel = int(test_params[4][2:])
         self.mode = test_params[5]
         self.iperf_traffic = "ActiveTraffic" in test_params[6]
-        self.iperf_args = '-i 1 -t 3600 -J -R'
         band = self.access_point.band_lookup_by_channel(self.channel)
         num_atten_steps = int((self.test_params["rssi_vs_atten_stop"] -
                                self.test_params["rssi_vs_atten_start"]) /
@@ -648,6 +553,15 @@ class WifiRssiTest(base_test.BaseTestClass):
             x * self.test_params["rssi_vs_atten_step"]
             for x in range(0, num_atten_steps)
         ]
+        self.iperf_timeout = self.get_iperf_timeout(
+            self.rssi_atten_range,
+            self.test_params["rssi_vs_atten_connected_measurements"],
+            self.test_params["polling_frequency"], MED_SLEEP,
+            self.test_params["rssi_vs_atten_scan_measurements"])
+        if isinstance(self.iperf_server, ipf.IPerfServerOverAdb):
+            self.iperf_args = '-i 1 -t {} -J'.format(self.iperf_timeout)
+        else:
+            self.iperf_args = '-i 1 -t {} -J -R'.format(self.iperf_timeout)
         rssi_result = self.rssi_test_func(
             self.iperf_traffic,
             self.test_params["rssi_vs_atten_connected_measurements"],
@@ -670,12 +584,18 @@ class WifiRssiTest(base_test.BaseTestClass):
         self.channel = int(test_params[3][2:])
         self.mode = test_params[4]
         self.iperf_traffic = "ActiveTraffic" in test_params[5]
-        self.iperf_args = '-i 1 -t 3600 -J -R'
         band = self.access_point.band_lookup_by_channel(self.channel)
         self.rssi_atten_range = self.test_params["rssi_stability_atten"]
         connected_measurements = int(
             self.test_params["rssi_stability_duration"] /
             self.test_params["polling_frequency"])
+        self.iperf_timeout = self.get_iperf_timeout(
+            self.rssi_atten_range, connected_measurements,
+            self.test_params["polling_frequency"], MED_SLEEP, 0)
+        if isinstance(self.iperf_server, ipf.IPerfServerOverAdb):
+            self.iperf_args = '-i 1 -t {} -J'.format(self.iperf_timeout)
+        else:
+            self.iperf_args = '-i 1 -t {} -J -R'.format(self.iperf_timeout)
         rssi_result = self.rssi_test_func(
             self.iperf_traffic, connected_measurements, 0,
             [self.main_network[band]["BSSID"]],
@@ -694,30 +614,31 @@ class WifiRssiTest(base_test.BaseTestClass):
         self.channel = int(test_params[3][2:])
         self.mode = test_params[4]
         self.iperf_traffic = "ActiveTraffic" in test_params[5]
-        self.iperf_args = '-i 1 -t 3600 -J -R'
         band = self.access_point.band_lookup_by_channel(self.channel)
         self.rssi_atten_range = []
         for waveform in self.test_params["rssi_tracking_waveforms"]:
             waveform_vector = []
             for section in range(len(waveform["atten_levels"]) - 1):
                 section_limits = waveform["atten_levels"][section:section + 2]
-                if section_limits[0] < section_limits[1]:
-                    waveform_vector = waveform_vector + sorted(
-                        list(
-                            range(section_limits[0], section_limits[1],
-                                  waveform["step_size"])) *
-                        waveform["step_duration"])
-                else:
-                    waveform_vector = waveform_vector + list(
-                        reversed(
-                            sorted(
-                                list(
-                                    range(section_limits[1], section_limits[0],
-                                          waveform["step_size"])) *
-                                waveform["step_duration"])))
+                up_down = (1 - 2 * (section_limits[1] < section_limits[0]))
+                temp_section = list(
+                    range(section_limits[0], section_limits[1] + up_down,
+                          up_down * waveform["step_size"]))
+                temp_section = [
+                    temp_section[idx] for idx in range(len(temp_section))
+                    for n in range(waveform["step_duration"])
+                ]
+                waveform_vector += temp_section
             waveform_vector = waveform_vector * waveform["repetitions"]
             self.rssi_atten_range = self.rssi_atten_range + waveform_vector
         connected_measurements = int(1 / self.test_params["polling_frequency"])
+        self.iperf_timeout = self.get_iperf_timeout(
+            self.rssi_atten_range, connected_measurements,
+            self.test_params["polling_frequency"], 0, 0)
+        if isinstance(self.iperf_server, ipf.IPerfServerOverAdb):
+            self.iperf_args = '-i 1 -t {} -J'.format(self.iperf_timeout)
+        else:
+            self.iperf_args = '-i 1 -t {} -J -R'.format(self.iperf_timeout)
         rssi_result = self.rssi_test_func(
             self.iperf_traffic, connected_measurements, 0,
             [self.main_network[band]["BSSID"]],
