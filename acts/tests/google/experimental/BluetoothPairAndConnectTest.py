@@ -29,7 +29,9 @@ from acts.signals import TestFailure
 from acts.signals import TestPass
 from acts.test_utils.bt.bt_test_utils import clear_bonded_devices
 from acts.test_utils.bt.bt_test_utils import enable_bluetooth
+from acts.test_utils.bt.loggers.bluetooth_metric_logger import BluetoothMetricLogger
 from acts.utils import set_location_service
+
 
 # The number of pairing and connection attempts
 PAIR_CONNECT_ATTEMPTS = 200
@@ -69,6 +71,7 @@ class BluetoothPairAndConnectTest(BaseTestClass):
         self.apollo_act = ApolloTestActions(self.apollo, self.log)
         self.dut_bt_addr = self.apollo.bluetooth_address
         self.bt_utils = BTUtils()
+        self.bt_logger = BluetoothMetricLogger.for_test_case()
 
     def setup_test(self):
         # Make sure Bluetooth is on
@@ -152,23 +155,28 @@ class BluetoothPairAndConnectTest(BaseTestClass):
                                         pair_connect_success)
 
         if len(pair_times) > 0:
-            metrics['pair_max_time_millis'] = max(pair_times)
-            metrics['pair_min_time_millis'] = min(pair_times)
-            metrics['pair_avg_time_millis'] = statistics.mean(pair_times)
+            metrics['pair_max_time_millis'] = int(max(pair_times))
+            metrics['pair_min_time_millis'] = int(min(pair_times))
+            metrics['pair_avg_time_millis'] = int(statistics.mean(pair_times))
 
         if len(connect_times) > 0:
-            metrics['first_conn_max_time_millis'] = max(connect_times)
-            metrics['first_conn_min_time_millis'] = min(connect_times)
-            metrics['first_conn_avg_time_millis'] = (statistics
-                                                     .mean(connect_times))
+            metrics['first_connection_max_time_millis'] = int(max(connect_times))
+            metrics['first_connnection_min_time_millis'] = int(
+                min(connect_times))
+            metrics['first_connection_avg_time_millis'] = int(
+                (statistics.mean(connect_times)))
 
         if pair_connect_failures:
             metrics['pair_conn_failure_info'] = pair_connect_failures
 
+        proto = self.bt_logger.get_results(metrics,
+                                           self.__class__.__name__,
+                                           self.phone)
+
         self.log.info('Metrics: {}'.format(metrics))
 
         if PAIR_CONNECT_ATTEMPTS != pair_connect_success:
-            raise TestFailure(str(first_connection_failure), extras=metrics)
+            raise TestFailure(str(first_connection_failure), extras=proto)
         else:
             raise TestPass('Bluetooth pair and connect test passed',
-                           extras=metrics)
+                           extras=proto)

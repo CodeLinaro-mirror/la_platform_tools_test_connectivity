@@ -71,7 +71,7 @@ class AudioCapture:
             'record_duration']
         for i in range(total_chunks):
             try:
-                data = stream.read(self.chunk, exception_on_overflow=False)
+                data = stream.read(self.chunk)
             except IOError as ex:
                 logging.error("Cannot record audio :{}".format(ex))
                 return False
@@ -128,5 +128,6 @@ if __name__ == '__main__':
         " chunk and device index for recording.")
     args = parser.parse_args()
     audio = AudioCapture(args.test_params, args.path)
-    audio.capture_and_store_audio()
+    audio.capture_and_store_audio(args.test_params['trim_start'],
+                                  args.test_params['trim_end'])
     audio.terminate_audio()

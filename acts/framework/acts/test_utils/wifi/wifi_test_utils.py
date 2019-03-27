@@ -26,6 +26,8 @@ from acts import asserts
 from acts import signals
 from acts import utils
 from acts.controllers import attenuator
+from acts.controllers.ap_lib import hostapd_security
+from acts.controllers.ap_lib import hostapd_ap_preset
 from acts.controllers.ap_lib.hostapd_constants import BAND_2G
 from acts.controllers.ap_lib.hostapd_constants import BAND_5G
 from acts.test_utils.wifi import wifi_constants
@@ -39,7 +41,7 @@ DEFAULT_TIMEOUT = 10
 # change.
 SHORT_TIMEOUT = 30
 ROAMING_TIMEOUT = 30
-
+WIFI_CONNECTION_TIMEOUT_DEFAULT = 30
 # Speed of light in m/s.
 SPEED_OF_LIGHT = 299792458
 
@@ -426,6 +428,7 @@ class WifiChannelUS(WifiChannelBase):
                                    5660, 5680, 5700, 5720]
         self.ALL_5G_FREQUENCIES = self.DFS_5G_FREQUENCIES + self.NONE_DFS_5G_FREQUENCIES
 
+
 class WifiReferenceNetworks:
     """ Class to parse and return networks of different band and
         auth type from reference_networks
@@ -550,6 +553,7 @@ def match_networks(target_params, networks):
             results.append(n)
     return results
 
+
 def wait_for_wifi_state(ad, state, assert_on_fail=True):
     """Waits for the device to transition to the specified wifi state
 
@@ -591,6 +595,7 @@ def _wait_for_wifi_state(ad, state):
         asserts.assert_equal(state, ad.droid.wifiCheckState(), fail_msg)
     finally:
         ad.droid.wifiStopTrackingStateChange()
+
 
 def wifi_toggle_state(ad, new_state=None, assert_on_fail=True):
     """Toggles the state of wifi.
@@ -917,6 +922,7 @@ def start_wifi_tethering(ad, ssid, password, band=None, hidden=None):
     finally:
         ad.droid.wifiStopTrackingTetherStateChange()
 
+
 def save_wifi_soft_ap_config(ad, wifi_config, band=None, hidden=None):
     """ Save a soft ap configuration """
     if band:
@@ -931,6 +937,7 @@ def save_wifi_soft_ap_config(ad, wifi_config, band=None, hidden=None):
         wifi_ap[WifiEnums.SSID_KEY] == wifi_config[WifiEnums.SSID_KEY],
         "Hotspot SSID doesn't match with expected SSID")
 
+
 def start_wifi_tethering_saved_config(ad):
     """ Turn on wifi hotspot with a config that is already saved """
     ad.droid.wifiStartTrackingTetherStateChange()
@@ -943,6 +950,7 @@ def start_wifi_tethering_saved_config(ad):
         asserts.fail("Didn't receive wifi tethering starting confirmation")
     finally:
         ad.droid.wifiStopTrackingTetherStateChange()
+
 
 def stop_wifi_tethering(ad):
     """Stops wifi tethering on an android_device.
@@ -1171,6 +1179,7 @@ def _wait_for_connect_event(ad, ssid=None, id=None, tries=1):
                 pass
 
     return conn_result
+
 
 def wait_for_disconnect(ad, timeout=10):
     """Wait for a disconnect event within the specified timeout.
@@ -1794,6 +1803,28 @@ def verify_wifi_connection_info(ad, expected_con):
             raise signals.TestFailure(msg)
 
 
+def check_autoconnect_to_open_network(ad, conn_timeout=WIFI_CONNECTION_TIMEOUT_DEFAULT):
+    """Connects to any open WiFI AP
+     Args:
+         timeout value in sec to wait for UE to connect to a WiFi AP
+     Returns:
+         True if UE connects to WiFi AP (supplicant_state = completed)
+         False if UE fails to complete connection within WIFI_CONNECTION_TIMEOUT time.
+    """
+    if ad.droid.wifiCheckState():
+        return True
+    ad.droid.wifiToggleState()
+    wifi_connection_state = None
+    timeout = time.time() + conn_timeout
+    while wifi_connection_state != "completed":
+        wifi_connection_state = ad.droid.wifiGetConnectionInfo()[
+            'supplicant_state']
+        if time.time() > timeout:
+            ad.log.warning("Failed to connect to WiFi AP")
+            return False
+    return True
+
+
 def expand_enterprise_config_by_phase2(config):
     """Take an enterprise config and generate a list of configs, each with
     a different phase2 auth type.
@@ -1892,6 +1923,7 @@ def group_attenuators(attenuators):
                       "test, but found %s") % num_of_attns)
     return [attn0, attn1]
 
+
 def set_attns(attenuator, attn_val_name):
     """Sets attenuation values on attenuators used in this test.
 
@@ -1946,6 +1978,27 @@ def create_softap_config():
     }
     return config
 
+
+def start_softap_and_verify(ad, band):
+    """Bring-up softap and verify AP mode and in scan results.
+
+    Args:
+        band: The band to use for softAP.
+
+    Returns: dict, the softAP config.
+
+    """
+    config = create_softap_config()
+    start_wifi_tethering(ad.dut,
+                         config[WifiEnums.SSID_KEY],
+                         config[WifiEnums.PWD_KEY], band=band)
+    asserts.assert_true(ad.dut.droid.wifiIsApEnabled(),
+                         "SoftAp is not reported as running")
+    start_wifi_connection_scan_and_ensure_network_found(ad.dut_client,
+        config[WifiEnums.SSID_KEY])
+    return config
+
+
 def start_pcap(pcap, wifi_band, log_path, test_name):
     """Start packet capture in monitor mode.
 
@@ -1971,6 +2024,7 @@ def start_pcap(pcap, wifi_band, log_path, test_name):
         procs[band] = (proc, os.path.join(log_dir, test_name))
     return procs
 
+
 def stop_pcap(pcap, procs, test_status=None):
     """Stop packet capture in monitor mode.
 
@@ -1989,9 +2043,11 @@ def stop_pcap(pcap, procs, test_status=None):
     if test_status:
         shutil.rmtree(os.path.dirname(fname))
 
+
 def start_cnss_diags(ads):
     for ad in ads:
         start_cnss_diag(ad)
+
 
 def start_cnss_diag(ad):
     """Start cnss_diag to record extra wifi logs
@@ -2007,9 +2063,11 @@ def start_cnss_diag(ad):
         ad.adb.shell("find /data/vendor/wifi/cnss_diag/wlan_logs/ -type f -delete")
         ad.adb.shell("setprop %s true" % prop, ignore_status=True)
 
+
 def stop_cnss_diags(ads):
     for ad in ads:
         stop_cnss_diag(ad)
+
 
 def stop_cnss_diag(ad):
     """Stops cnss_diag
@@ -2022,6 +2080,7 @@ def stop_cnss_diag(ad):
     else:
         prop = wifi_constants.CNSS_DIAG_PROP
     ad.adb.shell("setprop %s false" % prop, ignore_status=True)
+
 
 def get_cnss_diag_log(ad, test_name=""):
     """Pulls the cnss_diag logs in the wlan_logs dir
@@ -2036,3 +2095,74 @@ def get_cnss_diag_log(ad, test_name=""):
                                 "CNSS_DIAG_%s" % ad.serial)
         utils.create_dir(log_path)
         ad.pull_files(logs, log_path)
+
+
+def ap_setup(test, index, ap, network, bandwidth=80, channel=6):
+        """Set up the AP with provided network info.
+
+        Args:
+            test: the calling test class object.
+            index: int, index of the AP.
+            ap: access_point object of the AP.
+            network: dict with information of the network, including ssid,
+                     password and bssid.
+            bandwidth: the operation bandwidth for the AP, default 80MHz.
+            channel: the channel number for the AP.
+        Returns:
+            brconfigs: the bridge interface configs
+        """
+        bss_settings = []
+        ssid = network[WifiEnums.SSID_KEY]
+        test.access_points[index].close()
+        time.sleep(5)
+
+        # Configure AP as required.
+        if "password" in network.keys():
+            password = network["password"]
+            security = hostapd_security.Security(
+                security_mode="wpa", password=password)
+        else:
+            security = hostapd_security.Security(security_mode=None, password=None)
+        config = hostapd_ap_preset.create_ap_preset(
+                                                    channel=channel,
+                                                    ssid=ssid,
+                                                    security=security,
+                                                    bss_settings=bss_settings,
+                                                    vht_bandwidth=bandwidth,
+                                                    profile_name='whirlwind',
+                                                    iface_wlan_2g=ap.wlan_2g,
+                                                    iface_wlan_5g=ap.wlan_5g)
+        ap.start_ap(config)
+        logging.info("AP started on channel {} with SSID {}".format(channel, ssid))
+
+
+def turn_ap_off(test, AP):
+    """Bring down hostapd on the Access Point.
+    Args:
+        test: The test class object.
+        AP: int, indicating which AP to turn OFF.
+    """
+    hostapd_2g = test.access_points[AP-1]._aps['wlan0'].hostapd
+    if hostapd_2g.is_alive():
+        hostapd_2g.stop()
+        logging.debug('Turned WLAN0 AP%d off' % AP)
+    hostapd_5g = test.access_points[AP-1]._aps['wlan1'].hostapd
+    if hostapd_5g.is_alive():
+        hostapd_5g.stop()
+        logging.debug('Turned WLAN1 AP%d off' % AP)
+
+
+def turn_ap_on(test, AP):
+    """Bring up hostapd on the Access Point.
+    Args:
+        test: The test class object.
+        AP: int, indicating which AP to turn ON.
+    """
+    hostapd_2g = test.access_points[AP-1]._aps['wlan0'].hostapd
+    if not hostapd_2g.is_alive():
+        hostapd_2g.start(hostapd_2g.config)
+        logging.debug('Turned WLAN0 AP%d on' % AP)
+    hostapd_5g = test.access_points[AP-1]._aps['wlan1'].hostapd
+    if not hostapd_5g.is_alive():
+        hostapd_5g.start(hostapd_5g.config)
+        logging.debug('Turned WLAN1 AP%d on' % AP)
