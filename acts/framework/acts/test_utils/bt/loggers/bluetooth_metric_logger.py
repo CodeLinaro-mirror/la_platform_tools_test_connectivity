@@ -21,6 +21,7 @@ import time
 from acts.metrics.core import ProtoMetric
 from acts.metrics.logger import MetricLogger
 
+# Initializes the path to the protobuf
 PROTO_PATH = os.path.join(os.path.dirname(__file__),
                           'protos',
                           'bluetooth_metric.proto')
@@ -48,30 +49,44 @@ class BluetoothMetricLogger(MetricLogger):
                           'BluetoothThroughputTest': self.proto_module
                               .BluetoothDataTestResult(),
                           'BluetoothLatencyTest': self.proto_module
-                              .BluetoothDataTestResult()
+                              .BluetoothDataTestResult(),
+                          'BtCodecSweepTest': self.proto_module
+                              .BluetoothAudioTestResult(),
                           }
 
     @staticmethod
     def get_configuration_data(device):
-        """Gets the configuration data of an Android device.
+        """Gets the configuration data of a device.
 
-        Gets the configuration data of an Android device and organizes it in a
+        Gets the configuration data of a device and organizes it in a
         dictionary.
 
         Args:
-            device: The AndroidDevice to get the configuration data from
+            device: The device object to get the configuration data from.
 
         Returns:
-            A dictionary containing configuration data of an Android Device.
+            A dictionary containing configuration data of a device.
         """
+        # TODO(b/126931820): Genericize and move to lib when generic DUT interface is implemented
+        data = {}
 
-        # TODO(b/124066126): Add remaining config data
-        data = {'device_class': device.__class__.__name__,
-                'device_model': device.model,
-                'software_version': device.build_info['build_id'],
-                'android_build_type': device.build_info['build_type'],
-                'android_build_number': device.build_info[
-                    'incremental_build_id']}
+        if device.__class__.__name__ == 'AndroidDevice':
+            # TODO(b/124066126): Add remaining config data
+            data = {'device_class': 'phone',
+                    'device_model': device.model,
+                    'android_release_id': device.build_info['build_id'],
+                    'android_build_type': device.build_info['build_type'],
+                    'android_build_number': device.build_info[
+                        'incremental_build_id'],
+                    'android_branch_name': 'git_qt-release',
+                    'software_version': device.build_info['build_id']}
+
+        if device.__class__.__name__ == 'ParentDevice':
+            data = {'device_class': 'headset',
+                    'device_model': device.dut_type,
+                    'software_version': device.get_version()[1][
+                        'Fw Build Label'],
+                    'android_build_number': device.version}
 
         return data
 
@@ -117,7 +132,9 @@ class BluetoothMetricLogger(MetricLogger):
 
         return {'proto': base64.b64encode(ProtoMetric(test, result)
                                           .get_binary()).decode('utf-8'),
-                'proto_ascii': ProtoMetric(test, result).get_ascii()}
+                'proto_ascii': ProtoMetric(test, result).get_ascii(),
+                'test_name': test
+                }
 
     def end(self, event):
         return self.publisher.publish(self.results)
