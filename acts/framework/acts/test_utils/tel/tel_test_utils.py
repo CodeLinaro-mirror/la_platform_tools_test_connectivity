@@ -4255,7 +4255,7 @@ def is_sms_match(event, phonenumber_tx, text):
             and phone number match.
     """
     return (check_phone_number_match(event['data']['Sender'], phonenumber_tx)
-            and event['data']['Text'] == text)
+            and event['data']['Text'].strip() == text)
 
 
 def is_sms_partial_match(event, phonenumber_tx, text):
@@ -4271,7 +4271,7 @@ def is_sms_partial_match(event, phonenumber_tx, text):
         Return True if 'text' starts with event['data']['Text']
             and phone number match.
     """
-    event_text = event['data']['Text']
+    event_text = event['data']['Text'].strip()
     if event_text.startswith("("):
         event_text = event_text.split(")")[-1]
     return (check_phone_number_match(event['data']['Sender'], phonenumber_tx)
@@ -4349,7 +4349,7 @@ def wait_for_matching_sms(log,
                 event = ad_rx.messaging_ed.wait_for_event(
                     EventSmsReceived, is_sms_partial_match, max_wait_time,
                     phonenumber_tx, remaining_text)
-                event_text = event['data']['Text'].split(")")[-1]
+                event_text = event['data']['Text'].split(")")[-1].strip()
                 event_text_length = len(event_text)
                 ad_rx.log.info("Got event %s of text length %s from %s",
                                EventSmsReceived, event_text_length,
@@ -4626,8 +4626,6 @@ def mms_send_receive_verify_for_subscription(
 
     for ad in (ad_tx, ad_rx):
         ad.send_keycode("BACK")
-        if "Permissive" not in ad.adb.shell("su root getenforce"):
-            ad.adb.shell("su root setenforce 0")
         if not getattr(ad, "messaging_droid", None):
             ad.messaging_droid, ad.messaging_ed = ad.get_droid()
             ad.messaging_ed.start()
@@ -4754,6 +4752,18 @@ def mms_receive_verify_after_call_hangup_for_subscription(
                 return False
         finally:
             ad_rx.droid.smsStopTrackingIncomingMmsMessage()
+    return True
+
+
+def ensure_preferred_network_type_for_subscription(
+        ad,
+        network_preference
+        ):
+    sub_id = ad.droid.subscriptionGetDefaultSubId()
+    if not ad.droid.telephonySetPreferredNetworkTypesForSubscription(
+            network_preference, sub_id):
+        ad.log.error("Set sub_id %s Preferred Networks Type %s failed.",
+                     sub_id, network_preference)
     return True
 
 
@@ -7077,6 +7087,17 @@ def get_screen_shot_logs(ads, test_name="", begin_time=None):
         get_screen_shot_log(ad, test_name=test_name, begin_time=begin_time)
 
 
+def get_carrier_id_version(ad):
+    out = ad.adb.shell("dumpsys activity service TelephonyDebugService | " \
+                       "grep -i carrier_list_version")
+    if out and ":" in out:
+        version = out.split(':')[1].lstrip()
+    else:
+        version = "0"
+    ad.log.debug("Carrier Config Version is %s", version)
+    return version
+
+
 def get_carrier_config_version(ad):
     out = ad.adb.shell("dumpsys carrier_config | grep version_string")
     if out and "-" in out:
@@ -7104,8 +7125,14 @@ def install_googlefi_apk(ad, fi_util):
     ad.adb.install("-r -g --user 0 %s" % fi_util,
                    timeout=300, ignore_status=True)
     time.sleep(3)
+    if not check_fi_apk_installed(ad):
+        return False
+    return True
+
+
+def check_fi_apk_installed(ad):
     if not ad.is_apk_installed("com.google.android.apps.tycho"):
-        ad.log.info("com.google.android.apps.tycho is not installed")
+        ad.log.warning("com.google.android.apps.tycho is not installed")
         return False
     return True
 
@@ -7148,7 +7175,7 @@ def my_current_screen_content(ad, content):
     ad.adb.shell("uiautomator dump --window=WINDOW")
     out = ad.adb.shell("cat /sdcard/window_dump.xml | grep -E '%s'" % content)
     if not out:
-        ad.log.warning("Matching %s not found on current screen", content)
+        ad.log.warning("NOT FOUND - %s", content)
         return False
     return True
 
@@ -7159,29 +7186,38 @@ def activate_google_fi_account(ad, retries=3):
                         'com.google.android.apps.tycho/.InitActivity --ez '
                         'in_setup_wizard false --ez force_show_account_chooser '
                         'false')
+    toggle_airplane_mode(ad.log, ad, new_state=False, strict_checking=False)
     ad.adb.shell("settings put system screen_off_timeout 1800000")
     page_match_dict = {
        "Setup" : "Activate Google Fi to use your device for calls",
        "Switch" : "Switch to the Google Fi mobile network",
+       "Connect" : "Connect to the Google Fi mobile network",
+       "Move" : "Move number",
        "Activate" : "This takes a minute or two, sometimes longer",
        "Welcome" : "Welcome to Google Fi",
+       "Account" : "Your current cycle ends in"
     }
-    page_title_list = ["Setup", "Switch", "Activate", "Welcome"]
+    page_list = ["Account", "Setup", "Switch", "Connect",
+                 "Activate", "Move", "Welcome"]
     for _ in range(retries):
         ad.force_stop_apk(_FI_APK)
         ad.ensure_screen_on()
         ad.send_keycode("HOME")
         ad.adb.shell(_FI_ACTIVATE_CMD)
         time.sleep(15)
-        for page in page_title_list:
+        for page in page_list:
             if my_current_screen_content(ad, page_match_dict[page]):
                 ad.log.info("Ready for Step %s", page)
                 log_screen_shot(ad, "fi_activation_step_%s" % page)
-                if page in ("Setup", "Switch"):
+                if page in ("Setup", "Switch", "Connect"):
                     ad.send_keycode("TAB")
                     ad.send_keycode("TAB")
                     ad.send_keycode("ENTER")
                     time.sleep(30)
+                elif page == "Move":
+                    ad.send_keycode("TAB")
+                    ad.send_keycode("ENTER")
+                    time.sleep(5)
                 elif page == "Welcome":
                     ad.send_keycode("TAB")
                     ad.send_keycode("TAB")
@@ -7197,19 +7233,57 @@ def activate_google_fi_account(ad, retries=3):
                     time.sleep(60)
                     if my_current_screen_content(ad, page_match_dict[page]):
                         time.sleep(60)
+                elif page == "Account":
+                    return True
             else:
-                ad.log.info("Page %s not matching any content", page)
+                ad.log.info("NOT FOUND - Page %s", page)
                 log_screen_shot(ad, "fi_activation_step_%s_failure" % page)
     return False
 
 
 def check_google_fi_activated(ad, retries=20):
-    for _ in range(retries):
-        if is_sim_ready(ad.log, ad) and (
-                ad.droid.telephonyGetSimOperatorName() == "Google Fi"):
-            ad.log.info("SIM state is READY, SIM operator is Fi")
-            return True
-        time.sleep(5)
+    if check_fi_apk_installed(ad):
+        _FI_APK = "com.google.android.apps.tycho"
+        _FI_LAUNCH_CMD = ("am start -n %s/%s.AccountDetailsActivity" \
+                          % (_FI_APK, _FI_APK))
+        toggle_airplane_mode(ad.log, ad, new_state=False, strict_checking=False)
+        ad.adb.shell("settings put system screen_off_timeout 1800000")
+        ad.force_stop_apk(_FI_APK)
+        ad.ensure_screen_on()
+        ad.send_keycode("HOME")
+        ad.adb.shell(_FI_LAUNCH_CMD)
+        time.sleep(10)
+        if not my_current_screen_content(ad, "Your current cycle ends in"):
+            ad.log.warning("Fi is not activated")
+            return False
+        ad.send_keycode("HOME")
+        return True
+    else:
+        ad.log.info("Fi Apk is not yet installed")
+        return False
+
+
+def cleanup_configupdater(ad):
+    cmds = ('rm -rf /data/data/com.google.android.configupdater/shared_prefs',
+            'rm /data/misc/carrierid/carrier_list.pb',
+            'setprop persist.telephony.test.carrierid.ota true',
+            'rm /data/user_de/0/com.android.providers.telephony/shared_prefs'
+            '/CarrierIdProvider.xml')
+    for cmd in cmds:
+        ad.log.info("Cleanup ConfigUpdater - %s", cmd)
+        ad.adb.shell(cmd, ignore_status=True)
+
+
+def pull_carrier_id_files(ad, carrier_id_path):
+    utils.create_dir(carrier_id_path)
+    ad.log.info("Pull CarrierId Files")
+    cmds = ('/data/data/com.google.android.configupdater/shared_prefs/',
+            '/data/misc/carrierid/',
+            '/data/user_de/0/com.android.providers.telephony/shared_prefs/',
+            '/data/data/com.android.providers.downloads/databases/downloads.db')
+    for cmd in cmds:
+        cmd = cmd + " %s" % carrier_id_path
+        ad.adb.pull(cmd, timeout=30, ignore_status=True)
 
 
 def bring_up_connectivity_monitor(ad):
