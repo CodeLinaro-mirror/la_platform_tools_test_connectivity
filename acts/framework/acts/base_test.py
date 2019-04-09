@@ -439,13 +439,20 @@ class BaseTestClass(object):
             args: A tuple of params.
             kwargs: Extra kwargs.
         """
-        is_generate_trigger = False
-        tr_record = records.TestResultRecord(test_name, self.TAG)
+        class_name = self.__class__.__name__
+        tr_record = records.TestResultRecord(test_name, class_name)
         tr_record.test_begin()
         self.begin_time = int(tr_record.begin_time)
         self.log_begin_time = tr_record.log_begin_time
         self.test_name = tr_record.test_name
         self.log.info("%s %s", TEST_CASE_TOKEN, test_name)
+
+        # Enable test retry if specified in the ACTS config
+        retry_tests = self.user_params.get('retry_tests', [])
+        full_test_name = '%s.%s' % (class_name, self.test_name)
+        if any(name in retry_tests for name in [class_name, full_test_name]):
+            test_func = self.get_func_with_retry(test_func)
+
         verdict = None
         try:
             try:
@@ -470,10 +477,12 @@ class BaseTestClass(object):
             if self.user_params.get(
                     keys.Config.key_test_failure_tracebacks.value, False):
                 self.log.exception(e)
-            else:
-                self.log.error(e)
             tr_record.test_fail(e)
             self._exec_procedure_func(self._on_fail, tr_record)
+        except signals.TestBlocked as e:
+            # Test blocked.
+            tr_record.test_blocked(e)
+            self._exec_procedure_func(self._on_blocked, tr_record)
         except signals.TestSkip as e:
             # Test skipped.
             tr_record.test_skip(e)
@@ -487,13 +496,6 @@ class BaseTestClass(object):
             # Explicit test pass.
             tr_record.test_pass(e)
             self._exec_procedure_func(self._on_pass, tr_record)
-        except signals.TestSilent as e:
-            # This is a trigger test for generated tests, suppress reporting.
-            is_generate_trigger = True
-            self.results.requested.remove(test_name)
-        except signals.TestBlocked as e:
-            tr_record.test_blocked(e)
-            self._exec_procedure_func(self._on_blocked, tr_record)
         except error.ActsError as e:
             self.results.errors.append(e)
             self.log.error(
@@ -513,8 +515,39 @@ class BaseTestClass(object):
             tr_record.test_fail()
             self._exec_procedure_func(self._on_fail, tr_record)
         finally:
-            if not is_generate_trigger:
-                self.results.add_record(tr_record)
+            self.results.add_record(tr_record)
+
+    def get_func_with_retry(self, func, attempts=2):
+        """Returns a wrapped test method that re-runs after failure. Return test
+        result upon success. If attempt limit reached, collect all failure
+        messages and raise a TestFailure signal.
+
+        Params:
+            func: The test method
+            attempts: Number of attempts to run test
+
+        Returns: result of the test method
+        """
+        def wrapper(*args, **kwargs):
+            error_msgs = []
+            extras = {}
+            retry = False
+            for i in range(attempts):
+                try:
+                    if retry:
+                        self.teardown_test()
+                        self.setup_test()
+                    return func(*args, **kwargs)
+                except signals.TestFailure as e:
+                    retry = True
+                    msg = 'Failure on attempt %d: %s' % (i+1, e.details)
+                    self.log.warning(msg)
+                    error_msgs.append(msg)
+                    if e.extras:
+                        extras['Attempt %d' % (i+1)] = e.extras
+            raise signals.TestFailure('\n'.join(error_msgs), extras)
+
+        return wrapper
 
     def run_generated_testcases(self,
                                 test_func,
