@@ -18,6 +18,8 @@ import time
 import queue
 
 from acts import asserts
+from acts.controllers.android_device import SL4A_APK_NAME
+from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi.WifiBaseTest import WifiBaseTest
 import acts.test_utils.wifi.wifi_test_utils as wutils
 import acts.utils
@@ -154,6 +156,7 @@ class WifiWakeTest(WifiBaseTest):
                     "Test fail because received result {}".format(
                         result_received))
 
+    @test_tracker_info(uuid="372b9b74-4241-46ce-8f18-e6a97d3a3452")
     def test_no_reconnect_manual_disable_wifi(self):
         """
         Tests that Wifi Wake does not reconnect to a network if the user turned
@@ -169,6 +172,7 @@ class WifiWakeTest(WifiBaseTest):
             self.dut.droid.wifiCheckState(),
             "Expect Wifi Wake to not enable Wifi, but Wifi was enabled.")
 
+    @test_tracker_info(uuid="ec7a54a5-f293-43f5-a1dd-d41679aa1825")
     def test_reconnect_wifi_saved_network(self):
         """Tests that Wifi Wake re-enables Wifi for a saved network."""
         wutils.wifi_connect(self.dut, self.ap_a, num_of_tries=5)
@@ -189,6 +193,40 @@ class WifiWakeTest(WifiBaseTest):
             self.dut.droid.wifiCheckState(),
             "Expect Wifi Wake to enable Wifi, but Wifi is disabled.")
 
+    @test_tracker_info(uuid="")
+    def test_reconnect_wifi_network_suggestion(self):
+        """Tests that Wifi Wake re-enables Wifi for app provided suggestion."""
+        self.dut.log.info("Adding network suggestions");
+        asserts.assert_true(
+            self.dut.droid.wifiAddNetworkSuggestions([self.ap_a]),
+            "Failed to add suggestions")
+        asserts.assert_true(
+            self.dut.droid.wifiAddNetworkSuggestions([self.ap_b]),
+            "Failed to add suggestions")
+        # Enable suggestions by the app.
+        self.dut.log.debug("Enabling suggestions from test");
+        self.dut.adb.shell("cmd wifi network-suggestions-set-user-approved"
+                           + " " + SL4A_APK_NAME + " yes")
+        # Ensure network is seen in scan results & auto-connected to.
+        self.do_location_scan(2)
+        wutils.wait_for_connect(self.dut)
+        self.dut.ed.clear_all_events()
+        self.ap_a_off()
+        self.ap_b_off()
+        wutils.wait_for_disconnect(self.dut)
+        self.log.info("Wifi Disconnected")
+        time.sleep(LAST_DISCONNECT_TIMEOUT_SEC * 1.2)
+        wutils.wifi_toggle_state(self.dut, new_state=False)
+        time.sleep(PRESCAN_DELAY_SEC)
+        self.do_location_scan(CONSECUTIVE_MISSED_SCANS_REQUIRED_TO_EVICT + 2)
+
+        self.ap_a_on()
+        self.do_location_scan()
+        asserts.assert_true(
+            self.dut.droid.wifiCheckState(),
+            "Expect Wifi Wake to enable Wifi, but Wifi is disabled.")
+
+    @test_tracker_info(uuid="6c77ca9b-ff34-4bc7-895f-cc7340e0e645")
     def test_reconnect_wifi_move_back_in_range(self):
         """
         Tests that Wifi Wake re-enables Wifi if the device moves out of range of
@@ -208,6 +246,7 @@ class WifiWakeTest(WifiBaseTest):
             self.dut.droid.wifiCheckState(),
             "Expect Wifi Wake to enable Wifi, but Wifi is disabled.")
 
+    @test_tracker_info(uuid="08e8284a-a523-48f3-b9ea-9c6bf27d711e")
     def test_no_reconnect_to_flaky_ap(self):
         """
         Tests that Wifi Wake does not reconnect to flaky networks.
@@ -228,6 +267,7 @@ class WifiWakeTest(WifiBaseTest):
             self.dut.droid.wifiCheckState(),
             "Expect Wifi Wake to not enable Wifi, but Wifi was enabled.")
 
+    @test_tracker_info(uuid="b990a8f7-e3a0-4774-89cf-2067ccd64903")
     def test_reconnect_wifi_disabled_after_disconnecting(self):
         """
         Tests that Wifi Wake reconnects to a network if Wifi was disabled long
@@ -248,6 +288,7 @@ class WifiWakeTest(WifiBaseTest):
             self.dut.droid.wifiCheckState(),
             "Expect Wifi Wake to enable Wifi, but Wifi is disabled.")
 
+    @test_tracker_info(uuid="bb217794-d3ee-4fb9-87ff-7a594d0223b0")
     def test_no_reconnect_if_exists_ap_in_wakeup_lock(self):
         """
         2 APs in Wakeup Lock, user moves out of range of one AP but stays in
@@ -267,6 +308,7 @@ class WifiWakeTest(WifiBaseTest):
             self.dut.droid.wifiCheckState(),
             "Expect Wifi Wake to not enable Wifi, but Wifi was enabled.")
 
+    @test_tracker_info(uuid="567a0663-4ce0-488d-8fe2-db79a3ebf068")
     def test_reconnect_if_both_ap_evicted_from_wakeup_lock(self):
         """
         2 APs in Wakeup Lock, user moves out of range of both APs, should
@@ -286,6 +328,7 @@ class WifiWakeTest(WifiBaseTest):
             self.dut.droid.wifiCheckState(),
             "Expect Wifi Wake to enable Wifi, but Wifi is disabled.")
 
+    @test_tracker_info(uuid="d67657c8-3de3-46a6-a103-428cdab89423")
     def test_reconnect_to_better_saved_network(self):
         """
         2 saved APs, one attenuated, one unattenuated, Wifi Wake should connect
