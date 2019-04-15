@@ -36,6 +36,7 @@ from acts.controllers.android_device import list_fastboot_devices
 from acts.controllers.android_device import DEFAULT_QXDM_LOG_PATH
 from acts.controllers.android_device import SL4A_APK_NAME
 from acts.libs.proc import job
+from acts.test_utils.tel.loggers.protos.telephony_metric_pb2 import TelephonyVoiceTestResult
 from acts.test_utils.tel.tel_defines import CarrierConfigs
 from acts.test_utils.tel.tel_defines import AOSP_PREFIX
 from acts.test_utils.tel.tel_defines import CARD_POWER_DOWN
@@ -198,10 +199,34 @@ WIFI_CONFIG_APBAND_5G = wifi_test_utils.WifiEnums.WIFI_CONFIG_APBAND_5G
 WIFI_CONFIG_APBAND_AUTO = wifi_test_utils.WifiEnums.WIFI_CONFIG_APBAND_AUTO
 log = logging
 STORY_LINE = "+19523521350"
+CallResult = TelephonyVoiceTestResult.CallResult.Value
 
 
 class TelTestUtilsError(Exception):
     pass
+
+
+class TelResultWrapper(object):
+    """Test results wrapper for Telephony test utils.
+
+    In order to enable metrics reporting without refactoring
+    all of the test utils this class is used to keep the
+    current return boolean scheme in tact.
+    """
+
+    def __init__(self, result_value):
+        self._result_value = result_value
+
+    @property
+    def result_value(self):
+        return self._result_value
+
+    @result_value.setter
+    def result_value(self, result_value):
+        self._result_value = result_value
+
+    def __bool__(self):
+        return self._result_value == CallResult('SUCCESS')
 
 
 def abort_all_tests(log, msg):
@@ -583,18 +608,6 @@ def get_telephony_signal_strength(ad):
     except Exception as e:
         ad.log.error(e)
         signal_strength = {}
-    out = ad.adb.shell("dumpsys telephony.registry | grep -i signalstrength")
-    if out is None:
-        msg = "Signal Strength is Null."
-        fail(msg)
-
-    signals = re.findall(r"(-*\d+)", out)
-    for i, val in enumerate(
-        ("gsmSignalStrength", "gsmBitErrorRate", "cdmaDbm", "cdmaEcio",
-         "evdoDbm", "evdoEcio", "evdoSnr", "lteSignalStrength", "lteRsrp",
-         "lteRsrq", "lteRssnr", "lteCqi", "lteRsrpBoost")):
-        signal_strength[val] = signal_strength.get(val, int(signals[i]))
-    ad.log.info("Telephony Signal strength = %s", signal_strength)
     return signal_strength
 
 
@@ -602,6 +615,30 @@ def get_wifi_signal_strength(ad):
     signal_strength = ad.droid.wifiGetConnectionInfo()['rssi']
     ad.log.info("WiFi Signal Strength is %s" % signal_strength)
     return signal_strength
+
+
+def get_lte_rsrp(ad):
+    try:
+        if ad.adb.getprop("ro.build.version.release")[0] in ("9", "P"):
+            out = ad.adb.shell(
+                "dumpsys telephony.registry | grep -i signalstrength")
+            if out:
+                lte_rsrp = out.split()[9]
+                if lte_rsrp:
+                    ad.log.info("lte_rsrp: %s ", lte_rsrp)
+                    return lte_rsrp
+        else:
+            out = ad.adb.shell(
+            "dumpsys telephony.registry |grep -i primary=CellSignalStrengthLte")
+            if out:
+                lte_cell_info = out.split('mLte=')[1]
+                lte_rsrp = re.match(r'.*rsrp=(\S+).*', lte_cell_info).group(1)
+                if lte_rsrp:
+                    ad.log.info("lte_rsrp: %s ", lte_rsrp)
+                    return lte_rsrp
+    except Exception as e:
+        ad.log.error(e)
+    return None
 
 
 def check_data_stall_detection(ad, wait_time=WAIT_TIME_FOR_DATA_STALL):
@@ -2107,8 +2144,7 @@ def call_setup_teardown_for_subscription(
             else, do nothing.
 
     Returns:
-        True if call process without any error.
-        False if error happened.
+        TelResultWrapper which will evaluate as False if error.
 
     """
     CHECK_INTERVAL = 5
@@ -2141,7 +2177,7 @@ def call_setup_teardown_for_subscription(
         else:
             callee_number = callee_dial_number
 
-    result = True
+    tel_result_wrapper = TelResultWrapper(CallResult('SUCCESS'))
     msg = "Call from %s to %s" % (caller_number, callee_number)
     if video_state:
         msg = "Video %s" % msg
@@ -2165,8 +2201,8 @@ def call_setup_teardown_for_subscription(
                 incall_ui_display=incall_ui_display,
                 video=video):
             ad_caller.log.error("Initiate call failed.")
-            result = False
-            return False
+            tel_result_wrapper.result_value = CallResult('INITIATE_FAILED')
+            return tel_result_wrapper
         else:
             ad_caller.log.info("Caller initate call successfully")
         if not wait_and_answer_call_for_subscription(
@@ -2178,8 +2214,9 @@ def call_setup_teardown_for_subscription(
                 incall_ui_display=incall_ui_display,
                 video_state=video_state):
             ad_callee.log.error("Answer call fail.")
-            result = False
-            return False
+            tel_result_wrapper.result_value = CallResult(
+                'NO_RING_EVENT_OR_ANSWER_FAILED')
+            return tel_result_wrapper
         else:
             ad_callee.log.info("Callee answered the call successfully")
 
@@ -2192,17 +2229,19 @@ def call_setup_teardown_for_subscription(
                     "No new call ids are found after call establishment")
                 ad.log.error("telecomCallGetCallIds returns %s",
                              ad.droid.telecomCallGetCallIds())
-                result = False
+                tel_result_wrapper.result_value = CallResult('NO_CALL_ID_FOUND')
             for new_call_id in new_call_ids:
                 if not wait_for_in_call_active(ad, call_id=new_call_id):
-                    result = False
+                    tel_result_wrapper.result_value = CallResult(
+                        'CALL_STATE_NOT_ACTIVE_DURING_ESTABLISHMENT')
                 else:
                     ad.log.info("callProperties = %s",
                                 ad.droid.telecomCallGetProperties(new_call_id))
 
             if not ad.droid.telecomCallGetAudioState():
                 ad.log.error("Audio is not in call state")
-                result = False
+                tel_result_wrapper.result_value = CallResult(
+                    'AUDIO_STATE_NOT_INCALL_DURING_ESTABLISHMENT')
 
             if call_func(log, ad):
                 ad.log.info("Call is in %s state", call_func.__name__)
@@ -2210,9 +2249,10 @@ def call_setup_teardown_for_subscription(
                 ad.log.error("Call is not in %s state, voice in RAT %s",
                              call_func.__name__,
                              ad.droid.telephonyGetCurrentVoiceNetworkType())
-                result = False
-        if not result:
-            return False
+                tel_result_wrapper.result_value = CallResult(
+                    'CALL_DROP_OR_WRONG_STATE_DURING_ESTABLISHMENT')
+        if not tel_result_wrapper:
+            return tel_result_wrapper
         elapsed_time = 0
         while (elapsed_time < wait_time_in_call):
             CHECK_INTERVAL = min(CHECK_INTERVAL,
@@ -2228,24 +2268,26 @@ def call_setup_teardown_for_subscription(
                         "NOT in correct %s state at %s, voice in RAT %s",
                         call_func.__name__, time_message,
                         ad.droid.telephonyGetCurrentVoiceNetworkType())
-                    result = False
+                    tel_result_wrapper.result_value = CallResult(
+                        'CALL_DROP_OR_WRONG_STATE_AFTER_CONNECTED')
                 else:
                     ad.log.info("In correct %s state at %s",
                                 call_func.__name__, time_message)
                 if not ad.droid.telecomCallGetAudioState():
                     ad.log.error("Audio is not in call state at %s",
                                  time_message)
-                    result = False
-            if not result:
-                return False
+                    tel_result_wrapper.result_value = CallResult(
+                        'AUDIO_STATE_NOT_INCALL_AFTER_CONNECTED')
+            if not tel_result_wrapper:
+                return tel_result_wrapper
 
         if ad_hangup:
             if not hangup_call(log, ad_hangup):
                 ad_hangup.log.info("Failed to hang up the call")
-                result = False
-                return False
+                tel_result_wrapper.result_value = CallResult('CALL_HANGUP_FAIL')
+                return tel_result_wrapper
     finally:
-        if not result:
+        if not tel_result_wrapper:
             for ad in (ad_caller, ad_callee):
                 last_call_drop_reason(ad, begin_time)
                 try:
@@ -2254,12 +2296,13 @@ def call_setup_teardown_for_subscription(
                         ad.droid.telecomEndCall()
                 except Exception as e:
                     log.error(str(e))
-        if ad_hangup or not result:
+        if ad_hangup or not tel_result_wrapper:
             for ad in (ad_caller, ad_callee):
                 if not wait_for_call_id_clearing(
                         ad, getattr(ad, "caller_ids", [])):
-                    result = False
-    return result
+                    tel_result_wrapper.result_value = CallResult(
+                        'CALL_ID_CLEANUP_FAIL')
+    return tel_result_wrapper
 
 
 def wait_for_call_id_clearing(ad,
@@ -3050,6 +3093,12 @@ def trigger_modem_crash_by_modem(ad, timeout=120):
 
 def phone_switch_to_msim_mode(ad, retries=3, timeout=60):
     result = False
+    if not ad.is_apk_installed("com.google.mdstest"):
+        raise signals.TestSkipClass("mdstest is not installed")
+    mode = ad.droid.telephonyGetPhoneCount()
+    if mode == 2:
+        ad.log.info("Device already in MSIM mode")
+        return True
     for i in range(retries):
         ad.adb.shell(
         "setprop persist.vendor.sys.modem.diag.mdlog false", ignore_status=True)
@@ -3066,8 +3115,8 @@ def phone_switch_to_msim_mode(ad, retries=3, timeout=60):
         ad.adb.shell("setprop persist.radio.multisim.config dsds")
         reboot_device(ad)
         # Verify if device is really in msim mode
-        rat = ad.adb.getprop("gsm.network.type")
-        if "," in rat:
+        mode = ad.droid.telephonyGetPhoneCount()
+        if mode == 2:
             ad.log.info("Device correctly switched to MSIM mode")
             result = True
             break
@@ -3078,6 +3127,12 @@ def phone_switch_to_msim_mode(ad, retries=3, timeout=60):
 
 def phone_switch_to_ssim_mode(ad, retries=3, timeout=30):
     result = False
+    if not ad.is_apk_installed("com.google.mdstest"):
+        raise signals.TestSkipClass("mdstest is not installed")
+    mode = ad.droid.telephonyGetPhoneCount()
+    if mode == 1:
+        ad.log.info("Device already in SSIM mode")
+        return True
     for i in range(retries):
         ad.adb.shell(
         "setprop persist.vendor.sys.modem.diag.mdlog false", ignore_status=True)
@@ -3099,8 +3154,8 @@ def phone_switch_to_ssim_mode(ad, retries=3, timeout=30):
         ad.adb.shell("setprop persist.radio.multisim.config ssss")
         reboot_device(ad)
         # Verify if device is really in ssim mode
-        rat = ad.adb.getprop("gsm.network.type")
-        if "," not in rat:
+        mode = ad.droid.telephonyGetPhoneCount()
+        if mode == 1:
             ad.log.info("Device correctly switched to SSIM mode")
             result = True
             break
@@ -4626,6 +4681,8 @@ def mms_send_receive_verify_for_subscription(
 
     for ad in (ad_tx, ad_rx):
         ad.send_keycode("BACK")
+        if "Permissive" not in ad.adb.shell("su root getenforce"):
+            ad.adb.shell("su root setenforce 0")
         if not getattr(ad, "messaging_droid", None):
             ad.messaging_droid, ad.messaging_ed = ad.get_droid()
             ad.messaging_ed.start()
@@ -4680,6 +4737,9 @@ def mms_send_receive_verify_for_subscription(
             raise
         finally:
             ad_rx.droid.smsStopTrackingIncomingMmsMessage()
+            for ad in (ad_tx, ad_rx):
+                ad.send_keycode("BACK")
+                ad.adb.shell("su root setenforce 1")
     return True
 
 
@@ -4944,6 +5004,10 @@ def ensure_network_generation_for_subscription(
     if not set_preferred_network_mode_pref(log, ad, sub_id,
                                            network_preference):
         return False
+
+    if hasattr(ad, "dsds") and voice_or_data == "data" and sub_id != get_default_data_sub_id(ad):
+        ad.log.info("MSIM - Non DDS, ignore data RAT")
+        return True
 
     if is_droid_in_network_generation_for_subscription(
             log, ad, sub_id, generation, voice_or_data):
@@ -6742,13 +6806,13 @@ def enable_connectivity_metrics(ad):
         #" -e usagestats:connectivity_metrics:data_collection_bitmap 62"
     ]
     for cmd in cmds:
-        ad.adb.shell(cmd)
+        ad.adb.shell(cmd, ignore_status=True)
 
 
 def force_connectivity_metrics_upload(ad):
     cmd = "cmd jobscheduler run --force com.android.connectivity.metrics %s"
     for job_id in [2, 3, 5, 4, 1, 6]:
-        ad.adb.shell(cmd % job_id)
+        ad.adb.shell(cmd % job_id, ignore_status=True)
 
 
 def system_file_push(ad, src_file_path, dst_file_path):
