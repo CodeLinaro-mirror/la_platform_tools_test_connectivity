@@ -27,7 +27,7 @@ from acts.controllers.buds_lib.test_actions.bt_utils import BTUtilsError
 from acts.controllers.buds_lib.test_actions.apollo_acts import ApolloTestActions
 from acts.signals import TestFailure
 from acts.signals import TestPass
-from acts.test_utils.bt.bt_test_utils import clear_bonded_devices
+from acts.test_utils.bt.bt_test_utils import factory_reset_bluetooth
 from acts.test_utils.bt.bt_test_utils import enable_bluetooth
 from acts.test_utils.bt.loggers.bluetooth_metric_logger import BluetoothMetricLogger
 from acts.utils import set_location_service
@@ -77,12 +77,13 @@ class BluetoothPairAndConnectTest(BaseTestClass):
         # Make sure Bluetooth is on
         enable_bluetooth(self.phone.droid, self.phone.ed)
         set_location_service(self.phone, True)
-        clear_bonded_devices(self.phone)
+        factory_reset_bluetooth([self.phone])
         self.apollo_act.factory_reset()
         self.log.info('===== START BLUETOOTH PAIR AND CONNECT TEST  =====')
 
     def teardown_test(self):
         self.log.info('Teardown test, shutting down all services...')
+        self.apollo_act.factory_reset()
         self.apollo.close()
 
     def _get_device_pair_and_connect_times(self):
@@ -107,13 +108,11 @@ class BluetoothPairAndConnectTest(BaseTestClass):
 
         pair_time *= 1000
         connection_start_time = time.perf_counter()
-        if not self.apollo_act.wait_for_bluetooth_a2dp_hfp():
+        if not self.apollo_act.wait_for_bluetooth_a2dp_hfp(30):
             raise BluetoothPairConnectError('Failed to connect devices')
         connection_end_time = time.perf_counter()
         connection_time = (connection_end_time -
                            connection_start_time) * 1000
-
-        self.bt_utils.bt_unpair(self.phone, self.apollo)
 
         return pair_time, connection_time
 
@@ -146,6 +145,10 @@ class BluetoothPairAndConnectTest(BaseTestClass):
                 pair_times.append(pair_time)
                 pair_connect_success += 1
 
+            factory_reset_bluetooth([self.phone])
+            self.log.info('Factory resetting Apollo device...')
+            self.apollo_act.factory_reset()
+
             # Buffer between pair and connect attempts
             time.sleep(3)
 
@@ -160,8 +163,9 @@ class BluetoothPairAndConnectTest(BaseTestClass):
             metrics['pair_avg_time_millis'] = int(statistics.mean(pair_times))
 
         if len(connect_times) > 0:
-            metrics['first_connection_max_time_millis'] = int(max(connect_times))
-            metrics['first_connnection_min_time_millis'] = int(
+            metrics['first_connection_max_time_millis'] = int(
+                max(connect_times))
+            metrics['first_connection_min_time_millis'] = int(
                 min(connect_times))
             metrics['first_connection_avg_time_millis'] = int(
                 (statistics.mean(connect_times)))
@@ -171,7 +175,8 @@ class BluetoothPairAndConnectTest(BaseTestClass):
 
         proto = self.bt_logger.get_results(metrics,
                                            self.__class__.__name__,
-                                           self.phone)
+                                           self.phone,
+                                           self.apollo)
 
         self.log.info('Metrics: {}'.format(metrics))
 

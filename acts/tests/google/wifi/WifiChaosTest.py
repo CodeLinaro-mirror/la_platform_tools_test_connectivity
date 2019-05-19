@@ -41,6 +41,9 @@ TIMEOUT = 60
 TEST = 'test_'
 PING_ADDR = 'www.google.com'
 
+NUM_LINK_PROBES = 3
+PROBE_DELAY_SEC = 1
+
 
 class WifiChaosTest(WifiBaseTest):
     """ Tests for wifi IOT
@@ -159,7 +162,8 @@ class WifiChaosTest(WifiBaseTest):
         wutils.stop_pcap(self.pcap, self.pcap_procs, True)
 
     def on_fail(self, test_name, begin_time):
-        self.log.info("Stopping PCAP...")
+        # Sleep to ensure all failed packets are captured.
+        time.sleep(5)
         wutils.stop_pcap(self.pcap, self.pcap_procs, False)
         self.dut.take_bug_report(test_name, begin_time)
         self.dut.cat_adb_log(test_name, begin_time)
@@ -202,6 +206,30 @@ class WifiChaosTest(WifiBaseTest):
         if "100% packet loss" in result:
             raise signals.TestFailure("100% packet loss during ping")
 
+    def send_link_probes(self, network):
+        """
+        Send link probes, and verify that the device and AP did not crash.
+        Also verify that at least one link probe succeeded.
+
+        Steps:
+        1. Send a few link probes.
+        2. Verify that at least one link probe succeeded.
+        3. Ensure that the device and AP did not crash (by checking that the
+           device remains connected to the expected network).
+        """
+        results = wutils.send_link_probes(
+            self.dut, NUM_LINK_PROBES, PROBE_DELAY_SEC)
+
+        asserts.assert_true(any(result.is_success for result in results),
+                            "Expect at least 1 probe success: " + str(results))
+
+        wifi_info = self.dut.droid.wifiGetConnectionInfo()
+        expected = network[WifiEnums.SSID_KEY]
+        actual = wifi_info[WifiEnums.SSID_KEY]
+        asserts.assert_equal(
+            expected, actual,
+            "Device did not remain connected after sending link probes!")
+
     def unlock_and_turn_off_ap(self, hostname, rpm_port, rpm_ip):
         """UNlock the AP in datastore and turn off the AP.
 
@@ -241,6 +269,7 @@ class WifiChaosTest(WifiBaseTest):
                 self.log.info("Connecting to %s" % ssid)
                 self.scan_and_connect_by_id(network, net_id)
                 self.run_ping(10)
+                self.send_link_probes(network)
                 wutils.wifi_forget_network(self.dut, ssid)
                 time.sleep(WAIT_BEFORE_CONNECTION)
             except:
@@ -318,11 +347,10 @@ class WifiChaosTest(WifiBaseTest):
         rutils.turn_on_ap(self.pcap, ssid, rpm_port, rpm_ip=rpm_ip)
         self.log.info("Finished turning ON AP.")
         # Experimental. Some APs take upto a min to come online.
-        time.sleep(120)
+        time.sleep(60)
 
         self.get_band_and_chan(ssid)
         self.pcap.configure_monitor_mode(self.band, self.chan)
-        self.log.info("Starting PCAP...")
         self.pcap_procs = wutils.start_pcap(
                 self.pcap, self.band.lower(), self.log_path, self.test_name)
         self.run_connect_disconnect(network, hostname, rpm_port, rpm_ip,

@@ -117,6 +117,9 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
     def add_suggestions_and_ensure_connection(self, network_suggestions,
                                               expected_ssid,
                                               expect_post_connection_broadcast):
+        if expect_post_connection_broadcast is not None:
+            self.dut.droid.wifiStartTrackingNetworkSuggestionStateChange()
+
         self.dut.log.info("Adding network suggestions");
         asserts.assert_true(
             self.dut.droid.wifiAddNetworkSuggestions(network_suggestions),
@@ -131,10 +134,8 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
 
         # Check if we expected to get the broadcast.
         try:
-            self.dut.droid.wifiStartTrackingStateChange()
             event = self.dut.ed.pop_event(
                 wifi_constants.WIFI_NETWORK_SUGGESTION_POST_CONNECTION, 60)
-            self.dut.droid.wifiStopTrackingStateChange()
         except queue.Empty:
             if expect_post_connection_broadcast:
                 raise signals.TestFailure(
@@ -143,6 +144,9 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
             if not expect_post_connection_broadcast:
                 raise signals.TestFailure(
                     "Received post connection broadcast")
+        finally:
+            self.dut.droid.wifiStopTrackingNetworkSuggestionStateChange()
+        self.dut.ed.clear_all_events()
 
 
     @test_tracker_info(uuid="bda8ed20-4382-4380-831a-64cf77eca108")
@@ -177,6 +181,51 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
                                     self.wpa_psk_2g[WifiEnums.SSID_KEY],
                                     assert_on_fail=False),
             "Device should not connect back")
+
+
+    @test_tracker_info(uuid="f54bc250-d9e9-4f00-8b5b-b866e8550b43")
+    def test_connect_to_highest_priority(self):
+        """
+        Adds network suggestions and ensures that device connects to
+        the suggestion with the highest priority.
+
+        Steps:
+        1. Send 2 network suggestions to the device (with different priorities).
+        2. Wait for the device to connect to the network with the highest
+           priority.
+        3. Re-add the suggestions with the priorities reversed.
+        4. Again wait for the device to connect to the network with the highest
+           priority.
+        """
+        network_suggestion_2g = self.wpa_psk_2g
+        network_suggestion_5g = self.wpa_psk_5g
+
+        # Add suggestions & wait for the connection event.
+        network_suggestion_2g[WifiEnums.PRIORITY] = 5
+        network_suggestion_5g[WifiEnums.PRIORITY] = 2
+        self.add_suggestions_and_ensure_connection(
+            [network_suggestion_2g, network_suggestion_5g],
+            self.wpa_psk_2g[WifiEnums.SSID_KEY],
+            None)
+
+        # Remove all suggestions
+        self.dut.log.info("Removing network suggestions");
+        asserts.assert_true(
+            self.dut.droid.wifiRemoveNetworkSuggestions([]),
+            "Failed to remove suggestions")
+        # Trigger a disconnect and wait for the disconnect.
+        self.dut.droid.wifiDisconnect()
+        wutils.wait_for_disconnect(self.dut)
+        self.dut.ed.clear_all_events()
+
+        # Reverse the priority.
+        # Add suggestions & wait for the connection event.
+        network_suggestion_2g[WifiEnums.PRIORITY] = 2
+        network_suggestion_5g[WifiEnums.PRIORITY] = 5
+        self.add_suggestions_and_ensure_connection(
+            [network_suggestion_2g, network_suggestion_5g],
+            self.wpa_psk_5g[WifiEnums.SSID_KEY],
+            None)
 
 
     @test_tracker_info(uuid="b1d27eea-23c8-4c4f-b944-ef118e4cc35f")
