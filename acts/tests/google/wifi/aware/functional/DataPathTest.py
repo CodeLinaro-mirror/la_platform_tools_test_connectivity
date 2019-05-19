@@ -218,14 +218,15 @@ class DataPathTest(AwareBaseTest):
                 s_disc_id, peer_id_on_sub, passphrase, pmk))
 
         if expect_failure:
-            # Publisher & Subscriber: fail on network formation
-            time.sleep(autils.EVENT_NDP_TIMEOUT)
-            autils.fail_on_event_with_keys(
-                p_dut, cconsts.EVENT_NETWORK_CALLBACK, 0,
-                (cconsts.NETWORK_CB_KEY_ID, p_req_key))
-            autils.fail_on_event_with_keys(
-                s_dut, cconsts.EVENT_NETWORK_CALLBACK, 0,
-                (cconsts.NETWORK_CB_KEY_ID, s_req_key))
+            # Publisher & Subscriber: expect unavailable callbacks
+            autils.wait_for_event_with_keys(
+                p_dut, cconsts.EVENT_NETWORK_CALLBACK,
+                autils.EVENT_NDP_TIMEOUT,
+                (cconsts.NETWORK_CB_KEY_EVENT, cconsts.NETWORK_CB_UNAVAILABLE))
+            autils.wait_for_event_with_keys(
+                s_dut, cconsts.EVENT_NETWORK_CALLBACK,
+                autils.EVENT_NDP_TIMEOUT,
+                (cconsts.NETWORK_CB_KEY_EVENT, cconsts.NETWORK_CB_UNAVAILABLE))
         else:
             # Publisher & Subscriber: wait for network formation
             p_net_event_nc = autils.wait_for_event_with_keys(
@@ -280,7 +281,13 @@ class DataPathTest(AwareBaseTest):
             self.log.info("Interface addresses (IPv6): p=%s, s=%s", p_ipv6,
                           s_ipv6)
 
-            # TODO: possibly send messages back and forth, prefer to use netcat/nc
+            # open sockets to test connection
+            asserts.assert_true(
+                autils.verify_socket_connect(p_dut, s_dut, p_ipv6, s_ipv6, 0),
+                "Failed socket link with Pub as Server")
+            asserts.assert_true(
+                autils.verify_socket_connect(s_dut, p_dut, s_ipv6, p_ipv6, 0),
+                "Failed socket link with Sub as Server")
 
             # terminate sessions and wait for ON_LOST callbacks
             p_dut.droid.wifiAwareDestroy(p_id)
@@ -379,14 +386,15 @@ class DataPathTest(AwareBaseTest):
                 pmk))
 
         if expect_failure:
-            # Initiator & Responder: fail on network formation
-            time.sleep(autils.EVENT_NDP_TIMEOUT)
-            autils.fail_on_event_with_keys(
-                resp_dut, cconsts.EVENT_NETWORK_CALLBACK, 0,
-                (cconsts.NETWORK_CB_KEY_ID, resp_req_key))
-            autils.fail_on_event_with_keys(
-                init_dut, cconsts.EVENT_NETWORK_CALLBACK, 0,
-                (cconsts.NETWORK_CB_KEY_ID, init_req_key))
+            # Initiator & Responder: expect unavailable callbacks
+            autils.wait_for_event_with_keys(
+                init_dut, cconsts.EVENT_NETWORK_CALLBACK,
+                autils.EVENT_NDP_TIMEOUT,
+                (cconsts.NETWORK_CB_KEY_EVENT, cconsts.NETWORK_CB_UNAVAILABLE))
+            autils.wait_for_event_with_keys(
+                resp_dut, cconsts.EVENT_NETWORK_CALLBACK,
+                autils.EVENT_NDP_TIMEOUT,
+                (cconsts.NETWORK_CB_KEY_EVENT, cconsts.NETWORK_CB_UNAVAILABLE))
         else:
             # Initiator & Responder: wait for network formation
             init_net_event_nc = autils.wait_for_event_with_keys(
@@ -437,7 +445,15 @@ class DataPathTest(AwareBaseTest):
             self.log.info("Interface addresses (IPv6): I=%s, R=%s", init_ipv6,
                           resp_ipv6)
 
-            # TODO: possibly send messages back and forth, prefer to use netcat/nc
+            # open sockets to test connection
+            asserts.assert_true(
+                autils.verify_socket_connect(init_dut, resp_dut, init_ipv6,
+                                             resp_ipv6, 0),
+                "Failed socket link with Initiator as Server")
+            asserts.assert_true(
+                autils.verify_socket_connect(resp_dut, init_dut, resp_ipv6,
+                                             init_ipv6, 0),
+                "Failed socket link with Responder as Server")
 
             # terminate sessions and wait for ON_LOST callbacks
             init_dut.droid.wifiAwareDestroy(init_id)
@@ -487,14 +503,24 @@ class DataPathTest(AwareBaseTest):
             s_dut.droid.wifiAwareCreateNetworkSpecifier(
                 s_disc_id, peer_id_on_sub, None))
 
-        # Publisher & Subscriber: fail on network formation
-        time.sleep(autils.EVENT_NDP_TIMEOUT)
-        autils.fail_on_event_with_keys(p_dut, cconsts.EVENT_NETWORK_CALLBACK,
-                                       0,
-                                       (cconsts.NETWORK_CB_KEY_ID, p_req_key))
-        autils.fail_on_event_with_keys(s_dut, cconsts.EVENT_NETWORK_CALLBACK,
-                                       0,
-                                       (cconsts.NETWORK_CB_KEY_ID, s_req_key))
+        # Publisher & Subscriber:
+        # - expect unavailable callbacks on the party with the bad ID
+        # - also expect unavailable on the Initiator party (i.e. the
+        #   Subscriber) if the Publisher has a bad ID
+        # - but a Publisher with a valid ID will keep waiting ...
+        autils.wait_for_event_with_keys(
+            s_dut, cconsts.EVENT_NETWORK_CALLBACK, autils.EVENT_NDP_TIMEOUT,
+            (cconsts.NETWORK_CB_KEY_EVENT, cconsts.NETWORK_CB_UNAVAILABLE))
+        if pub_mismatch:
+            autils.wait_for_event_with_keys(
+                p_dut, cconsts.EVENT_NETWORK_CALLBACK,
+                autils.EVENT_NDP_TIMEOUT,
+                (cconsts.NETWORK_CB_KEY_EVENT, cconsts.NETWORK_CB_UNAVAILABLE))
+        else:
+            time.sleep(autils.EVENT_NDP_TIMEOUT)
+            autils.fail_on_event_with_keys(
+                p_dut, cconsts.EVENT_NETWORK_CALLBACK, 0,
+                (cconsts.NETWORK_CB_KEY_ID, p_req_key))
 
         # clean-up
         p_dut.droid.connectivityUnregisterNetworkCallback(p_req_key)
@@ -571,14 +597,17 @@ class DataPathTest(AwareBaseTest):
                 init_id, aconsts.DATA_PATH_INITIATOR, resp_mac,
                 init_passphrase, init_pmk))
 
-        # Initiator & Responder: fail on network formation
+        # Initiator & Responder:
+        # - expect unavailable on the Initiator party if the
+        #   Initiator or Responder has a bad ID
+        # - but a Responder will keep waiting ...
+        autils.wait_for_event_with_keys(
+            init_dut, cconsts.EVENT_NETWORK_CALLBACK, autils.EVENT_NDP_TIMEOUT,
+            (cconsts.NETWORK_CB_KEY_EVENT, cconsts.NETWORK_CB_UNAVAILABLE))
         time.sleep(autils.EVENT_NDP_TIMEOUT)
         autils.fail_on_event_with_keys(
-            init_dut, cconsts.EVENT_NETWORK_CALLBACK, 0,
-            (cconsts.NETWORK_CB_KEY_ID, init_req_key))
-        autils.fail_on_event_with_keys(
             resp_dut, cconsts.EVENT_NETWORK_CALLBACK, 0,
-            (cconsts.NETWORK_CB_KEY_ID, resp_req_key))
+            (cconsts.NETWORK_CB_KEY_ID, init_req_key))
 
         # clean-up
         resp_dut.droid.connectivityUnregisterNetworkCallback(resp_req_key)
