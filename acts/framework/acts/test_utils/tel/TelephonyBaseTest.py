@@ -43,7 +43,6 @@ from acts.test_utils.tel.tel_test_utils import enable_radio_log_on
 from acts.test_utils.tel.tel_test_utils import ensure_phone_default_state
 from acts.test_utils.tel.tel_test_utils import ensure_phone_idle
 from acts.test_utils.tel.tel_test_utils import ensure_wifi_connected
-from acts.test_utils.tel.tel_test_utils import extract_test_log
 from acts.test_utils.tel.tel_test_utils import force_connectivity_metrics_upload
 from acts.test_utils.tel.tel_test_utils import get_operator_name
 from acts.test_utils.tel.tel_test_utils import get_screen_shot_log
@@ -454,14 +453,7 @@ class TelephonyBaseTest(BaseTestClass):
     def on_fail(self, test_name, begin_time):
         self._take_bug_report(test_name, begin_time)
 
-    def on_blocked(self, test_name, begin_time):
-        self.on_fail(test_name, begin_time)
-
     def _ad_take_extra_logs(self, ad, test_name, begin_time):
-        extract_test_log(self.log, ad.adb_logcat_file_path,
-                         os.path.join(ad.device_log_path,
-                                      "%s_%s.logcat" % (ad.serial, test_name)),
-                         test_name)
         ad.adb.wait_for_device()
         result = True
 
@@ -503,12 +495,6 @@ class TelephonyBaseTest(BaseTestClass):
             return
         test_log_path = os.path.join(self.log_path, test_name)
         utils.create_dir(test_log_path)
-        # Extract test_run_info.txt, test_run_debug.txt
-        for file_name in ("test_run_info.txt", "test_run_debug.txt"):
-            extract_test_log(self.log, os.path.join(self.log_path, file_name),
-                             os.path.join(test_log_path,
-                                          "%s_%s" % (test_name, file_name)),
-                             "\[Test Case\] %s " % test_name)
         dev_num = getattr(self, "number_of_devices", None) or len(
             self.android_devices)
         tasks = [(self._ad_take_bugreport, (ad, test_name, begin_time))
@@ -531,7 +517,7 @@ class TelephonyBaseTest(BaseTestClass):
     def _block_all_test_cases(self, tests, reason='Failed class setup'):
         """Over-write _block_all_test_cases in BaseTestClass."""
         for (i, (test_name, test_func)) in enumerate(tests):
-            signal = signals.TestBlocked(reason)
+            signal = signals.TestFailure(reason)
             record = records.TestResultRecord(test_name, self.TAG)
             record.test_begin()
             # mark all test cases as FAIL
