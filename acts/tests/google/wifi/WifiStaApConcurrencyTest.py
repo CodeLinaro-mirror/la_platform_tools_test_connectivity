@@ -189,6 +189,7 @@ class WifiStaApConcurrencyTest(WifiBaseTest):
         """
         network, ad = params
         SSID = network[WifiEnums.SSID_KEY]
+        wutils.reset_wifi(ad)
         wutils.start_wifi_connection_scan_and_ensure_network_found(
             ad, SSID)
         wutils.wifi_connect(ad, network, num_of_tries=3)
@@ -205,6 +206,7 @@ class WifiStaApConcurrencyTest(WifiBaseTest):
             network: config of the ap we are looking for.
         """
         SSID = network[WifiEnums.SSID_KEY]
+        wutils.reset_wifi(self.dut_client)
         wutils.start_wifi_connection_scan_and_ensure_network_found(
             self.dut_client, SSID)
         wutils.wifi_connect(self.dut_client, network, check_connectivity=check_connectivity)
@@ -257,17 +259,8 @@ class WifiStaApConcurrencyTest(WifiBaseTest):
         self.run_iperf_client((softap_config, self.dut_client))
         if len(self.android_devices) > 2:
             self.log.info("Testbed has extra android devices, do more validation")
-            ad1 = self.dut_client
-            ad2 = self.android_devices[2]
-            ad1_ip = ad1.droid.connectivityGetIPv4Addresses('wlan0')[0]
-            ad2_ip = ad2.droid.connectivityGetIPv4Addresses('wlan0')[0]
-            # Ping each other
-            asserts.assert_true(
-                utils.adb_shell_ping(ad1, count=10, dest_ip=ad2_ip, timeout=20),
-                "%s ping %s failed" % (ad1.serial, ad2_ip))
-            asserts.assert_true(
-                utils.adb_shell_ping(ad2, count=10, dest_ip=ad1_ip, timeout=20),
-                "%s ping %s failed" % (ad2.serial, ad1_ip))
+            self.verify_traffic_between_softap_clients(
+                    self.dut_client, self.android_devices[2])
         # Verify that both softap & wifi is enabled concurrently.
         self.verify_wifi_and_softap_enabled()
 
@@ -448,7 +441,7 @@ class WifiStaApConcurrencyTest(WifiBaseTest):
         self.start_softap_and_connect_to_wifi_network(
             self.wpapsk_5g, WIFI_CONFIG_APBAND_2G)
 
-    @test_tracker_info(uuid="a2c62bc6-9ccd-4bc4-8a23-9a1b5d0b4b5c")
+    @test_tracker_info(uuid="75400685-a9d9-4091-8af3-97bd539c246a")
     def test_softap_2G_wifi_connection_5G_DFS(self):
         """Tests bringing up SoftAp on 2G followed by connection to 5G DFS network.
         """

@@ -110,6 +110,7 @@ class WifiStaApConcurrencyStressTest(WifiStaApConcurrencyTest):
                 "Failed to enable WiFi verbose logging on the client dut.")
 
     """Helper Functions"""
+
     def verify_wifi_full_on_off(self, network, softap_config):
         wutils.wifi_toggle_state(self.dut, True)
         self.connect_to_wifi_network_and_verify((network, self.dut))
