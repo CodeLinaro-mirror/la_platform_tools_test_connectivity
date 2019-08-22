@@ -54,12 +54,12 @@ roaming_attn = {
         "AP1_on_AP2_off": [
             0,
             0,
-            95,
-            95
+            60,
+            60
         ],
         "AP1_off_AP2_on": [
-            95,
-            95,
+            60,
+            60,
             0,
             0
         ],
@@ -1232,7 +1232,7 @@ def ensure_no_disconnect(ad, duration=10):
 
 
 def connect_to_wifi_network(ad, network, assert_on_fail=True,
-        check_connectivity=True):
+        check_connectivity=True, hidden=False):
     """Connection logic for open and psk wifi networks.
 
     Args:
@@ -1240,9 +1240,14 @@ def connect_to_wifi_network(ad, network, assert_on_fail=True,
         network: network info of the network to connect to
         assert_on_fail: If true, errors from wifi_connect will raise
                         test failure signals.
+        hidden: Is the Wifi network hidden.
     """
-    start_wifi_connection_scan_and_ensure_network_found(
-        ad, network[WifiEnums.SSID_KEY])
+    if hidden:
+        start_wifi_connection_scan_and_ensure_network_not_found(
+            ad, network[WifiEnums.SSID_KEY])
+    else:
+        start_wifi_connection_scan_and_ensure_network_found(
+            ad, network[WifiEnums.SSID_KEY])
     wifi_connect(ad,
                  network,
                  num_of_tries=3,
@@ -1781,6 +1786,8 @@ def validate_connection(ad, ping_addr=DEFAULT_PING_ADDR):
     Returns:
         ping output if successful, NULL otherwise.
     """
+    # Adding 2 secs timeout before pinging to allow for DHCP to complete.
+    time.sleep(2)
     ping = ad.droid.httpPing(ping_addr)
     ad.log.info("Http ping result: %s.", ping)
     return ping
@@ -1956,6 +1963,29 @@ def set_attns(attenuator, attn_val_name):
                        attn_val_name)
         raise
 
+def set_attns_steps(attenuators, atten_val_name, steps=10, wait_time=12):
+    """Set attenuation values on attenuators used in this test. It will change
+    the attenuation values linearly from current value to target value step by
+    step.
+
+    Args:
+        attenuators: The list of attenuator objects that you want to change
+                     their attenuation value.
+        atten_val_name: Name of the attenuation value pair to use.
+        steps: Number of attenuator changes to reach the target value.
+        wait_time: Sleep time for each change of attenuator.
+    """
+    logging.info("Set attenuation values to %s in %d step(s)",
+            roaming_attn[atten_val_name], steps)
+    start_atten = [attenuator.get_atten() for attenuator in attenuators]
+    target_atten = roaming_attn[atten_val_name]
+    for current_step in range(steps):
+        progress = (current_step + 1) / steps
+        for i, attenuator in enumerate(attenuators):
+            amount_since_start = (target_atten[i] - start_atten[i]) * progress
+            attenuator.set_atten(round(start_atten[i] + amount_since_start))
+        time.sleep(wait_time)
+
 
 def trigger_roaming_and_validate(dut, attenuator, attn_val_name, expected_con):
     """Sets attenuators to trigger roaming and validate the DUT connected
@@ -1970,9 +2000,7 @@ def trigger_roaming_and_validate(dut, attenuator, attn_val_name, expected_con):
         WifiEnums.SSID_KEY: expected_con[WifiEnums.SSID_KEY],
         WifiEnums.BSSID_KEY: expected_con["bssid"],
     }
-    set_attns(attenuator, attn_val_name)
-    logging.info("Wait %ss for roaming to finish.", ROAMING_TIMEOUT)
-    time.sleep(ROAMING_TIMEOUT)
+    set_attns_steps(attenuator, attn_val_name)
 
     verify_wifi_connection_info(dut, expected_con)
     expected_bssid = expected_con[WifiEnums.BSSID_KEY]
@@ -2011,6 +2039,22 @@ def start_softap_and_verify(ad, band):
     start_wifi_connection_scan_and_ensure_network_found(ad.dut_client,
         config[WifiEnums.SSID_KEY])
     return config
+
+
+def get_ssrdumps(ad, test_name=""):
+    """Pulls dumps in the ssrdump dir
+    Args:
+        ad: android device object.
+        test_name: test case name
+    """
+    logs = ad.get_file_names("/data/vendor/ssrdump/")
+    if logs:
+        ad.log.info("Pulling ssrdumps %s", logs)
+        log_path = os.path.join(ad.log_path, test_name,
+                                "SSRDUMP_%s" % ad.serial)
+        utils.create_dir(log_path)
+        ad.pull_files(logs, log_path)
+    ad.adb.shell("find /data/vendor/ssrdump/ -type f -delete")
 
 
 def start_pcap(pcap, wifi_band, test_name):
@@ -2262,3 +2306,11 @@ def turn_ap_on(test, AP):
     if not hostapd_5g.is_alive():
         hostapd_5g.start(hostapd_5g.config)
         logging.debug('Turned WLAN1 AP%d on' % AP)
+
+
+def turn_location_off_and_scan_toggle_off(ad):
+    """Turns off wifi location scans."""
+    utils.set_location_service(ad, False)
+    ad.droid.wifiScannerToggleAlwaysAvailable(False)
+    msg = "Failed to turn off location service's scan."
+    asserts.assert_true(not ad.droid.wifiScannerIsAlwaysAvailable(), msg)

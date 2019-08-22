@@ -41,7 +41,11 @@ install_requires = [
     'xlsxwriter',
     # TODO(markdr): b/113719194: Remove this module
     'colorama',
-    'mobly'
+    'mobly',
+    'grpcio',
+    # paramiko-ng is needed vs paramiko as currently paramiko does not support
+    # ed25519 ssh keys, which is what Fuchsia uses.
+    'paramiko-ng'
 ]
 
 if sys.version_info < (3,):
@@ -181,11 +185,14 @@ def main():
         url="http://www.android.com/")
 
     if {'-u', '--uninstall', 'uninstall'}.intersection(sys.argv):
-        act_path = '/usr/local/bin/act.py'
-        if os.path.islink(act_path):
-            os.unlink(act_path)
-        elif os.path.exists(act_path):
-            os.remove(act_path)
+        installed_scripts = [
+            '/usr/local/bin/act.py', '/usr/local/bin/monsoon.py'
+        ]
+        for act_file in installed_scripts:
+          if os.path.islink(act_file):
+              os.unlink(act_file)
+          elif os.path.exists(act_file):
+              os.remove(act_file)
 
 
 if __name__ == '__main__':

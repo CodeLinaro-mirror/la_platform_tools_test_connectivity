@@ -187,7 +187,8 @@ class TelephonyBaseTest(BaseTestClass):
             # relative to the config file.
             if not os.path.isfile(sim_conf_file):
                 sim_conf_file = os.path.join(
-                    self.user_params[Config.key_config_path], sim_conf_file)
+                    self.user_params[Config.key_config_path.value],
+                    sim_conf_file)
                 if not os.path.isfile(sim_conf_file):
                     self.log.error("Unable to load user config %s ",
                                    sim_conf_file)
@@ -236,7 +237,7 @@ class TelephonyBaseTest(BaseTestClass):
                 postfix=build_postfix)
         if self.enable_radio_log_on:
             enable_radio_log_on(ad)
-        if "sdm" in ad.model:
+        if "sdm" in ad.model or "msm" in ad.model:
             #added for dsds automation support
             if ad.adb.getprop("persist.radio.multisim.config") != \
                               self.sim_config["config"]:
@@ -267,7 +268,6 @@ class TelephonyBaseTest(BaseTestClass):
             if not ensure_wifi_connected(self.log, ad, self.wifi_network_ssid,
                                          self.wifi_network_pass):
                 ad.log.error("Failed to connect to wifi")
-                return False
             if check_google_fi_activated(ad):
                 ad.log.info("Google Fi is already Activated")
             else:
@@ -275,18 +275,18 @@ class TelephonyBaseTest(BaseTestClass):
                 add_google_account(ad)
                 install_googlefi_apk(ad, self.fi_util)
                 if not activate_google_fi_account(ad):
-                    return False
+                    ad.log.error("Failed to activate Fi")
                 check_google_fi_activated(ad)
-            if hasattr(ad, "dsds"):
-                sim_mode = ad.droid.telephonyGetPhoneCount()
-                if sim_mode == 1:
-                    ad.log.info("Phone in Single SIM Mode")
-                    if not phone_switch_to_msim_mode(ad):
-                        ad.log.error("Failed to switch to Dual SIM Mode")
-                        return False
-                elif sim_mode == 2:
-                    ad.log.info("Phone already in Dual SIM Mode")
-                set_default_sub_for_all_services(ad)
+        if hasattr(ad, "dsds"):
+            sim_mode = ad.droid.telephonyGetPhoneCount()
+            if sim_mode == 1:
+                ad.log.info("Phone in Single SIM Mode")
+                if not phone_switch_to_msim_mode(ad):
+                    ad.log.error("Failed to switch to Dual SIM Mode")
+                    return False
+            elif sim_mode == 2:
+                ad.log.info("Phone already in Dual SIM Mode")
+            set_default_sub_for_all_services(ad)
         if get_sim_state(ad) in (SIM_STATE_ABSENT, SIM_STATE_UNKNOWN):
             ad.log.info("Device has no or unknown SIM in it")
             ensure_phone_idle(self.log, ad)
@@ -340,7 +340,7 @@ class TelephonyBaseTest(BaseTestClass):
                         curl_file_path = os.path.join(tel_data, "curl")
                         if not os.path.isfile(curl_file_path):
                             curl_file_path = os.path.join(
-                                self.user_params[Config.key_config_path],
+                                self.user_params[Config.key_config_path.value],
                                 curl_file_path)
                         if os.path.isfile(curl_file_path):
                             ad.log.info("Pushing Curl to /data dir")
@@ -491,10 +491,8 @@ class TelephonyBaseTest(BaseTestClass):
         return result
 
     def _take_bug_report(self, test_name, begin_time):
-        if self._skip_bug_report():
+        if self._skip_bug_report(test_name):
             return
-        test_log_path = os.path.join(self.log_path, test_name)
-        utils.create_dir(test_log_path)
         dev_num = getattr(self, "number_of_devices", None) or len(
             self.android_devices)
         tasks = [(self._ad_take_bugreport, (ad, test_name, begin_time))
@@ -509,6 +507,7 @@ class TelephonyBaseTest(BaseTestClass):
         # Zip log folder
         if not self.user_params.get("zip_log", False): return
         src_dir = os.path.join(self.log_path, test_name)
+        utils.create_dir(src_dir)
         file_name = "%s_%s" % (src_dir, begin_time)
         self.log.info("Zip folder %s to %s.zip", src_dir, file_name)
         shutil.make_archive(file_name, "zip", src_dir)
