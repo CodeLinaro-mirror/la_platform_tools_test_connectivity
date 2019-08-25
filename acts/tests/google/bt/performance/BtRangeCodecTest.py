@@ -20,12 +20,12 @@ import time
 from acts import asserts
 from acts.signals import TestPass
 from acts.test_utils.bt.A2dpCodecBaseTest import A2dpCodecBaseTest
+from acts.test_utils.bt.A2dpCodecBaseTest import HEADSET_CONTROL_SLEEP_TIME
 from acts.test_utils.bt import bt_constants
 from acts.test_utils.bt.bt_test_utils import set_bluetooth_codec
 from acts.test_utils.bt.loggers import bluetooth_metric_logger as log
 
 DEFAULT_THDN_THRESHOLD = 0.9
-HEADSET_CONTROL_SLEEP_TIME = 10
 PHONE_BT_ENABLE_WAITING_TIME = 10
 
 
@@ -119,8 +119,10 @@ class BtRangeCodecTest(A2dpCodecBaseTest):
         self.bt_logger.add_proto_to_results(test_case_proto,
                                             self.__class__.__name__)
 
-        return self.bt_logger.get_proto_dict(self.__class__.__name__,
-                                             test_case_proto)
+        proto_dict = self.bt_logger.get_proto_dict(self.__class__.__name__,
+                                                   test_case_proto)
+        del proto_dict["proto_ascii"]
+        return proto_dict
 
     def stream_music_on_codec_vs_atten(self, codec_config):
         attenuation_range = range(self.bt_atten_start,
