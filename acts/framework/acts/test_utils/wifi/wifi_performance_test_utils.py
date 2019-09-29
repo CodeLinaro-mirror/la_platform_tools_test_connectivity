@@ -23,6 +23,8 @@ import statistics
 import time
 from acts.controllers.android_device import AndroidDevice
 from acts.controllers.utils_lib import ssh
+from acts.metrics.core import ProtoMetric
+from acts.metrics.logger import MetricLogger
 from acts import utils
 from acts.test_utils.wifi import wifi_test_utils as wutils
 from concurrent.futures import ThreadPoolExecutor
@@ -181,6 +183,102 @@ class LinkLayerStats():
             self.llstats_incremental)
         self.llstats_cumulative['summary'] = self._generate_stats_summary(
             self.llstats_cumulative)
+
+
+# Dashboard utilities
+class BlackboxMappedMetricLogger(MetricLogger):
+    """A MetricLogger for logging and publishing Blackbox metrics from a dict.
+
+    The dict maps the metric name to the metric value. For additional
+    information on reporting to Blackbox, see BlackBoxMetricLogger.
+
+    Attributes:
+        proto_module: The proto module for ActsBlackboxMetricResult.
+        metric_key: The metric key to use. If unset, the logger will use the
+                    context's identifier.
+    """
+
+    PROTO_FILE = '../../metrics/loggers/protos/acts_blackbox.proto'
+
+    def __init__(self, metric_key=None, event=None):
+        """Initializes a logger for Blackbox metrics.
+
+        Args:
+            metric_key: The metric key to use. If unset, the logger will use
+                        the context's identifier.
+            event: The event triggering the creation of this logger.
+        """
+        super().__init__(event=event)
+        self.proto_module = self._compile_proto(self.PROTO_FILE)
+        self.metric_key = metric_key
+        self._metric_map = {}
+
+    def _get_metric_key(self, metric_name):
+        """Gets the metric key to use.
+
+        If the metric_key is explicitly set, returns that value. Otherwise,
+        extracts an identifier from the context.
+
+        Args:
+            metric_name: The name of the metric to report.
+        """
+        if self.metric_key:
+            key = self.metric_key
+        else:
+            key = self._get_blackbox_identifier()
+        key = '%s.%s' % (key, metric_name)
+        return key
+
+    def set_metric_data(self, metric_map):
+        """Sets the map of metrics to be uploaded to Blackbox. Note that
+        this will overwrite all existing added by this function or add_metric.
+
+        Args:
+            metric_map: the map of metric_name -> metric_value to publish
+                to blackbox. If the metric value is set to None, the
+                metric will not be reported.
+        """
+        self._metric_map = metric_map
+
+    def add_metric(self, metric_name, metric_value):
+        """Adds a metric value to be published later.
+
+        Note that if the metric name has already been added, the metric value
+        will be overwritten.
+
+        Args:
+            metric_name: the name of the metric.
+            metric_value: the value of the metric.
+        """
+        self._metric_map[metric_name] = metric_value
+
+    def _get_blackbox_identifier(self):
+        """Returns the testcase identifier, as expected by Blackbox."""
+        # b/119787228: Blackbox requires function names to look like Java
+        # functions.
+        identifier = self.context.identifier
+        parts = identifier.rsplit('.', 1)
+        return '#'.join(parts)
+
+    def end(self, _):
+        """Creates and publishes a ProtoMetric with blackbox data.
+
+        Builds a list of ActsBlackboxMetricResult messages from the set
+        metric data, and sends them to the publisher.
+        """
+        metrics = []
+        for metric_name, metric_value in self._metric_map.items():
+            if metric_value is None:
+                continue
+            result = self.proto_module.ActsBlackboxMetricResult()
+            result.test_identifier = self._get_blackbox_identifier()
+            result.metric_key = self._get_metric_key(metric_name)
+            result.metric_value = metric_value
+
+            metrics.append(
+                ProtoMetric(name='blackbox_%s' % metric_name, data=result))
+
+        return self.publisher.publish(metrics)
 
 
 # JSON serializer
@@ -611,19 +709,23 @@ def get_ping_stats(src_device, dest_address, ping_duration, ping_interval,
     Returns:
         ping_result: dict containing ping results and other meta data
     """
-    ping_cmd = 'ping -w {} -i {} -s {} -D'.format(
-        ping_duration,
+    ping_count = int(ping_duration/ping_interval)
+    ping_deadline = int(ping_count*ping_interval)+1
+    ping_cmd = 'ping -c {} -w {} -i {} -s {} -D'.format(
+        ping_count,
+        ping_deadline,
         ping_interval,
         ping_size,
     )
+    start_time = time.time()
     if isinstance(src_device, AndroidDevice):
         ping_cmd = '{} {}'.format(ping_cmd, dest_address)
         ping_output = src_device.adb.shell(
-            ping_cmd, timeout=ping_duration + SHORT_SLEEP, ignore_status=True)
+            ping_cmd, timeout=ping_deadline+SHORT_SLEEP, ignore_status=True)
     elif isinstance(src_device, ssh.connection.SshConnection):
         ping_cmd = 'sudo {} {}'.format(ping_cmd, dest_address)
         ping_output = src_device.run(
-            ping_cmd, timeout=ping_duration + SHORT_SLEEP,
+            ping_cmd, timeout=ping_deadline+SHORT_SLEEP,
             ignore_status=True).stdout
     else:
         raise TypeError(
@@ -867,6 +969,7 @@ def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
         # Reset attenuator to 0
         test_atten.set_atten(0, strict=False)
     ping_future.result()
+    logging.debug('Chain Map: {}'.format(chain_map))
     return chain_map
 
 
@@ -910,6 +1013,9 @@ def get_full_rf_connection_map(attenuators, dut, ping_server, networks):
                     "network": net_id,
                     "dut_chain": chain
                 })
+    logging.debug("RF Map (by Network): {}".format(rf_map_by_network))
+    logging.debug("RF Map (by Atten): {}".format(rf_map_by_atten))
+
     return rf_map_by_network, rf_map_by_atten
 
 
@@ -977,11 +1083,61 @@ def get_iperf_arg_string(duration,
     return iperf_args
 
 
-def health_check(dut, batt_thresh=5):
+def get_dut_temperature(dut):
+    """Function to get dut temperature.
+
+    The function fetches and returns the reading from the temperature sensor
+    used for skin temperature and thermal throttling.
+
+    Args:
+        dut: AndroidDevice of interest
+    Returns:
+        temperature: device temperature. 0 if temperature could not be read
+    """
+    candidate_zones = ['sdm-therm-monitor', 'sdm-therm-adc', 'back_therm']
+    for zone in candidate_zones:
+        try:
+            temperature = int(
+                dut.adb.shell(
+                    'cat /sys/class/thermal/tz-by-name/{}/temp'.format(zone)))
+            break
+        except ValueError:
+            temperature = 0
+    if temperature == 0:
+        logging.debug('Could not check DUT temperature.')
+    elif temperature > 100:
+        temperature = temperature / 1000
+    return temperature
+
+
+def health_check(dut, batt_thresh=5, temp_threshold=50):
+    """Function to check health status of a DUT.
+
+    The function checks both battery levels and temperature to avoid DUT
+    powering off during the test.
+
+    Args:
+        dut: AndroidDevice of interest
+        batt_thresh: battery level threshold
+        temp_threshold: temperature threshold
+    Returns:
+        health_check: boolean confirming device is healthy
+    """
+    health_check = True
     battery_level = utils.get_battery_level(dut)
     if battery_level < batt_thresh:
-        return 0
-    return 1
+        logging.warning("Battery level low ({}%)".format(battery_level))
+        health_check = False
+    else:
+        logging.debug("Battery level = {}%".format(battery_level))
+
+    temperature = get_dut_temperature(dut)
+    if temperature > temp_threshold:
+        logging.warning("DUT Overheating ({} C)".format(temperature))
+        health_check = False
+    else:
+        logging.debug("DUT Temperature = {}C".format(temperature))
+    return health_check
 
 
 def push_bdf(dut, bdf_file):

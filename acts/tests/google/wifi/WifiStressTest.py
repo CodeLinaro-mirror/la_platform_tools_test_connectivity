@@ -47,12 +47,16 @@ class WifiStressTest(WifiBaseTest):
       network.
     """
 
-    def __init__(self, controllers):
-        WifiBaseTest.__init__(self, controllers)
-
     def setup_class(self):
+        super().setup_class()
+
         self.dut = self.android_devices[0]
-        self.dut_client = self.android_devices[1]
+        # Note that test_stress_softAP_startup_and_stop_5g will always fail
+        # when testing with a single device.
+        if len(self.android_devices) > 1:
+            self.dut_client = self.android_devices[1]
+        else:
+            self.dut_client = None
         wutils.wifi_test_device_init(self.dut)
         req_params = []
         opt_param = [
@@ -436,17 +440,14 @@ class WifiStressTest(WifiBaseTest):
             4. Verify softAP is turned down and WiFi is up.
 
         """
-        # Set country code explicitly to "US".
-        self.dut.droid.wifiSetCountryCode(wutils.WifiEnums.CountryCode.US)
-        self.dut_client.droid.wifiSetCountryCode(wutils.WifiEnums.CountryCode.US)
         ap_ssid = "softap_" + utils.rand_ascii_str(8)
         ap_password = utils.rand_ascii_str(8)
         self.dut.log.info("softap setup: %s %s", ap_ssid, ap_password)
         config = {wutils.WifiEnums.SSID_KEY: ap_ssid}
         config[wutils.WifiEnums.PWD_KEY] = ap_password
         # Set country code explicitly to "US".
-        self.dut.droid.wifiSetCountryCode(wutils.WifiEnums.CountryCode.US)
-        self.dut_client.droid.wifiSetCountryCode(wutils.WifiEnums.CountryCode.US)
+        wutils.set_wifi_country_code(self.dut, wutils.WifiEnums.CountryCode.US)
+        wutils.set_wifi_country_code(self.dut_client, wutils.WifiEnums.CountryCode.US)
         for count in range(self.stress_count):
             initial_wifi_state = self.dut.droid.wifiCheckState()
             wutils.start_wifi_tethering(self.dut,

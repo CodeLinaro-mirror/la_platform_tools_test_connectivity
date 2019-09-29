@@ -23,10 +23,6 @@ from acts.test_utils.wifi.aware import aware_test_utils as autils
 
 
 class AwareBaseTest(BaseTestClass):
-    def __init__(self, controllers):
-        if not hasattr(self, 'android_devices'):
-            super(AwareBaseTest, self).__init__(controllers)
-
     # message ID counter to make sure all uses are unique
     msg_id = 0
 
@@ -57,7 +53,7 @@ class AwareBaseTest(BaseTestClass):
             self.reset_device_parameters(ad)
             self.reset_device_statistics(ad)
             self.set_power_mode_parameters(ad)
-            ad.droid.wifiSetCountryCode(wutils.WifiEnums.CountryCode.US)
+            wutils.set_wifi_country_code(ad, wutils.WifiEnums.CountryCode.US)
             autils.configure_ndp_allow_any_override(ad, True)
             # set randomization interval to 0 (disable) to reduce likelihood of
             # interference in tests
