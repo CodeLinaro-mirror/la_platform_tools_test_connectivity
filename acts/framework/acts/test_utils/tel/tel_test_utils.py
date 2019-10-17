@@ -283,12 +283,12 @@ def setup_droid_properties_by_adb(log, ad, sim_filename=None):
     setattr(ad, 'telephony', device_props)
 
 
-def setup_droid_properties(log, ad, sim_filename=None, cbrs_esim=False):
+def setup_droid_properties(log, ad, sim_filename=None):
 
     if ad.skip_sl4a:
         return setup_droid_properties_by_adb(
             log, ad, sim_filename=sim_filename)
-    refresh_droid_config(log, ad, cbrs_esim)
+    refresh_droid_config(log, ad)
     device_props = {}
     device_props['subscription'] = {}
 
@@ -355,13 +355,12 @@ def setup_droid_properties(log, ad, sim_filename=None, cbrs_esim=False):
     ad.log.debug("telephony = %s", ad.telephony)
 
 
-def refresh_droid_config(log, ad, cbrs_esim=False):
+def refresh_droid_config(log, ad):
     """ Update Android Device telephony records for each sub_id.
 
     Args:
         log: log object
         ad: android device object
-        cbrs_esim: special case for cbrs feature
 
     Returns:
         None
@@ -371,21 +370,14 @@ def refresh_droid_config(log, ad, cbrs_esim=False):
     droid = ad.droid
     sub_info_list = droid.subscriptionGetAllSubInfoList()
     ad.log.info("SubInfoList is %s", sub_info_list)
-    if cbrs_esim:
-        ad.log.info("CBRS testing detected, removing it form SubInfoList")
-        if len(sub_info_list) > 1:
-            # Check for CarrierId
-            index_to_delete = -1
-            for i, oper in enumerate(d['carrierId'] for d in sub_info_list):
-                ad.log.info("Index %d CarrierId %d", i, oper)
-                if oper == 2340:
-                    index_to_delete = i
-            del sub_info_list[index_to_delete]
-        ad.log.info("Updated SubInfoList is %s", sub_info_list)
     active_sub_id = get_outgoing_voice_sub_id(ad)
     for sub_info in sub_info_list:
         sub_id = sub_info["subscriptionId"]
         sim_slot = sub_info["simSlotIndex"]
+        if sub_info.get("carrierId"):
+            carrier_id = sub_info["carrierId"]
+        else:
+            carrier_id = -1
 
         if sim_slot != INVALID_SIM_SLOT_INDEX:
             if sub_id not in ad.telephony["subscription"]:
@@ -435,6 +427,10 @@ def refresh_droid_config(log, ad, cbrs_esim=False):
                         )
                 except:
                     ad.log.info("Carrier ID is not supported")
+            if carrier_id == 2340:
+                ad.log.info("SubId %s info: %s", sub_id, sorted(
+                    sub_record.items()))
+                return
             if not sub_info.get("number"):
                 sub_info[
                     "number"] = droid.telephonyGetLine1NumberForSubscription(
@@ -7433,6 +7429,36 @@ def my_current_screen_content(ad, content):
         return False
     return True
 
+
+def activate_esim_using_suw(ad):
+    _START_SUW = ('am start -a android.intent.action.MAIN -n '
+                  'com.google.android.setupwizard/.SetupWizardTestActivity')
+    _STOP_SUW = ('am start -a com.android.setupwizard.EXIT')
+
+    toggle_airplane_mode(ad.log, ad, new_state=False, strict_checking=False)
+    ad.adb.shell("settings put system screen_off_timeout 1800000")
+    ad.ensure_screen_on()
+    ad.send_keycode("MENU")
+    ad.send_keycode("HOME")
+    for _ in range(3):
+        ad.log.info("Attempt %d - activating eSIM", (_ + 1))
+        ad.adb.shell(_START_SUW)
+        time.sleep(10)
+        log_screen_shot(ad, "start_suw")
+        for _ in range(4):
+            ad.send_keycode("TAB")
+            time.sleep(0.5)
+        ad.send_keycode("ENTER")
+        time.sleep(15)
+        log_screen_shot(ad, "activate_esim")
+        get_screen_shot_log(ad)
+        ad.adb.shell(_STOP_SUW)
+        time.sleep(5)
+        current_sim = get_sim_state(ad)
+        ad.log.info("Current SIM status is %s", current_sim)
+        if current_sim not in (SIM_STATE_ABSENT, SIM_STATE_UNKNOWN):
+            break
+    return True
 
 def activate_google_fi_account(ad, retries=10):
     _FI_APK = "com.google.android.apps.tycho"

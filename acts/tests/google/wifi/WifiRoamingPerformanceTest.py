@@ -67,16 +67,29 @@ class WifiRoamingPerformanceTest(base_test.BaseTestClass):
         self.log.info('Access Point Configuration: {}'.format(
             self.access_point.ap_settings))
 
+        if hasattr(self, 'bdf'):
+            self.log.info('Pushing WiFi BDF to DUT.')
+            wputils.push_bdf(self.dut, self.bdf)
+        if hasattr(self, 'firmware'):
+            self.log.info('Pushing WiFi firmware to DUT.')
+            wlanmdsp = [
+                file for file in self.firmware if "wlanmdsp.mbn" in file
+            ][0]
+            data_msc = [file for file in self.firmware
+                        if "Data.msc" in file][0]
+            wputils.push_firmware(self.dut, wlanmdsp, data_msc)
         # Get RF connection map
         self.log.info("Getting RF connection map.")
+        wutils.wifi_toggle_state(self.dut, True)
         self.rf_map_by_network, self.rf_map_by_atten = (
             wputils.get_full_rf_connection_map(self.attenuators, self.dut,
                                                self.remote_server,
                                                self.main_network))
+        self.log.info("RF Map (by Network): {}".format(self.rf_map_by_network))
+        self.log.info("RF Map (by Atten): {}".format(self.rf_map_by_atten))
 
         #Turn WiFi ON
-        for dev in self.android_devices:
-            wutils.wifi_toggle_state(dev, True)
+        wutils.wifi_toggle_state(self.dut, True)
 
     def pass_fail_traffic_continuity(self, result):
         """Pass fail check for traffic continuity
@@ -406,8 +419,11 @@ class WifiRoamingPerformanceTest(base_test.BaseTestClass):
         (primary_net_id,
          primary_net_config) = next(net for net in self.main_network.items()
                                     if net[1]['roaming_label'] == 'primary')
-        for atten in self.attenuators:
-            if primary_net_id in atten.path:
+        for idx, atten in enumerate(self.attenuators):
+            nets_on_port = [
+                item["network"] for item in self.rf_map_by_atten[idx]
+            ]
+            if primary_net_id in nets_on_port:
                 atten.set_atten(0)
             else:
                 atten.set_atten(atten.instrument.max_atten)
@@ -422,7 +438,7 @@ class WifiRoamingPerformanceTest(base_test.BaseTestClass):
         if not wputils.health_check(self.dut, 10):
             asserts.skip('Battery level too low. Skipping test.')
         wutils.reset_wifi(self.dut)
-        self.dut.droid.wifiSetCountryCode(
+        wutils.set_wifi_country_code(self.dut,
             self.testclass_params['country_code'])
         (primary_net_id,
          primary_net_config) = next(net for net in self.main_network.items()
@@ -507,8 +523,11 @@ class WifiRoamingPerformanceTest(base_test.BaseTestClass):
         else:
             iperf_file = client_output_path
         iperf_result = ipf.IPerfResult(iperf_file)
+        instantaneous_rates = [
+            rate * 8 * (1.024**2) for rate in iperf_result.instantaneous_rates
+        ]
         return {
-            'throughput': iperf_result.instantaneous_rates,
+            'throughput': instantaneous_rates,
             'rssi_result': rssi_future.result(),
             'ap_settings': self.access_point.ap_settings,
         }

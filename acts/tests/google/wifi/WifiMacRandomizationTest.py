@@ -59,10 +59,9 @@ class WifiMacRandomizationTest(WifiBaseTest):
     * Several Wi-Fi networks visible to the device.
     """
 
-    def __init__(self, controllers):
-        WifiBaseTest.__init__(self, controllers)
-
     def setup_class(self):
+        super().setup_class()
+
         self.dut = self.android_devices[0]
         self.dut_client = self.android_devices[1]
         wutils.wifi_test_device_init(self.dut)
@@ -436,8 +435,8 @@ class WifiMacRandomizationTest(WifiBaseTest):
             7. Verify the factory MAC is not leaked.
 
         """
-        self.dut.droid.wifiSetCountryCode(wutils.WifiEnums.CountryCode.US)
-        self.dut_client.droid.wifiSetCountryCode(wutils.WifiEnums.CountryCode.US)
+        wutils.set_wifi_country_code(self.dut, wutils.WifiEnums.CountryCode.US)
+        wutils.set_wifi_country_code(self.dut_client, wutils.WifiEnums.CountryCode.US)
         mac_sta = self.connect_to_network_and_verify_mac_randomization(
                 self.wpapsk_2g)
         softap = wutils.start_softap_and_verify(self, WIFI_CONFIG_APBAND_2G)
