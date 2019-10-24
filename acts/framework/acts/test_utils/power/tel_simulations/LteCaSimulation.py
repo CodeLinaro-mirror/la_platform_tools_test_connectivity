@@ -14,19 +14,14 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 import re
-import time
-
+from acts.controllers.anritsu_lib.md8475a import BtsNumber
 from acts.controllers.anritsu_lib.md8475a import BtsTechnology
 from acts.controllers.anritsu_lib.md8475a import LteMimoMode
-from acts.controllers.anritsu_lib.md8475a import BtsNumber
-from acts.controllers.anritsu_lib.md8475a import BtsPacketRate
-from acts.controllers.anritsu_lib.md8475a import TestProcedure
-from acts.controllers.anritsu_lib.md8475a import TestPowerControl
-from acts.controllers.anritsu_lib.md8475a import TestMeasurement
-from acts.test_utils.power.tel_simulations.LteSimulation import LteSimulation
+from acts.test_utils.power.tel_simulations import LteSimulation
 
 
-class LteCaSimulation(LteSimulation):
+class LteCaSimulation(LteSimulation.LteSimulation):
+    """ Carrier aggregation LTE simulation. """
 
     # Dictionary of lower DL channel number bound for each band.
     LOWEST_DL_CN_DICTIONARY = {
@@ -72,26 +67,20 @@ class LteCaSimulation(LteSimulation):
         42: 45590
     }
 
-    # Simulation config files in the callbox computer.
-    # These should be replaced in the future by setting up
-    # the same configuration manually.
-    LTE_BASIC_SIM_FILE = 'SIM_LTE_CA.wnssp'
-    LTE_BASIC_CELL_FILE = 'CELL_LTE_CA_config.wnscp'
-
     # Simulation config keywords contained in the test name
     PARAM_CA = 'ca'
 
     # Test config keywords
     KEY_FREQ_BANDS = "freq_bands"
 
-    def __init__(self, anritsu, log, dut, test_config, calibration_table):
-        """ Configures Anritsu system for LTE simulation with carrier
+    def __init__(self, simulator, log, dut, test_config, calibration_table):
+        """ Initializes the simulator for LTE simulation with carrier
         aggregation.
 
         Loads a simple LTE simulation enviroment with 5 basestations.
 
         Args:
-            anritsu: the Anritsu callbox controller
+            simulator: the cellular instrument controller
             log: a logger handle
             dut: the android device handler
             test_config: test configuration obtained from the config file
@@ -100,59 +89,45 @@ class LteCaSimulation(LteSimulation):
 
         """
 
-        super().__init__(anritsu, log, dut, test_config, calibration_table)
+        super().__init__(simulator, log, dut, test_config, calibration_table)
 
-        self.bts = [self.bts1, self.anritsu.get_BTS(BtsNumber.BTS2)]
+        self.anritsu = simulator.anritsu
+
+        self.bts = [
+            self.anritsu.get_BTS(BtsNumber.BTS1),
+            self.anritsu.get_BTS(BtsNumber.BTS2)
+        ]
 
         if self.anritsu._md8475_version == 'B':
             self.bts.extend([
-                anritsu.get_BTS(BtsNumber.BTS3),
-                anritsu.get_BTS(BtsNumber.BTS4)
+                self.anritsu.get_BTS(BtsNumber.BTS3),
+                self.anritsu.get_BTS(BtsNumber.BTS4)
             ])
 
         # Create a configuration object for each base station and copy initial
         # settings from the PCC base station.
         self.bts_configs = [self.primary_config]
 
-        for bts_index in range(1, len(self.bts)):
+        for bts_index in range(1, self.simulator.LTE_MAX_CARRIERS):
             new_config = self.BtsConfig()
             new_config.incorporate(self.primary_config)
-            self.configure_bts(self.bts[bts_index], new_config)
+            self.simulator.configure_bts(new_config, bts_index)
             self.bts_configs.append(new_config)
 
         # Get LTE CA frequency bands setting from the test configuration
         if self.KEY_FREQ_BANDS not in test_config:
             self.log.warning("The key '{}' is not set in the config file. "
                              "Setting to null by default.".format(
-                self.KEY_FREQ_BANDS))
+                                 self.KEY_FREQ_BANDS))
 
         self.freq_bands = test_config.get(self.KEY_FREQ_BANDS, True)
 
-    def configure_bts(self, bts_handle, config):
-        """ Adds LTE with CA specific procedures. See parent class
-        implementation for more details.
-
-        Args:
-            bts_handle: a handle to the Anritsu base station controller.
-            config: a BtsConfig object containing the desired configuration.
-        """
-
-        # The callbox won't restore the band-dependent default values if the
-        # request is to switch to the same band as the one the base station is
-        # currently using. To ensure that default values are restored, go to a
-        # different band before switching.
-        if config.band and int(bts_handle.band) == config.band:
-            # Using bands 1 and 2 but it could be any others
-            bts_handle.band = '1' if config.band != 1 else '2'
-            # Switching to config.band will be handled by the parent class
-            # implementation of this method.
-
-        super().configure_bts(bts_handle, config)
+    def setup_simulator(self):
+        """ Do initial configuration in the simulator. """
+        self.simulator.setup_lte_ca_scenario()
 
     def parse_parameters(self, parameters):
         """ Configs an LTE simulation with CA using a list of parameters.
-
-        Calls the parent method first, then consumes parameters specific to LTE
 
         Args:
             parameters: list of parameters
@@ -160,12 +135,11 @@ class LteCaSimulation(LteSimulation):
 
         # Enable all base stations initially. The ones that are not needed after
         # parsing the CA combo string can be removed.
-        self.anritsu.set_simulation_model(
-            BtsTechnology.LTE,
-            BtsTechnology.LTE,
-            BtsTechnology.LTE,
-            BtsTechnology.LTE,
-            reset=False)
+        self.anritsu.set_simulation_model(BtsTechnology.LTE,
+                                          BtsTechnology.LTE,
+                                          BtsTechnology.LTE,
+                                          BtsTechnology.LTE,
+                                          reset=False)
 
         # Create an empty array for new configuration objects. Elements will be
         # added to this list after parsing the CA configuration from the band
@@ -214,7 +188,7 @@ class LteCaSimulation(LteSimulation):
 
             if ca_class.upper() == 'A':
 
-                if bts_index >= len(self.bts):
+                if bts_index >= self.simulator.LTE_MAX_CARRIERS:
                     raise ValueError("This callbox model doesn't allow the "
                                      "requested CA configuration")
 
@@ -228,7 +202,7 @@ class LteCaSimulation(LteSimulation):
 
             elif ca_class.upper() == 'C':
 
-                if bts_index + 1 >= len(self.bts):
+                if bts_index + 1 >= self.simulator.LTE_MAX_CARRIERS:
                     raise ValueError("This callbox model doesn't allow the "
                                      "requested CA configuration")
 
@@ -355,7 +329,7 @@ class LteCaSimulation(LteSimulation):
                      for elem in LteSimulation.MimoMode})
 
             if (requested_mimo == LteSimulation.MimoMode.MIMO_4x4
-                    and self.anritsu._md8475_version == 'A'):
+                    and not self.simulator.LTE_SUPPORTS_4X4_MIMO):
                 raise ValueError("The test requires 4x4 MIMO, but that is not "
                                  "supported by the MD8475A callbox.")
 
@@ -436,16 +410,16 @@ class LteCaSimulation(LteSimulation):
                     "The '{}' parameter was not set, using 100% RBs for both "
                     "DL and UL. To set the percentages of total RBs include "
                     "the '{}' parameter followed by two ints separated by an "
-                    "underscore indicating downlink and uplink percentages."
-                    .format(self.PARAM_PATTERN, self.PARAM_PATTERN))
+                    "underscore indicating downlink and uplink percentages.".
+                    format(self.PARAM_PATTERN, self.PARAM_PATTERN))
                 dl_pattern = 100
                 ul_pattern = 100
             else:
                 dl_pattern = int(values[1])
                 ul_pattern = int(values[2])
 
-            if (dl_pattern, ul_pattern) not in [(0, 100), (100, 0), (100,
-                                                                     100)]:
+            if (dl_pattern, ul_pattern) not in [(0, 100), (100, 0),
+                                                (100, 100)]:
                 raise ValueError(
                     "Only full RB allocation for DL or UL is supported in CA "
                     "sims. The allowed combinations are 100/0, 0/100 and "
@@ -469,58 +443,30 @@ class LteCaSimulation(LteSimulation):
 
                 dl_rbs, ul_rbs = self.allocation_percentages_to_rbs(
                     new_configs[bts_index].bandwidth,
-                    new_configs[bts_index].transmission_mode,
-                    dl_pattern, ul_pattern)
+                    new_configs[bts_index].transmission_mode, dl_pattern,
+                    ul_pattern)
 
                 new_configs[bts_index].dl_rbs = dl_rbs
                 new_configs[bts_index].ul_rbs = ul_rbs
                 new_configs[bts_index].dl_mcs = mcs_dl
                 new_configs[bts_index].ul_mcs = mcs_ul
 
+        # Enable the configured base stations for CA
+        for bts_config in new_configs:
+            bts_config.dl_cc_enabled = True
+
         # Setup the base stations with the obtained configurations and then save
         # these parameters in the current configuration objects
         for bts_index in range(len(new_configs)):
-            self.configure_bts(self.bts[bts_index], new_configs[bts_index])
+            self.simulator.configure_bts(new_configs[bts_index], bts_index)
             self.bts_configs[bts_index].incorporate(new_configs[bts_index])
-
-    def start_test_case(self):
-        """ Attaches the phone to all the other basestations.
-
-        Starts the CA test case. Requires being attached to
-        basestation 1 first.
-
-        """
 
         # Trigger UE capability enquiry from network to get
         # UE supported CA band combinations. Here freq_bands is a hex string.
-
         self.anritsu.trigger_ue_capability_enquiry(self.freq_bands)
 
-        testcase = self.anritsu.get_AnritsuTestCases()
-        # Setting the procedure to selection is needed because of a bug in the
-        # instrument's software (b/139547391).
-        testcase.procedure = TestProcedure.PROCEDURE_SELECTION
-        testcase.procedure = TestProcedure.PROCEDURE_MULTICELL
-        testcase.power_control = TestPowerControl.POWER_CONTROL_DISABLE
-        testcase.measurement_LTE = TestMeasurement.MEASUREMENT_DISABLE
-
-        for bts_index in range(1, self.num_carriers):
-            self.bts[bts_index].dl_cc_enabled = True
-
-        self.anritsu.start_testcase()
-
-        retry_counter = 0
-        self.log.info("Waiting for the test case to start...")
-        time.sleep(5)
-
-        while self.anritsu.get_testcase_status() == "0":
-            retry_counter += 1
-            if retry_counter == 3:
-                raise RuntimeError("The test case failed to start after {} "
-                                   "retries. The connection between the phone "
-                                   "and the basestation might be unstable."
-                                   .format(retry_counter))
-            time.sleep(10)
+        # Now that the band is set, calibrate the link for the PCC if necessary
+        self.load_pathloss_if_required()
 
     def maximum_downlink_throughput(self):
         """ Calculates maximum downlink throughput as the sum of all the active
@@ -533,17 +479,20 @@ class LteCaSimulation(LteSimulation):
     def start(self):
         """ Set the signal level for the secondary carriers, as the base class
         implementation of this method will only set up downlink power for the
-        primary carrier component. """
+        primary carrier component.
+
+        After that, attaches the secondary carriers."""
 
         super().start()
 
-        if not self.sim_dl_power:
-            return
+        if self.sim_dl_power:
+            self.log.info('Setting DL power for secondary carriers.')
 
-        for bts_index in range(1, self.num_carriers):
-            self.log.info("Setting DL power for BTS{}.".format(bts_index + 1))
-            new_config = self.BtsConfig()
-            new_config.output_power = self.calibrated_downlink_rx_power(
-                self.bts_configs[bts_index], self.sim_dl_power)
-            self.configure_bts(self.bts[bts_index], new_config)
-            self.bts_configs[bts_index].incorporate(new_config)
+            for bts_index in range(1, self.num_carriers):
+                new_config = self.BtsConfig()
+                new_config.output_power = self.calibrated_downlink_rx_power(
+                    self.bts_configs[bts_index], self.sim_dl_power)
+                self.simulator.configure_bts(new_config, bts_index)
+                self.bts_configs[bts_index].incorporate(new_config)
+
+        self.simulator.lte_attach_secondary_carriers()

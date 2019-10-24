@@ -192,21 +192,12 @@ class BaseTestClass(MoblyBaseTest):
         self.consecutive_failure_limit = self.user_params.get(
             'consecutive_failure_limit', -1)
         self.size_limit_reached = False
+        self.retryable_exceptions = signals.TestFailure
 
         # Initialize a controller manager (Mobly)
         self._controller_manager = controller_manager.ControllerManager(
             class_name=self.__class__.__name__,
             controller_configs=self.testbed_configs)
-
-        # Import and register the built-in controller modules specified
-        # in testbed config.
-        for module in self._import_builtin_controllers():
-            self.register_controller(module, builtin=True)
-        if hasattr(self, 'android_devices'):
-            for ad in self.android_devices:
-                if ad.droid:
-                    utils.set_location_service(ad, False)
-                    utils.sync_device_time(ad)
 
     def _import_builtin_controllers(self):
         """Import built-in controller modules.
@@ -386,6 +377,10 @@ class BaseTestClass(MoblyBaseTest):
         is called.
         """
         event_bus.post(TestClassBeginEvent(self))
+        # Import and register the built-in controller modules specified
+        # in testbed config.
+        for module in self._import_builtin_controllers():
+            self.register_controller(module, builtin=True)
         return self.setup_class()
 
     def _teardown_class(self):
@@ -518,6 +513,14 @@ class BaseTestClass(MoblyBaseTest):
         Args:
             test_name: Name of the test that triggered this function.
             begin_time: Logline format timestamp taken when the test started.
+        """
+
+    def on_retry():
+        """Function to run before retrying a test through get_func_with_retry.
+
+        This function runs when a test is automatically retried. The function
+        can be used to modify internal test parameters, for example, to retry
+        a test with slightly different input variables.
         """
 
     def _exec_procedure_func(self, func, tr_record):
@@ -653,6 +656,7 @@ class BaseTestClass(MoblyBaseTest):
 
         Returns: result of the test method
         """
+        exceptions = self.retryable_exceptions
         def wrapper(*args, **kwargs):
             error_msgs = []
             extras = {}
@@ -662,8 +666,9 @@ class BaseTestClass(MoblyBaseTest):
                     if retry:
                         self.teardown_test()
                         self.setup_test()
+                        self.on_retry()
                     return func(*args, **kwargs)
-                except signals.TestFailure as e:
+                except exceptions as e:
                     retry = True
                     msg = 'Failure on attempt %d: %s' % (i+1, e.details)
                     self.log.warning(msg)
@@ -899,6 +904,7 @@ class BaseTestClass(MoblyBaseTest):
                 self._block_all_test_cases(tests)
                 setup_fail = True
         except signals.TestAbortClass:
+            self.log.exception('Test class %s aborted' % self.TAG)
             setup_fail = True
         except Exception as e:
             self.log.exception("Failed to setup %s.", self.TAG)
@@ -917,6 +923,7 @@ class BaseTestClass(MoblyBaseTest):
                     self.exec_one_testcase(test_name, test_func, self.cli_args)
             return self.results
         except signals.TestAbortClass:
+            self.log.exception('Test class %s aborted' % self.TAG)
             return self.results
         except signals.TestAbortAll as e:
             # Piggy-back test results on this exception object so we don't lose

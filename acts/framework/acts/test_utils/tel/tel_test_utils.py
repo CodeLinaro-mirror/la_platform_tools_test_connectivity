@@ -1580,6 +1580,9 @@ def initiate_call(log,
         else:
             return True
     finally:
+        if hasattr(ad, "sdm_log") and getattr(ad, "sdm_log"):
+            ad.adb.shell("i2cset -fy 3 64 6 1 b", ignore_status=True)
+            ad.adb.shell("i2cset -fy 3 65 6 1 b", ignore_status=True)
         ad.droid.telephonyStopTrackingCallStateChangeForSubscription(sub_id)
         if incall_ui_display == INCALL_UI_DISPLAY_FOREGROUND:
             ad.droid.telecomShowInCallScreen()
@@ -3225,7 +3228,7 @@ def trigger_modem_crash_by_modem(ad, timeout=120):
 def phone_switch_to_msim_mode(ad, retries=3, timeout=60):
     result = False
     if not ad.is_apk_installed("com.google.mdstest"):
-        raise signals.TestSkipClass("mdstest is not installed")
+        raise signals.TestAbortClass("mdstest is not installed")
     mode = ad.droid.telephonyGetPhoneCount()
     if mode == 2:
         ad.log.info("Device already in MSIM mode")
@@ -3268,7 +3271,7 @@ def phone_switch_to_msim_mode(ad, retries=3, timeout=60):
 def phone_switch_to_ssim_mode(ad, retries=3, timeout=30):
     result = False
     if not ad.is_apk_installed("com.google.mdstest"):
-        raise signals.TestSkipClass("mdstest is not installed")
+        raise signals.TestAbortClass("mdstest is not installed")
     mode = ad.droid.telephonyGetPhoneCount()
     if mode == 1:
         ad.log.info("Device already in SSIM mode")
@@ -3747,17 +3750,18 @@ def toggle_volte_for_subscription(log, ad, sub_id, new_state=None):
             If None, opposite of the current state.
 
     """
-    # TODO: b/26293960 No framework API available to set IMS by SubId.
-    if not ad.droid.imsIsEnhanced4gLteModeSettingEnabledByPlatform():
-        ad.log.info("Enhanced 4G Lte Mode Setting is not enabled by platform.")
-        return False
-    current_state = ad.droid.imsIsEnhanced4gLteModeSettingEnabledByUser()
+    current_state = ad.droid.imsMmTelIsAdvancedCallingEnabled(sub_id)
     if new_state is None:
         new_state = not current_state
     if new_state != current_state:
-        ad.log.info("Toggle Enhanced 4G LTE Mode from %s to %s", current_state,
-                    new_state)
-        ad.droid.imsSetEnhanced4gMode(new_state)
+        ad.log.info("Toggle Enhanced 4G LTE Mode from %s to %s on sub_id %s", current_state,
+                    new_state, sub_id)
+        ad.droid.imsMmTelSetAdvancedCallingEnabled(sub_id, new_state)
+    check_state = ad.droid.imsMmTelIsAdvancedCallingEnabled(sub_id)
+    if check_state != new_state:
+        ad.log.error("Failed to toggle Enhanced 4G LTE Mode to %s, still set to %s on sub_id %s",
+                     new_state, check_state, sub_id)
+        return False
     return True
 
 
@@ -6669,7 +6673,7 @@ def fastboot_wipe(ad, skip_setup_wizard=True):
             if ad.is_sl4a_installed():
                 break
             ad.log.info("Re-install sl4a")
-            ad.adb.shell("settings put global package_verifier_enable 0")
+            ad.adb.shell("settings put global verifier_verify_adb_installs 0")
             ad.adb.install("-r /tmp/base.apk")
             time.sleep(10)
             break
@@ -7608,6 +7612,14 @@ def bring_up_connectivity_monitor(ad):
     else:
         ad.log.info("%s is running", monitor_apk)
         return True
+
+
+def get_host_ip_address(ad):
+    cmd = "|".join(("ifconfig", "grep eno1 -A1", "grep inet", "awk '{$1=$1};1'", "cut -d ' ' -f 2"))
+    destination_ip = exe_cmd(cmd)
+    destination_ip = (destination_ip.decode("utf-8")).split("\n")[0]
+    ad.log.info("Host IP is %s", destination_ip)
+    return destination_ip
 
 
 def toggle_connectivity_monitor_setting(ad, state=True):

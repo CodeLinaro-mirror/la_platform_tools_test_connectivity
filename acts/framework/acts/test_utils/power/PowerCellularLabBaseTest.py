@@ -19,6 +19,7 @@ import os
 import acts.test_utils.power.PowerBaseTest as PBT
 import acts.controllers.cellular_simulator as simulator
 from acts.controllers.anritsu_lib import md8475_cellular_simulator as anritsu
+from acts.controllers.rohdeschwarz_lib import cmw500_cellular_simulator as cmw
 from acts.test_utils.power.tel_simulations.GsmSimulation import GsmSimulation
 from acts.test_utils.power.tel_simulations.LteSimulation import LteSimulation
 from acts.test_utils.power.tel_simulations.UmtsSimulation import UmtsSimulation
@@ -75,10 +76,6 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
 
         super().setup_class()
 
-        # Gets the name of the interface from which packets are sent
-        if hasattr(self, 'packet_senders'):
-            self.pkt_sender = self.packet_senders[0]
-
         # Load calibration tables
         filename_calibration_table = (
             self.FILENAME_CALIBRATION_TABLE_UNFORMATTED.format(
@@ -91,9 +88,8 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
                 self.log.debug(self.calibration_table)
                 break
 
-        # Store the value of the key to access the test config in the
-        # user_params dictionary.
-        self.PARAMS_KEY = self.TAG + "_params"
+        # Ensure the calibration table only contains non-negative values
+        self.ensure_valid_calibration_table(self.calibration_table)
 
         # Turn on airplane mode for all devices, as some might
         # be unused during the test
@@ -135,6 +131,18 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
                     self.md8475a_ip_address)
             else:
                 raise ValueError('Invalid MD8475 version.')
+
+        elif hasattr(self, 'cmw500_ip') or hasattr(self, 'cmw500_port'):
+
+            for key in ['cmw500_ip', 'cmw500_port']:
+                if not hasattr(self, key):
+                    raise RuntimeError('The CMW500 cellular simulator '
+                                       'requires %s to be set in the '
+                                       'config file.' % key)
+
+            return cmw.CMW500CellularSimulator(self.cmw500_ip,
+                                               self.cmw500_port)
+
         else:
             raise RuntimeError(
                 'The simulator could not be initialized because '
@@ -196,14 +204,9 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
         # Wait for new params to settle
         time.sleep(5)
 
-        # Start the simulation. This method will raise a RuntimeException if
+        # Start the simulation. This method will raise an exception if
         # the phone is unable to attach.
-        try:
-            self.simulation.start()
-        except RuntimeError:
-            return False
-
-        self.simulation.start_test_case()
+        self.simulation.start()
 
         # Make the device go to sleep
         self.dut.droid.goToSleepNow()
@@ -352,5 +355,22 @@ class PowerCellularLabBaseTest(PBT.PowerBaseTest):
         # Instantiate a new simulation
         self.simulation = simulation_class(self.cellular_simulator, self.log,
                                            self.dut,
-                                           self.user_params[self.PARAMS_KEY],
+                                           self.test_params,
                                            self.calibration_table[sim_type])
+
+    def ensure_valid_calibration_table(self, calibration_table):
+        """ Ensures the calibration table has the correct structure.
+
+        A valid calibration table is a nested dictionary with non-negative
+        number values
+
+        """
+        if not calibration_table or not isinstance(calibration_table, dict):
+            raise TypeError('The calibration table must be a dictionary')
+        for val in calibration_table.values():
+            if isinstance(val, dict):
+                self.ensure_valid_calibration_table(val)
+            elif not isinstance(val, float) and not isinstance(val, int):
+                raise TypeError('Calibration table value must be a number')
+            elif val < 0.0:
+                raise ValueError('Calibration table contains negative values')

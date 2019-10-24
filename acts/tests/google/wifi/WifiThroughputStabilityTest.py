@@ -27,6 +27,7 @@ from acts import context
 from acts import utils
 from acts.controllers import iperf_server as ipf
 from acts.controllers.utils_lib import ssh
+from acts.metrics.loggers.blackbox import BlackboxMappedMetricLogger
 from acts.test_utils.wifi import ota_chamber
 from acts.test_utils.wifi import wifi_performance_test_utils as wputils
 from acts.test_utils.wifi import wifi_retail_ap as retail_ap
@@ -52,9 +53,9 @@ class WifiThroughputStabilityTest(base_test.BaseTestClass):
         base_test.BaseTestClass.__init__(self, controllers)
         # Define metrics to be uploaded to BlackBox
         self.testcase_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_case())
+            BlackboxMappedMetricLogger.for_test_case())
         self.testclass_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_class())
+            BlackboxMappedMetricLogger.for_test_class())
         self.publish_testcase_metrics = True
         # Generate test cases
         self.tests = self.generate_test_cases(
@@ -132,6 +133,11 @@ class WifiThroughputStabilityTest(base_test.BaseTestClass):
         self.testclass_results = []
 
         # Turn WiFi ON
+        if self.testclass_params.get('airplane_mode', 1):
+            self.log.info('Turning on airplane mode.')
+            asserts.assert_true(
+                utils.force_airplane_mode(self.dut, True),
+                "Can not turn on airplane mode.")
         wutils.wifi_toggle_state(self.dut, True)
 
     def teardown_test(self):
@@ -221,7 +227,7 @@ class WifiThroughputStabilityTest(base_test.BaseTestClass):
             json.dump(test_result_dict, results_file)
         # Plot and save
         figure = wputils.BokehFigure(
-            test_name, x_label='Time (s)', primary_y='Throughput (Mbps)')
+            test_name, x_label='Time (s)', primary_y_label='Throughput (Mbps)')
         time_data = list(range(0, len(instantaneous_rates_Mbps)))
         figure.add_line(
             time_data,
@@ -270,9 +276,12 @@ class WifiThroughputStabilityTest(base_test.BaseTestClass):
         band = self.access_point.band_lookup_by_channel(
             testcase_params['channel'])
         current_network = self.dut.droid.wifiGetConnectionInfo()
-        valid_connection = wutils.validate_connection(self.dut)
-        if valid_connection and current_network['SSID'] == self.main_network[
-                band]['SSID']:
+        try:
+            connected = wutils.validate_connection(self.dut) is not None
+        except:
+            connected = False
+        if connected and current_network['SSID'] == self.main_network[band][
+                'SSID']:
             self.log.info('Already connected to desired network')
         else:
             wutils.wifi_toggle_state(self.dut, True)
@@ -448,9 +457,9 @@ class WifiOtaThroughputStabilityTest(WifiThroughputStabilityTest):
         base_test.BaseTestClass.__init__(self, controllers)
         # Define metrics to be uploaded to BlackBox
         self.testcase_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_case())
+            BlackboxMappedMetricLogger.for_test_case())
         self.testclass_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_class())
+            BlackboxMappedMetricLogger.for_test_class())
         self.publish_testcase_metrics = False
 
     def setup_class(self):
@@ -517,7 +526,7 @@ class WifiOtaThroughputStabilityTest(WifiThroughputStabilityTest):
             current_plot = wputils.BokehFigure(
                 title='Channel {} - Rate vs. Position'.format(channel),
                 x_label=x_label,
-                primary_y='Rate (Mbps)',
+                primary_y_label='Rate (Mbps)',
             )
             for test_id, test_data in channel_data.items():
                 test_id_dict = dict(test_id)

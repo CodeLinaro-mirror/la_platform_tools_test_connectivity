@@ -16,6 +16,8 @@
 
 import bokeh, bokeh.plotting
 import collections
+import itertools
+import json
 import logging
 import math
 import re
@@ -23,8 +25,6 @@ import statistics
 import time
 from acts.controllers.android_device import AndroidDevice
 from acts.controllers.utils_lib import ssh
-from acts.metrics.core import ProtoMetric
-from acts.metrics.logger import MetricLogger
 from acts import utils
 from acts.test_utils.wifi import wifi_test_utils as wutils
 from concurrent.futures import ThreadPoolExecutor
@@ -46,7 +46,6 @@ LOSS_REGEX = re.compile(r'(?P<loss>\S+)% packet loss')
 # Threading decorator
 def nonblocking(f):
     """Creates a decorator transforming function calls to non-blocking"""
-
     def wrap(*args, **kwargs):
         executor = ThreadPoolExecutor(max_workers=1)
         thread_future = executor.submit(f, *args, **kwargs)
@@ -87,18 +86,16 @@ class LinkLayerStats():
         self.llstats_incremental = self._empty_llstats()
 
     def _empty_llstats(self):
-        return collections.OrderedDict(
-            mcs_stats=collections.OrderedDict(),
-            summary=collections.OrderedDict())
+        return collections.OrderedDict(mcs_stats=collections.OrderedDict(),
+                                       summary=collections.OrderedDict())
 
     def _empty_mcs_stat(self):
-        return collections.OrderedDict(
-            txmpdu=0,
-            rxmpdu=0,
-            mpdu_lost=0,
-            retries=0,
-            retries_short=0,
-            retries_long=0)
+        return collections.OrderedDict(txmpdu=0,
+                                       rxmpdu=0,
+                                       mpdu_lost=0,
+                                       retries=0,
+                                       retries_short=0,
+                                       retries_long=0)
 
     def _mcs_id_to_string(self, mcs_id):
         mcs_string = '{} {}MHz Nss{} MCS{} {}Mbps'.format(
@@ -138,13 +135,12 @@ class LinkLayerStats():
         return stats_diff
 
     def _generate_stats_summary(self, llstats_dict):
-        llstats_summary = collections.OrderedDict(
-            common_tx_mcs=None,
-            common_tx_mcs_count=0,
-            common_tx_mcs_freq=0,
-            common_rx_mcs=None,
-            common_rx_mcs_count=0,
-            common_rx_mcs_freq=0)
+        llstats_summary = collections.OrderedDict(common_tx_mcs=None,
+                                                  common_tx_mcs_count=0,
+                                                  common_tx_mcs_freq=0,
+                                                  common_rx_mcs=None,
+                                                  common_rx_mcs_count=0,
+                                                  common_rx_mcs_freq=0)
         txmpdu_count = 0
         rxmpdu_count = 0
         for mcs_id, mcs_stats in llstats_dict['mcs_stats'].items():
@@ -183,102 +179,6 @@ class LinkLayerStats():
             self.llstats_incremental)
         self.llstats_cumulative['summary'] = self._generate_stats_summary(
             self.llstats_cumulative)
-
-
-# Dashboard utilities
-class BlackboxMappedMetricLogger(MetricLogger):
-    """A MetricLogger for logging and publishing Blackbox metrics from a dict.
-
-    The dict maps the metric name to the metric value. For additional
-    information on reporting to Blackbox, see BlackBoxMetricLogger.
-
-    Attributes:
-        proto_module: The proto module for ActsBlackboxMetricResult.
-        metric_key: The metric key to use. If unset, the logger will use the
-                    context's identifier.
-    """
-
-    PROTO_FILE = '../../metrics/loggers/protos/acts_blackbox.proto'
-
-    def __init__(self, metric_key=None, event=None):
-        """Initializes a logger for Blackbox metrics.
-
-        Args:
-            metric_key: The metric key to use. If unset, the logger will use
-                        the context's identifier.
-            event: The event triggering the creation of this logger.
-        """
-        super().__init__(event=event)
-        self.proto_module = self._compile_proto(self.PROTO_FILE)
-        self.metric_key = metric_key
-        self._metric_map = {}
-
-    def _get_metric_key(self, metric_name):
-        """Gets the metric key to use.
-
-        If the metric_key is explicitly set, returns that value. Otherwise,
-        extracts an identifier from the context.
-
-        Args:
-            metric_name: The name of the metric to report.
-        """
-        if self.metric_key:
-            key = self.metric_key
-        else:
-            key = self._get_blackbox_identifier()
-        key = '%s.%s' % (key, metric_name)
-        return key
-
-    def set_metric_data(self, metric_map):
-        """Sets the map of metrics to be uploaded to Blackbox. Note that
-        this will overwrite all existing added by this function or add_metric.
-
-        Args:
-            metric_map: the map of metric_name -> metric_value to publish
-                to blackbox. If the metric value is set to None, the
-                metric will not be reported.
-        """
-        self._metric_map = metric_map
-
-    def add_metric(self, metric_name, metric_value):
-        """Adds a metric value to be published later.
-
-        Note that if the metric name has already been added, the metric value
-        will be overwritten.
-
-        Args:
-            metric_name: the name of the metric.
-            metric_value: the value of the metric.
-        """
-        self._metric_map[metric_name] = metric_value
-
-    def _get_blackbox_identifier(self):
-        """Returns the testcase identifier, as expected by Blackbox."""
-        # b/119787228: Blackbox requires function names to look like Java
-        # functions.
-        identifier = self.context.identifier
-        parts = identifier.rsplit('.', 1)
-        return '#'.join(parts)
-
-    def end(self, _):
-        """Creates and publishes a ProtoMetric with blackbox data.
-
-        Builds a list of ActsBlackboxMetricResult messages from the set
-        metric data, and sends them to the publisher.
-        """
-        metrics = []
-        for metric_name, metric_value in self._metric_map.items():
-            if metric_value is None:
-                continue
-            result = self.proto_module.ActsBlackboxMetricResult()
-            result.test_identifier = self._get_blackbox_identifier()
-            result.metric_key = self._get_metric_key(metric_name)
-            result.metric_value = metric_value
-
-            metrics.append(
-                ProtoMetric(name='blackbox_%s' % metric_name, data=result))
-
-        return self.publisher.publish(metrics)
 
 
 # JSON serializer
@@ -343,23 +243,23 @@ class BokehFigure():
     def __init__(self,
                  title=None,
                  x_label=None,
-                 primary_y=None,
-                 secondary_y=None,
+                 primary_y_label=None,
+                 secondary_y_label=None,
                  height=700,
                  width=1300,
-                 title_size=15,
-                 axis_label_size=12):
+                 title_size='15pt',
+                 axis_label_size='12pt'):
         self.figure_data = []
         self.fig_property = {
             'title': title,
             'x_label': x_label,
-            'primary_y_label': primary_y,
-            'secondary_y_label': secondary_y,
+            'primary_y_label': primary_y_label,
+            'secondary_y_label': secondary_y_label,
             'num_lines': 0,
             'height': height,
             'width': width,
-            'title_size': '{}pt'.format(title_size),
-            'axis_label_size': '{}pt'.format(axis_label_size)
+            'title_size': title_size,
+            'axis_label_size': axis_label_size
         }
         self.TOOLS = (
             'box_zoom,box_select,pan,crosshair,redo,undo,reset,hover,save')
@@ -381,6 +281,18 @@ class BokehFigure():
             bokeh.models.tools.WheelZoomTool(dimensions='width'))
         self.plot.add_tools(
             bokeh.models.tools.WheelZoomTool(dimensions='height'))
+
+    def _filter_line(self, x_data, y_data, hover_text=None):
+        """Function to remove NaN points from bokeh plots."""
+        x_data_filtered = []
+        y_data_filtered = []
+        hover_text_filtered = []
+        for x, y, hover in itertools.zip_longest(x_data, y_data, hover_text):
+            if not math.isnan(y):
+                x_data_filtered.append(x)
+                y_data_filtered.append(y)
+                hover_text_filtered.append(hover)
+        return x_data_filtered, y_data_filtered, hover_text_filtered
 
     def add_line(self,
                  x_data,
@@ -411,24 +323,26 @@ class BokehFigure():
         if y_axis not in ['default', 'secondary']:
             raise ValueError('y_axis must be default or secondary')
         if color == None:
-            color = self.COLORS[self.fig_property['num_lines'] % len(
-                self.COLORS)]
+            color = self.COLORS[self.fig_property['num_lines'] %
+                                len(self.COLORS)]
         if style == 'dashed':
             style = [5, 5]
         if not hover_text:
             hover_text = ['y={}'.format(y) for y in y_data]
+        x_data_filter, y_data_filter, hover_text_filter = self._filter_line(
+            x_data, y_data, hover_text)
         self.figure_data.append({
-            'x_data': x_data,
-            'y_data': y_data,
+            'x_data': x_data_filter,
+            'y_data': y_data_filter,
             'legend': legend,
-            'hover_text': hover_text,
+            'hover_text': hover_text_filter,
             'color': color,
             'width': width,
             'style': style,
             'marker': marker,
             'marker_size': marker_size,
             'shaded_region': shaded_region,
-            'y_range_name': y_axis
+            'y_axis': y_axis
         })
         self.fig_property['num_lines'] += 1
 
@@ -455,11 +369,11 @@ class BokehFigure():
         if y_axis not in ['default', 'secondary']:
             raise ValueError('y_axis must be default or secondary')
         if color == None:
-            color = self.COLORS[self.fig_property['num_lines'] % len(
-                self.COLORS)]
+            color = self.COLORS[self.fig_property['num_lines'] %
+                                len(self.COLORS)]
         if marker == None:
-            marker = self.MARKERS[self.fig_property['num_lines'] % len(
-                self.MARKERS)]
+            marker = self.MARKERS[self.fig_property['num_lines'] %
+                                  len(self.MARKERS)]
         if not hover_text:
             hover_text = ['y={}'.format(y) for y in y_data]
         self.figure_data.append({
@@ -473,7 +387,7 @@ class BokehFigure():
             'marker': marker,
             'marker_size': marker_size,
             'shaded_region': None,
-            'y_range_name': y_axis
+            'y_axis': y_axis
         })
         self.fig_property['num_lines'] += 1
 
@@ -487,45 +401,41 @@ class BokehFigure():
         two_axes = False
         for line in self.figure_data:
             source = bokeh.models.ColumnDataSource(
-                data=dict(
-                    x=line['x_data'],
-                    y=line['y_data'],
-                    hover_text=line['hover_text']))
+                data=dict(x=line['x_data'],
+                          y=line['y_data'],
+                          hover_text=line['hover_text']))
             if line['width'] > 0:
-                self.plot.line(
-                    x='x',
-                    y='y',
-                    legend=line['legend'],
-                    line_width=line['width'],
-                    color=line['color'],
-                    line_dash=line['style'],
-                    name=line['y_range_name'],
-                    y_range_name=line['y_range_name'],
-                    source=source)
+                self.plot.line(x='x',
+                               y='y',
+                               legend=line['legend'],
+                               line_width=line['width'],
+                               color=line['color'],
+                               line_dash=line['style'],
+                               name=line['y_axis'],
+                               y_range_name=line['y_axis'],
+                               source=source)
             if line['shaded_region']:
                 band_x = line['shaded_region']['x_vector']
                 band_x.extend(line['shaded_region']['x_vector'][::-1])
                 band_y = line['shaded_region']['lower_limit']
                 band_y.extend(line['shaded_region']['upper_limit'][::-1])
-                self.plot.patch(
-                    band_x,
-                    band_y,
-                    color='#7570B3',
-                    line_alpha=0.1,
-                    fill_alpha=0.1)
+                self.plot.patch(band_x,
+                                band_y,
+                                color='#7570B3',
+                                line_alpha=0.1,
+                                fill_alpha=0.1)
             if line['marker'] in self.MARKERS:
                 marker_func = getattr(self.plot, line['marker'])
-                marker_func(
-                    x='x',
-                    y='y',
-                    size=line['marker_size'],
-                    legend=line['legend'],
-                    line_color=line['color'],
-                    fill_color=line['color'],
-                    name=line['y_range_name'],
-                    y_range_name=line['y_range_name'],
-                    source=source)
-            if line['y_range_name'] == 'secondary':
+                marker_func(x='x',
+                            y='y',
+                            size=line['marker_size'],
+                            legend=line['legend'],
+                            line_color=line['color'],
+                            fill_color=line['color'],
+                            name=line['y_axis'],
+                            y_range_name=line['y_axis'],
+                            source=source)
+            if line['y_axis'] == 'secondary':
                 two_axes = True
 
         #x-axis formatting
@@ -554,9 +464,18 @@ class BokehFigure():
         self.plot.title.text_font_size = self.fig_property['title_size']
 
         if output_file is not None:
-            bokeh.plotting.output_file(output_file)
-            bokeh.plotting.save(self.plot)
+            self.save_figure(output_file)
         return self.plot
+
+    def _save_figure_json(self, output_file):
+        """Function to save a json format of a figure"""
+        figure_dict = collections.OrderedDict(fig_property=self.fig_property,
+                                              figure_data=self.figure_data,
+                                              tools=self.TOOLS,
+                                              tooltips=self.TOOLTIPS)
+        output_file = output_file.replace('.html', '_plot_data.json')
+        with open(output_file, 'w') as outfile:
+            json.dump(figure_dict, outfile, indent=4)
 
     def save_figure(self, output_file):
         """Function to save BokehFigure.
@@ -566,6 +485,7 @@ class BokehFigure():
         """
         bokeh.plotting.output_file(output_file)
         bokeh.plotting.save(self.plot)
+        self._save_figure_json(output_file)
 
     @staticmethod
     def save_figures(figure_array, output_file_path):
@@ -575,8 +495,11 @@ class BokehFigure():
             figure_array: list of BokehFigure object to be plotted
             output_file: string specifying output file path
         """
-        for figure in figure_array:
+        for idx, figure in enumerate(figure_array):
             figure.generate_figure()
+            json_file_path = output_file_path.replace(
+                '.html', '{}-plot_data.json'.format(idx))
+            figure._save_figure_json(json_file_path)
         plot_array = [figure.plot for figure in figure_array]
         all_plots = bokeh.layouts.column(children=plot_array)
         bokeh.plotting.output_file(output_file_path)
@@ -599,14 +522,13 @@ class PingResult(object):
         ping_interarrivals: A list-like object enumerating the amount of time
             between the beginning of each subsequent transmission.
     """
-
     def __init__(self, ping_output):
         self.packet_loss_percentage = 100
         self.transmission_times = []
 
         self.rtts = _ListWrap(self.transmission_times, lambda entry: entry.rtt)
-        self.timestamps = _ListWrap(
-            self.transmission_times, lambda entry: entry.timestamp)
+        self.timestamps = _ListWrap(self.transmission_times,
+                                    lambda entry: entry.timestamp)
         self.ping_interarrivals = _PingInterarrivals(self.transmission_times)
 
         self.start_time = 0
@@ -651,7 +573,6 @@ class PingTransmissionTimes(object):
         rtt: The round trip time for the packet sent.
         timestamp: The timestamp the packet started its trip.
     """
-
     def __init__(self, timestamp, rtt):
         self.rtt = rtt
         self.timestamp = timestamp
@@ -659,7 +580,6 @@ class PingTransmissionTimes(object):
 
 class _ListWrap(object):
     """A convenient helper class for treating list iterators as native lists."""
-
     def __init__(self, wrapped_list, func):
         self.__wrapped_list = wrapped_list
         self.__func = func
@@ -677,7 +597,6 @@ class _ListWrap(object):
 
 class _PingInterarrivals(object):
     """A helper class for treating ping interarrivals as a native list."""
-
     def __init__(self, ping_entries):
         self.__ping_entries = ping_entries
 
@@ -709,27 +628,27 @@ def get_ping_stats(src_device, dest_address, ping_duration, ping_interval,
     Returns:
         ping_result: dict containing ping results and other meta data
     """
-    ping_count = int(ping_duration/ping_interval)
-    ping_deadline = int(ping_count*ping_interval)+1
+    ping_count = int(ping_duration / ping_interval)
+    ping_deadline = int(ping_count * ping_interval) + 1
     ping_cmd = 'ping -c {} -w {} -i {} -s {} -D'.format(
         ping_count,
         ping_deadline,
         ping_interval,
         ping_size,
     )
-    start_time = time.time()
     if isinstance(src_device, AndroidDevice):
         ping_cmd = '{} {}'.format(ping_cmd, dest_address)
-        ping_output = src_device.adb.shell(
-            ping_cmd, timeout=ping_deadline+SHORT_SLEEP, ignore_status=True)
+        ping_output = src_device.adb.shell(ping_cmd,
+                                           timeout=ping_deadline + SHORT_SLEEP,
+                                           ignore_status=True)
     elif isinstance(src_device, ssh.connection.SshConnection):
         ping_cmd = 'sudo {} {}'.format(ping_cmd, dest_address)
-        ping_output = src_device.run(
-            ping_cmd, timeout=ping_deadline+SHORT_SLEEP,
-            ignore_status=True).stdout
+        ping_output = src_device.run(ping_cmd,
+                                     timeout=ping_deadline + SHORT_SLEEP,
+                                     ignore_status=True).stdout
     else:
-        raise TypeError(
-            'Unable to ping using src_device of type %s.' % type(src_device))
+        raise TypeError('Unable to ping using src_device of type %s.' %
+                        type(src_device))
     return PingResult(ping_output.splitlines())
 
 
@@ -755,13 +674,15 @@ def empty_rssi_result():
 def get_connected_rssi(dut,
                        num_measurements=1,
                        polling_frequency=SHORT_SLEEP,
-                       first_measurement_delay=0):
+                       first_measurement_delay=0,
+                       disconnect_warning=True):
     """Gets all RSSI values reported for the connected access point/BSSID.
 
     Args:
         dut: android device object from which to get RSSI
         num_measurements: number of scans done, and RSSIs collected
         polling_frequency: time to wait between RSSI measurements
+        disconnect_warning: boolean controlling disconnection logging messages
     Returns:
         connected_rssi: dict containing the measurements results for
         all reported RSSI values (signal_poll, per chain, etc.) and their
@@ -776,6 +697,7 @@ def get_connected_rssi(dut,
          ('chain_0_rssi', empty_rssi_result()),
          ('chain_1_rssi', empty_rssi_result())])
     # yapf: enable
+    previous_bssid = 'disconnected'
     t0 = time.time()
     time.sleep(first_measurement_delay)
     for idx in range(num_measurements):
@@ -785,10 +707,16 @@ def get_connected_rssi(dut,
         status_output = dut.adb.shell(WPA_CLI_STATUS)
         match = re.search('bssid=.*', status_output)
         if match:
-            bssid = match.group(0).split('=')[1]
-            connected_rssi['bssid'].append(bssid)
+            current_bssid = match.group(0).split('=')[1]
+            connected_rssi['bssid'].append(current_bssid)
+            if disconnect_warning and current_bssid != previous_bssid:
+                logging.info('CONNECT to {} detected.'.format(current_bssid))
         else:
-            connected_rssi['bssid'].append(RSSI_ERROR_VAL)
+            current_bssid = 'disconnected'
+            connected_rssi['bssid'].append(current_bssid)
+            if disconnect_warning and previous_bssid != 'disconnected':
+                logging.warning('WIFI DISCONNECT DETECTED!')
+        previous_bssid = current_bssid
         signal_poll_output = dut.adb.shell(SIGNAL_POLL)
         match = re.search('FREQUENCY=.*', signal_poll_output)
         if match:
@@ -853,7 +781,8 @@ def get_connected_rssi(dut,
 def get_connected_rssi_nb(dut,
                           num_measurements=1,
                           polling_frequency=SHORT_SLEEP,
-                          first_measurement_delay=0):
+                          first_measurement_delay=0,
+                          disconnect_warning=True):
     return get_connected_rssi(dut, num_measurements, polling_frequency,
                               first_measurement_delay)
 
@@ -877,8 +806,9 @@ def get_scan_rssi(dut, tracked_bssids, num_measurements=1):
         time.sleep(MED_SLEEP)
         scan_output = dut.adb.shell(SCAN_RESULTS)
         for bssid in tracked_bssids:
-            bssid_result = re.search(
-                bssid + '.*', scan_output, flags=re.IGNORECASE)
+            bssid_result = re.search(bssid + '.*',
+                                     scan_output,
+                                     flags=re.IGNORECASE)
             if bssid_result:
                 bssid_result = bssid_result.group(0).split('\t')
                 scan_rssi[bssid]['data'].append(int(bssid_result[2]))
@@ -920,7 +850,6 @@ def atten_by_label(atten_list, path_label, atten_level):
             atten.set_atten(atten_level)
 
 
-# Miscellaneous Wifi Utilities
 def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
     """Function to detect mapping between attenuator ports and DUT chains.
 
@@ -999,12 +928,11 @@ def get_full_rf_connection_map(attenuators, dut, ping_server, networks):
     rf_map_by_atten = [[] for atten in attenuators]
     for net_id, net_config in networks.items():
         wutils.reset_wifi(dut)
-        wutils.wifi_connect(
-            dut,
-            net_config,
-            num_of_tries=1,
-            assert_on_fail=False,
-            check_connectivity=False)
+        wutils.wifi_connect(dut,
+                            net_config,
+                            num_of_tries=1,
+                            assert_on_fail=False,
+                            check_connectivity=False)
         rf_map_by_network[net_id] = get_current_atten_dut_chain_map(
             attenuators, dut, ping_server)
         for idx, chain in enumerate(rf_map_by_network[net_id]):
@@ -1017,6 +945,25 @@ def get_full_rf_connection_map(attenuators, dut, ping_server, networks):
     logging.debug("RF Map (by Atten): {}".format(rf_map_by_atten))
 
     return rf_map_by_network, rf_map_by_atten
+
+
+# Miscellaneous Wifi Utilities
+def validate_network(dut, ssid):
+    """Check that DUT has a valid internet connection through expected SSID
+
+    Args:
+        dut: android device of interest
+        ssid: expected ssid
+    """
+    current_network = dut.droid.wifiGetConnectionInfo()
+    try:
+        connected = wutils.validate_connection(dut) is not None
+    except:
+        connected = False
+    if connected and current_network['SSID'] == ssid:
+        return True
+    else:
+        return False
 
 
 def get_server_address(ssh_connection, dut_ip, subnet_mask):
