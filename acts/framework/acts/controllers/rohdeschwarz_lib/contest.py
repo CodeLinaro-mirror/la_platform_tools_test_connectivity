@@ -47,7 +47,7 @@ class Contest(object):
     MAXIMUM_OUTPUT_READ_RETRIES = 25
 
     # Root directory for the FTP server in the remote computer
-    FTP_ROOT = 'D:\\Contest\\Reports\\reports\\'
+    FTP_ROOT = 'D:\\Logs\\'
 
     def __init__(self, logger, remote_ip, remote_port, automation_listen_ip,
                  automation_port, dut_on_func, dut_off_func, ftp_usr, ftp_pwd):
@@ -211,6 +211,9 @@ class Contest(object):
         Returns:
              a JSON object containing the test results
         """
+
+        if not testplan_directory:
+            raise ValueError('Invalid testplan directory.')
 
         # Download test reports from the remote host
         job.run('wget -r --user={} --password={} -P {} ftp://{}/{}'.format(
@@ -387,14 +390,17 @@ class AutomationServer:
                               "DUT to off state.")
                 self.dut_off_func()
                 self.send_ok()
+            elif command.startswith(self.NOTIFICATION_TESTPLAN_START):
+                self.log.info('Test plan is starting.')
+                self.send_ok()
             elif command.startswith(self.NOTIFICATION_TESTCASE_START):
                 self.log.info('Test case is starting.')
                 self.send_ok()
-            elif command in [
-                self.NOTIFICATION_TESTPLAN_START,
-                self.NOTIFICATION_TESCASE_END,
-                self.NOTIFICATION_TESTPLAN_END
-            ]:
+            elif command.startswith(self.NOTIFICATION_TESCASE_END):
+                self.log.info('Test case finished.')
+                self.send_ok()
+            elif command.startswith(self.NOTIFICATION_TESTPLAN_END):
+                self.log.info('Test plan finished.')
                 self.send_ok()
             else:
                 self.log.error('Unhandled automation command: ' + command)

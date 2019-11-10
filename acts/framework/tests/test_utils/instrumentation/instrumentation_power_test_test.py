@@ -35,6 +35,7 @@ class MockInstrumentationPowerTest(InstrumentationPowerTest):
 
     def __init__(self):
         self.log = mock.Mock()
+        self.metric_logger = mock.Mock()
         self.current_test_name = 'test_case'
         self._power_metrics = PowerMetrics(4.2)
         self._power_metrics.test_metrics = {
@@ -47,6 +48,7 @@ class MockInstrumentationPowerTest(InstrumentationPowerTest):
         self._power_metrics.test_metrics['instrTest2'].generate_test_metrics(
             list(zip(range(10), self.SAMPLE_DATA))
         )
+        self._instrumentation_config = ConfigWrapper()
         self._class_config = ConfigWrapper(
             {
                 self.current_test_name: {
@@ -75,20 +77,19 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'avg_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'lower_limit': 0.0015,
-                    'upper_limit': 0.0025
+                    'lower_limit': 1.5,
+                    'upper_limit': 2.5
                 },
                 'max_current': {
                     'unit_type': 'current',
                     'unit': 'mA',
-                    'upper_limit': 5
+                    'upper_limit': 5000
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_accept)
         with self.assertRaises(signals.TestPass):
-            self.instrumentation_power_test.validate_power_results(
-                'instrTest1')
+            self.instrumentation_power_test.validate_power_results('instrTest1')
 
     def test_validate_power_results_lower_and_upper_limit_reject(self):
         """Test that validate_power_results reject failing measurements
@@ -99,20 +100,19 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'avg_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'lower_limit': 0.0015,
-                    'upper_limit': 0.002
+                    'lower_limit': 1.5,
+                    'upper_limit': 2
                 },
                 'max_current': {
                     'unit_type': 'current',
                     'unit': 'mA',
-                    'upper_limit': 4
+                    'upper_limit': 4000
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_reject)
         with self.assertRaises(signals.TestFailure):
-            self.instrumentation_power_test.validate_power_results(
-                'instrTest1')
+            self.instrumentation_power_test.validate_power_results('instrTest1')
 
     def test_validate_power_results_expected_value_and_deviation_accept(self):
         """Test that validate_power_results accept passing measurements
@@ -123,15 +123,14 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'stdev_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'expected_value': 0.0015,
+                    'expected_value': 1.5,
                     'percent_deviation': 20
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_accept)
         with self.assertRaises(signals.TestPass):
-            self.instrumentation_power_test.validate_power_results(
-                'instrTest1')
+            self.instrumentation_power_test.validate_power_results('instrTest1')
 
     def test_validate_power_results_expected_value_and_deviation_reject(self):
         """Test that validate_power_results reject failing measurements
@@ -142,15 +141,14 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'min_current': {
                     'unit_type': 'current',
                     'unit': 'mA',
-                    'expected_value': 0.5,
+                    'expected_value': 500,
                     'percent_deviation': 10
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_reject)
         with self.assertRaises(signals.TestFailure):
-            self.instrumentation_power_test.validate_power_results(
-                'instrTest1')
+            self.instrumentation_power_test.validate_power_results('instrTest1')
 
     def test_validate_power_results_no_such_test(self):
         """Test that validate_power_results skip validation if there are no
@@ -161,15 +159,14 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'min_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'expected_value': 0.002,
+                    'expected_value': 2,
                     'percent_deviation': 20
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_wrong_test)
         with self.assertRaises(signals.TestPass):
-            self.instrumentation_power_test.validate_power_results(
-                'instrTest1')
+            self.instrumentation_power_test.validate_power_results('instrTest1')
 
     def test_validate_power_results_no_such_metric(self):
         """Test that validate_power_results skip validation if the specified
@@ -180,15 +177,14 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'no_such_metric': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'lower_limit': 0.005,
-                    'upper_limit': 0.007
+                    'lower_limit': 5,
+                    'upper_limit': 7
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_invalid_metric)
         with self.assertRaises(signals.TestPass):
-            self.instrumentation_power_test.validate_power_results(
-                'instrTest1')
+            self.instrumentation_power_test.validate_power_results('instrTest1')
 
     def test_validate_power_results_criteria_missing_params(self):
         """Test that validate_power_results skip validation if the specified
@@ -198,15 +194,14 @@ class InstrumentationPowerTestTest(unittest.TestCase):
             'instrTest1': {
                 'avg_current': {
                     'unit': 'A',
-                    'lower_limit': 0.001,
-                    'upper_limit': 0.002
+                    'lower_limit': 1,
+                    'upper_limit': 2
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_missing_params)
         with self.assertRaises(signals.TestPass):
-            self.instrumentation_power_test.validate_power_results(
-                'instrTest1')
+            self.instrumentation_power_test.validate_power_results('instrTest1')
 
     def test_validate_power_results_pass_if_all_tests_accept(self):
         """Test that validate_power_results succeeds if it accepts the results
@@ -217,12 +212,12 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'avg_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'lower_limit': 0.002
+                    'lower_limit': 2
                 },
                 'stdev_current': {
                     'unit_type': 'current',
                     'unit': 'mA',
-                    'expected_value': 1.25,
+                    'expected_value': 1250,
                     'percent_deviation': 30
                 }
             },
@@ -230,19 +225,19 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'max_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'upper_limit': 0.005
+                    'upper_limit': 5
                 },
                 'avg_power': {
                     'unit_type': 'power',
                     'unit': 'W',
-                    'upper_limit': 0.01
+                    'upper_limit': 10
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_multi_test_accept)
         with self.assertRaises(signals.TestPass):
             self.instrumentation_power_test.validate_power_results(
-                ['instrTest1', 'instrTest2'])
+                'instrTest1', 'instrTest2')
 
     def test_validate_power_results_fail_if_at_least_one_test_rejects(self):
         """Test that validate_power_results fails if it rejects the results
@@ -253,12 +248,12 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'avg_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'lower_limit': 0.002
+                    'lower_limit': 2
                 },
                 'stdev_current': {
                     'unit_type': 'current',
                     'unit': 'mA',
-                    'expected_value': 1.25,
+                    'expected_value': 1250,
                     'percent_deviation': 30
                 }
             },
@@ -266,19 +261,19 @@ class InstrumentationPowerTestTest(unittest.TestCase):
                 'max_current': {
                     'unit_type': 'current',
                     'unit': 'A',
-                    'upper_limit': 0.005
+                    'upper_limit': 5
                 },
                 'avg_power': {
                     'unit_type': 'power',
                     'unit': 'W',
-                    'upper_limit': 0.008
+                    'upper_limit': 8
                 }
             }
         }
         self.instrumentation_power_test.set_criteria(criteria_multi_test_reject)
         with self.assertRaises(signals.TestFailure):
             self.instrumentation_power_test.validate_power_results(
-                ['instrTest1', 'instrTest2'])
+                'instrTest1', 'instrTest2')
 
 
 if __name__ == '__main__':

@@ -46,8 +46,8 @@ class PtsBaseClass(BaseTestClass):
     scan_timeout_seconds = 10
     peer_identifier = None
 
-    def __init__(self, controllers):
-        BaseTestClass.__init__(self, controllers)
+    def setup_class(self):
+        super().setup_class()
         if 'dut' in self.user_params:
             if self.user_params['dut'] == 'fuchsia_devices':
                 self.dut = create_bluetooth_device(self.fuchsia_devices[0])
@@ -122,7 +122,6 @@ class PtsBaseClass(BaseTestClass):
             }
         }
 
-    def setup_class(self):
         self.pts.setup_pts()
         self.pts.bind_to(self.process_next_action)
 
@@ -170,7 +169,7 @@ class PtsBaseClass(BaseTestClass):
 
         return _safe_wrap_test_case
 
-    def process_next_action(self, profile, action):
+    def process_next_action(self, action):
         func = self.pts_action_mapping.get(
             self.pts.pts_profile_mmi_request).get(action, "Nothing")
         if func is not 'Nothing':

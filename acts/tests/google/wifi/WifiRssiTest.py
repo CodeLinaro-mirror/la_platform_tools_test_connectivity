@@ -28,6 +28,7 @@ from acts import context
 from acts import utils
 from acts.controllers.utils_lib import ssh
 from acts.controllers import iperf_server as ipf
+from acts.metrics.loggers.blackbox import BlackboxMappedMetricLogger
 from acts.test_utils.wifi import ota_chamber
 from acts.test_utils.wifi import wifi_performance_test_utils as wputils
 from acts.test_utils.wifi import wifi_retail_ap as retail_ap
@@ -55,9 +56,9 @@ class WifiRssiTest(base_test.BaseTestClass):
     def __init__(self, controllers):
         base_test.BaseTestClass.__init__(self, controllers)
         self.testcase_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_case())
+            BlackboxMappedMetricLogger.for_test_case())
         self.testclass_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_class())
+            BlackboxMappedMetricLogger.for_test_class())
         self.publish_test_metrics = True
 
     def setup_class(self):
@@ -92,6 +93,11 @@ class WifiRssiTest(base_test.BaseTestClass):
         self.testclass_results = []
 
         # Turn WiFi ON
+        if self.testclass_params.get('airplane_mode', 1):
+            self.log.info('Turning on airplane mode.')
+            asserts.assert_true(
+                utils.force_airplane_mode(self.dut, True),
+                "Can not turn on airplane mode.")
         wutils.wifi_toggle_state(self.dut, True)
 
     def teardown_test(self):
@@ -301,7 +307,7 @@ class WifiRssiTest(base_test.BaseTestClass):
         figure = wputils.BokehFigure(
             self.current_test_name,
             x_label='Attenuation (dB)',
-            primary_y='RSSI (dBm)')
+            primary_y_label='RSSI (dBm)')
         figure.add_line(
             postprocessed_results['total_attenuation'],
             postprocessed_results['signal_poll_rssi']['mean'],
@@ -345,7 +351,7 @@ class WifiRssiTest(base_test.BaseTestClass):
         figure = wputils.BokehFigure(
             self.current_test_name,
             x_label='Time (s)',
-            primary_y=center_curves * 'Centered' + 'RSSI (dBm)',
+            primary_y_label=center_curves * 'Centered' + 'RSSI (dBm)',
         )
 
         # yapf: disable
@@ -421,8 +427,8 @@ class WifiRssiTest(base_test.BaseTestClass):
         figure = wputils.BokehFigure(
             self.current_test_name,
             x_label='RSSI (dBm)',
-            primary_y='p(RSSI = x)',
-            secondary_y='p(RSSI <= x)')
+            primary_y_label='p(RSSI = x)',
+            secondary_y_label='p(RSSI <= x)')
         for rssi_key, rssi_data in rssi_dist.items():
             figure.add_line(
                 x_data=rssi_data['rssi_values'],
@@ -876,9 +882,9 @@ class WifiOtaRssiTest(WifiRssiTest):
     def __init__(self, controllers):
         base_test.BaseTestClass.__init__(self, controllers)
         self.testcase_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_case())
+            BlackboxMappedMetricLogger.for_test_case())
         self.testclass_metric_logger = (
-            wputils.BlackboxMappedMetricLogger.for_test_class())
+            BlackboxMappedMetricLogger.for_test_class())
         self.publish_test_metrics = False
 
     def setup_class(self):
@@ -947,7 +953,7 @@ class WifiOtaRssiTest(WifiRssiTest):
             current_plot = wputils.BokehFigure(
                 title='Channel {} - Rssi vs. Position'.format(channel),
                 x_label=x_label,
-                primary_y='RSSI (dBm)',
+                primary_y_label='RSSI (dBm)',
             )
             for rssi_metric, rssi_metric_value in channel_data['rssi'].items():
                 legend = rssi_metric

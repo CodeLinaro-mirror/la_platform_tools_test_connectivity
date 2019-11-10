@@ -770,6 +770,10 @@ def set_wifi_country_code(ad, country_code):
         country_code: 2 letter ISO country code
     """
     ad.adb.shell("cmd wifi force-country-code enabled %s" % country_code)
+    try:
+        ad.droid.wifiSetCountryCode(WifiEnums.CountryCode.US)
+    except Exception:
+        pass
 
 
 def start_wifi_connection_scan(ad):
@@ -2097,30 +2101,33 @@ def stop_pcap(pcap, procs, test_status=None):
     if test_status:
         shutil.rmtree(os.path.dirname(fname))
 
-def verify_mac_not_found_in_pcap(mac, packets):
+def verify_mac_not_found_in_pcap(ad, mac, packets):
     """Verify that a mac address is not found in the captured packets.
 
     Args:
+        ad: android device object
         mac: string representation of the mac address
         packets: packets obtained by rdpcap(pcap_fname)
     """
     for pkt in packets:
         logging.debug("Packet Summary = %s", pkt.summary())
         if mac in pkt.summary():
-            asserts.fail("Caught Factory MAC: %s in packet sniffer."
-                         "Packet = %s" % (mac, pkt.show()))
+            asserts.fail("Device %s caught Factory MAC: %s in packet sniffer."
+                         "Packet = %s" % (ad.serial, mac, pkt.show()))
 
-def verify_mac_is_found_in_pcap(mac, packets):
+def verify_mac_is_found_in_pcap(ad, mac, packets):
     """Verify that a mac address is found in the captured packets.
 
     Args:
+        ad: android device object
         mac: string representation of the mac address
         packets: packets obtained by rdpcap(pcap_fname)
     """
     for pkt in packets:
         if mac in pkt.summary():
             return
-    asserts.fail("Did not find MAC = %s in packet sniffer." % mac)
+    asserts.fail("Did not find MAC = %s in packet sniffer."
+                 "for device %s" % (mac, ad.serial))
 
 def start_cnss_diags(ads):
     for ad in ads:
