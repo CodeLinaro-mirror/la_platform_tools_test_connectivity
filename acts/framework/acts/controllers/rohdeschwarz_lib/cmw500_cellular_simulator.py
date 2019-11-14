@@ -17,6 +17,143 @@ import time
 
 from acts.controllers.rohdeschwarz_lib import cmw500
 from acts.controllers import cellular_simulator as cc
+from acts.test_utils.power.tel_simulations import LteSimulation
+
+CMW_TM_MAPPING = {
+    LteSimulation.TransmissionMode.TM1: cmw500.TransmissionModes.TM1,
+    LteSimulation.TransmissionMode.TM2: cmw500.TransmissionModes.TM2,
+    LteSimulation.TransmissionMode.TM3: cmw500.TransmissionModes.TM3,
+    LteSimulation.TransmissionMode.TM4: cmw500.TransmissionModes.TM4,
+    LteSimulation.TransmissionMode.TM7: cmw500.TransmissionModes.TM7,
+    LteSimulation.TransmissionMode.TM8: cmw500.TransmissionModes.TM8,
+    LteSimulation.TransmissionMode.TM9: cmw500.TransmissionModes.TM9
+}
+
+CMW_SCH_MAPPING = {
+    LteSimulation.SchedulingMode.STATIC: cmw500.SchedulingMode.USERDEFINEDCH
+}
+
+CMW_MIMO_MAPPING = {
+    LteSimulation.MimoMode.MIMO_1x1: cmw500.MimoModes.MIMO1x1,
+    LteSimulation.MimoMode.MIMO_2x2: cmw500.MimoModes.MIMO2x2,
+    LteSimulation.MimoMode.MIMO_4x4: cmw500.MimoModes.MIMO4x4
+}
+
+# get mcs vs tbsi map with 256-qam disabled(downlink)
+get_mcs_tbsi_map_dl = {
+    'QPSK': {
+        0: 0,
+        1: 1,
+        2: 2,
+        3: 3,
+        4: 4,
+        5: 5,
+        6: 6,
+        7: 7,
+        8: 8,
+        9: 9
+    },
+    '16QAM': {
+        10: 9,
+        11: 10,
+        12: 11,
+        13: 12,
+        14: 13,
+        15: 14,
+        16: 15
+    },
+    '64QAM': {
+        17: 15,
+        18: 16,
+        19: 17,
+        20: 18,
+        21: 19,
+        22: 20,
+        23: 21,
+        24: 22,
+        25: 23,
+        26: 24,
+        27: 25,
+        28: 26
+    }
+}
+
+# get mcs vs tbsi map with 256-qam enabled(downlink)
+get_mcs_tbsi_map_for_256qam_dl = {
+    'QPSK': {
+        0: 0,
+        1: 2,
+        2: 4,
+        3: 6,
+        4: 8,
+    },
+    '16QAM': {
+        5: 10,
+        6: 11,
+        7: 12,
+        8: 13,
+        9: 14,
+        10: 15
+    },
+    '64QAM': {
+        11: 16,
+        12: 17,
+        13: 18,
+        14: 19,
+        15: 20,
+        16: 21,
+        17: 22,
+        18: 23,
+        19: 24
+    },
+    '256QAM': {
+        20: 25,
+        21: 27,
+        22: 28,
+        23: 29,
+        24: 30,
+        25: 31,
+        26: 32,
+        27: 33
+    }
+}
+
+# get mcs vs tbsi map (uplink)
+get_mcs_tbsi_map_ul = {
+    'QPSK': {
+        0: 0,
+        1: 1,
+        2: 2,
+        3: 3,
+        4: 4,
+        5: 5,
+        6: 6,
+        7: 7,
+        8: 8,
+        9: 9
+    },
+    '16QAM': {
+        10: 10,
+        11: 10,
+        12: 11,
+        13: 12,
+        14: 13,
+        15: 14,
+        16: 15,
+        17: 16,
+        18: 17,
+        19: 18,
+        20: 19,
+        21: 19,
+        22: 20,
+        23: 21,
+        24: 22,
+        25: 23,
+        26: 24,
+        27: 25,
+        28: 26
+    }
+}
 
 
 class CMW500CellularSimulator(cc.AbstractCellularSimulator):
@@ -56,16 +193,29 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
     def destroy(self):
         """ Sends finalization commands to the cellular equipment and closes
         the connection. """
-        raise NotImplementedError()
+        self.cmw.disconnect()
 
     def setup_lte_scenario(self):
         """ Configures the equipment for an LTE simulation. """
+        self.cmw.connection_type = cmw500.ConnectionType.DAU
         self.bts = [self.cmw.get_base_station()]
         self.cmw.switch_lte_signalling(cmw500.LteState.LTE_ON)
 
     def setup_lte_ca_scenario(self):
         """ Configures the equipment for an LTE with CA simulation. """
         raise NotImplementedError()
+
+    def set_lte_rrc_state_change_timer(self, enabled, time=10):
+        """ Configures the LTE RRC state change timer.
+
+        Args:
+            enabled: a boolean indicating if the timer should be on or off.
+            time: time in seconds for the timer to expire
+        """
+        # Setting this method to pass instead of raising an exception as it
+        # it is required by LTE sims.
+        # TODO (b/141838145): Implement RRC status change timer for CMW500.
+        pass
 
     def set_band(self, bts_index, band):
         """ Sets the band for the indicated base station.
@@ -101,7 +251,9 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             bts_index: the base station number
             input_power: the new input power
         """
-        raise NotImplementedError()
+        # TODO:(@ganeshganesh) Add support to configure input power.
+        # As of now cmw sets this value by default
+        pass
 
     def set_output_power(self, bts_index, output_power):
         """ Sets the output power for the indicated base station.
@@ -110,7 +262,8 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             bts_index: the base station number
             output_power: the new output power
         """
-        raise NotImplementedError()
+        bts = self.bts[bts_index]
+        bts.downlink_power_level = output_power
 
     def set_tdd_config(self, bts_index, tdd_config):
         """ Sets the tdd configuration number for the indicated base station.
@@ -165,7 +318,7 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             mimo_mode: the new mimo mode
         """
         bts = self.bts[bts_index]
-
+        mimo_mode = CMW_MIMO_MAPPING[mimo_mode]
         if mimo_mode == cmw500.MimoModes.MIMO1x1:
             self.cmw.configure_mimo_settings(cmw500.MimoScenario.SCEN1x1)
             bts.dl_antenna = cmw500.MimoModes.MIMO1x1
@@ -189,6 +342,7 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
         """
         bts = self.bts[bts_index]
 
+        tmode = CMW_TM_MAPPING[tmode]
         if (tmode in [
             cmw500.TransmissionModes.TM1,
             cmw500.TransmissionModes.TM7
@@ -223,9 +377,10 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             nrb_ul: Number of RBs for uplink.
         """
         bts = self.bts[bts_index]
+        scheduling = CMW_SCH_MAPPING[scheduling]
         bts.scheduling_mode = scheduling
 
-        if not self.ul_modulation and self.dl_modulation:
+        if not (self.ul_modulation and self.dl_modulation):
             raise ValueError('Modulation should be set prior to scheduling '
                              'call')
 
@@ -250,14 +405,21 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             if not all([nrb_ul, nrb_dl, mcs_dl, mcs_ul]):
                 raise ValueError('All parameters are mandatory.')
 
+            tbs = get_mcs_tbsi_map_ul[self.ul_modulation][mcs_ul]
+
             bts.rb_configuration_ul = (nrb_ul, 0, self.ul_modulation,
-                                       mcs_ul)
+                                       tbs)
             self.log.info('ul rb configurations set to {}'.format(
                 bts.rb_configuration_ul))
 
             time.sleep(1)
 
-            bts.rb_configuration_dl = (nrb_dl, 0, self.dl_modulation, mcs_dl)
+            if self.dl_modulation == '256QAM':
+                tbs = get_mcs_tbsi_map_for_256qam_dl[self.dl_modulation][tbs]
+            else:
+                tbs = get_mcs_tbsi_map_dl[self.dl_modulation][tbs]
+
+            bts.rb_configuration_dl = (nrb_dl, 0, self.dl_modulation, tbs)
             self.log.info('dl rb configurations set to {}'.format(
                 bts.rb_configuration_dl))
 
@@ -304,7 +466,8 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             bts_index: the base station number
             tbs_pattern_on: the new TBS pattern setting
         """
-        raise NotImplementedError()
+        # TODO (b/143918664): CMW500 doesn't have an equivalent setting.
+        pass
 
     def lte_attach_secondary_carriers(self):
         """ Activates the secondary carriers for CA. Requires the DUT to be
@@ -340,7 +503,7 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
 
     def detach(self):
         """ Turns off all the base stations so the DUT loose connection."""
-        self.cmw.disconnect()
+        self.cmw.detach()
 
     def stop(self):
         """ Stops current simulation. After calling this method, the simulator
