@@ -73,7 +73,6 @@ class TransmissionModes(Enum):
     TM2 = 'TM2'
     TM3 = 'TM3'
     TM4 = 'TM4'
-    TM6 = 'TM6'
     TM7 = 'TM7'
     TM8 = 'TM8'
     TM9 = 'TM9'
@@ -133,6 +132,18 @@ class RrcState(Enum):
     """States to enable/disable rrc."""
     RRC_ON = 'ON'
     RRC_OFF = 'OFF'
+
+
+class MacPadding(Enum):
+    """Enables/Disables Mac Padding."""
+    ON = 'ON'
+    OFF = 'OFF'
+
+
+class ConnectionType(Enum):
+    """Supported Connection Types."""
+    TEST = 'TESTmode'
+    DAU = 'DAPPlication'
 
 
 class Cmw500(abstract_inst.SocketInstrument):
@@ -302,7 +313,7 @@ class Cmw500(abstract_inst.SocketInstrument):
         return self.send_and_recv('*IDN?')
 
     def disconnect(self):
-        """Detach controller from device and switch to local mode."""
+        """Disconnect controller from device and switch to local mode."""
         self.switch_lte_signalling(LteState.LTE_OFF)
         self.close_remote_mode()
         self._close_socket()
@@ -310,6 +321,10 @@ class Cmw500(abstract_inst.SocketInstrument):
     def close_remote_mode(self):
         """Exits remote mode to local mode."""
         self.send_and_recv('&GTL')
+
+    def detach(self):
+        """Detach callbox and controller."""
+        self.send_and_recv('CALL:LTE:SIGN:PSWitched:ACTion DETach')
 
     @property
     def rrc_connection(self):
@@ -343,6 +358,36 @@ class Cmw500(abstract_inst.SocketInstrument):
             time_in_secs: timeout of inactivity in rrc connection.
         """
         cmd = 'CONFigure:LTE:SIGN:CONNection:RITimer {}'.format(time_in_secs)
+        self.send_and_recv(cmd)
+
+    @property
+    def dl_mac_padding(self):
+        """Gets the state of mac padding."""
+        return self.send_and_recv('CONFigure:LTE:SIGN:CONNection:DLPadding?')
+
+    @dl_mac_padding.setter
+    def dl_mac_padding(self, state):
+        """Enables/Disables downlink padding at the mac layer.
+
+        Args:
+            state: ON/OFF
+        """
+        cmd = 'CONFigure:LTE:SIGN:CONNection:DLPadding {}'.format(state.value)
+        self.send_and_recv(cmd)
+
+    @property
+    def connection_type(self):
+        """Gets the connection type applied in callbox."""
+        return self.send_and_recv('CONFigure:LTE:SIGN:CONNection:CTYPe?')
+
+    @connection_type.setter
+    def connection_type(self, ctype):
+        """Sets the connection type to be applied.
+
+        Args:
+            ctype: Connection type.
+        """
+        cmd = 'CONFigure:LTE:SIGN:CONNection:CTYPe {}'.format(ctype.value)
         self.send_and_recv(cmd)
 
     def get_base_station(self, bts_num=BtsNumber.BTS1):
@@ -747,6 +792,8 @@ class BaseStation(object):
         Args:
             num_antenna: Count of number of dl antennas to use.
         """
+        if not isinstance(num_antenna, MimoModes):
+            raise ValueError('num_antenna should be an instance of MimoModes.')
         cmd = 'CONFigure:LTE:SIGN:CONNection:{}:NENBantennas {}'.format(
             self._bts, num_antenna)
         self._cmw.send_and_recv(cmd)
