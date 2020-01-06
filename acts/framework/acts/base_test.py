@@ -484,7 +484,7 @@ class BaseTestClass(MoblyBaseTest):
             test_name: Name of the test that triggered this function.
             begin_time: Logline format timestamp taken when the test started.
         """
-    def on_retry():
+    def on_retry(self):
         """Function to run before retrying a test through get_func_with_retry.
 
         This function runs when a test is automatically retried. The function
@@ -702,11 +702,13 @@ class BaseTestClass(MoblyBaseTest):
             if format_args:
                 self.exec_one_testcase(
                     test_name,
-                    functools.partial(test_func, args + (setting, ), **kwargs))
+                    functools.partial(test_func, *(args + (setting, )),
+                                      **kwargs))
             else:
                 self.exec_one_testcase(
                     test_name,
-                    functools.partial(test_func, (setting, ) + args, **kwargs))
+                    functools.partial(test_func, *((setting, ) + args),
+                                      **kwargs))
 
             if len(self.results.passed) - previous_success_cnt != 1:
                 failed_settings.append(setting)
