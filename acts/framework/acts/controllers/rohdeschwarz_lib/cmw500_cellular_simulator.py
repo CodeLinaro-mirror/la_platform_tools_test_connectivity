@@ -434,9 +434,6 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             if not all([nrb_ul, nrb_dl, mcs_dl, mcs_ul]):
                 raise ValueError('All parameters are mandatory.')
 
-            # Convert ul modulation type to CMW modulation type.
-            self.ul_modulation = CMW_MODULATION_MAPPING[self.ul_modulation]
-
             tbs = get_mcs_tbsi_map_ul[self.ul_modulation][mcs_ul]
 
             bts.rb_configuration_ul = (nrb_ul, 0, self.ul_modulation, tbs)
@@ -444,9 +441,6 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
                 bts.rb_configuration_ul))
 
             time.sleep(1)
-
-            # Convert dl modulation type to CMW modulation type.
-            self.dl_modulation = CMW_MODULATION_MAPPING[self.dl_modulation]
 
             if self.dl_modulation == cmw500.ModulationType.Q256:
                 tbs = get_mcs_tbsi_map_for_256qam_dl[
@@ -470,27 +464,37 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
     def set_dl_modulation(self, bts_index, modulation):
         """ Sets the DL modulation for the indicated base station.
 
+        This function does not actually configure the test equipment with this
+        setting, but stores the value to be used later on when setting the
+        scheduling type. This is because the CMW500 API only allows to set
+        this parameters together.
+
         Args:
             bts_index: the base station number
             modulation: the new DL modulation
         """
+        # Convert dl modulation type to CMW modulation type.
+        self.dl_modulation = CMW_MODULATION_MAPPING[modulation]
 
-        # This function is only used to store the values of modulation to
-        # be inline with abstract class signature.
-        self.dl_modulation = modulation
         self.log.warning('Modulation config stored but not applied until '
                          'set_scheduling_mode called.')
 
     def set_ul_modulation(self, bts_index, modulation):
         """ Sets the UL modulation for the indicated base station.
 
+        This function does not actually configure the test equipment with this
+        setting, but stores the value to be used later on when setting the
+        scheduling type. This is because the CMW500 API only allows to set
+        this parameters together.
+
         Args:
             bts_index: the base station number
             modulation: the new UL modulation
         """
-        # This function is only used to store the values of modulation to
-        # be inline with abstract class signature.
-        self.ul_modulation = modulation
+
+        # Convert ul modulation type to CMW modulation type.
+        self.ul_modulation = CMW_MODULATION_MAPPING[modulation]
+
         self.log.warning('Modulation config stored but not applied until '
                          'set_scheduling_mode called.')
 
@@ -512,7 +516,8 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             cfi: the new CFI setting
         """
         # TODO (b/143497738): implement.
-        raise NotImplementedError()
+        self.log.error('Setting CFI is not yet implemented in the CMW500 '
+                       'controller.')
 
     def set_paging_cycle(self, bts_index, cycle_duration):
         """ Sets the paging cycle duration for the indicated base station.
@@ -522,7 +527,8 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             cycle_duration: the new paging cycle duration in milliseconds
         """
         # TODO (b/146068532): implement.
-        raise NotImplementedError()
+        self.log.error('Setting the paging cycle duration is not yet '
+                       'implemented in the CMW500 controller.')
 
     def set_phich_resource(self, bts_index, phich):
         """ Sets the PHICH Resource setting for the indicated base station.
@@ -531,7 +537,8 @@ class CMW500CellularSimulator(cc.AbstractCellularSimulator):
             bts_index: the base station number
             phich: the new PHICH resource setting
         """
-        raise NotImplementedError()
+        self.log.error('Configuring the PHICH resource setting is not yet '
+                       'implemented in the CMW500 controller.')
 
     def lte_attach_secondary_carriers(self):
         """ Activates the secondary carriers for CA. Requires the DUT to be

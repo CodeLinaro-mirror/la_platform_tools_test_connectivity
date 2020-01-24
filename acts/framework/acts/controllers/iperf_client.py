@@ -259,7 +259,7 @@ class IPerfClientOverAdb(IPerfClientBase):
         Returns:
             The iperf result file path.
         """
-        iperf_output = ''
+        clean_out = ''
         try:
             if not iperf_binary:
                 logging.debug('No iperf3 binary specified.  '
@@ -279,6 +279,6 @@ class IPerfClientOverAdb(IPerfClientBase):
 
         full_out_path = self._get_full_file_path(tag)
         with open(full_out_path, 'w') as out_file:
-            out_file.write('\n'.join(iperf_output))
+            out_file.write('\n'.join(clean_out))
 
         return full_out_path

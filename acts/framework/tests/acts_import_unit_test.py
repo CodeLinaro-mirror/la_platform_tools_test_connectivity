@@ -48,12 +48,6 @@ else:
 PY_FILE_REGEX = re.compile('.+\.py$')
 
 BLACKLIST = [
-    # TODO(markdr): Remove these after BT team evaluates these tests.
-    'acts/test_utils/bt/PowerBaseTest.py',
-    'tests/google/ble/power/GattPowerTest.py',
-    'tests/google/bt/power/A2dpPowerTest.py',
-    'tests/google/ble/power/BleScanPowerTest.py',
-
     'acts/controllers/rohdeschwarz_lib/contest.py',
     'acts/controllers/native.py',
     'acts/controllers/native_android_device.py',
@@ -67,7 +61,6 @@ BLACKLIST = [
     'acts/test_utils/coex/coex_test_utils.py',
     'acts/test_utils/tel/twilio_client.py',
     'acts/test_utils/bt/A2dpCodecBaseTest.py',
-    'acts/test_utils/bt/BtRangeBaseTest.py',
     'acts/test_utils/bt/BtSarBaseTest.py',
     'tests/google/ble/beacon_tests/BeaconSwarmTest.py',
     'tests/google/bt/pts/BtCmdLineTest.py',
