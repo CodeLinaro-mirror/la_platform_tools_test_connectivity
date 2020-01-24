@@ -14,9 +14,12 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+import backoff
 import os
 import logging
 import paramiko
+import socket
+import time
 
 logging.getLogger("paramiko").setLevel(logging.WARNING)
 
@@ -50,6 +53,13 @@ def get_private_key(ip_address, ssh_config):
     raise Exception('No valid ssh key type found', exceptions)
 
 
+@backoff.on_exception(
+    backoff.constant,
+    (paramiko.ssh_exception.SSHException,
+     paramiko.ssh_exception.AuthenticationException, socket.timeout,
+     socket.error, ConnectionRefusedError, ConnectionResetError),
+    interval=1.5,
+    max_tries=4)
 def create_ssh_connection(ip_address,
                           ssh_username,
                           ssh_config,
