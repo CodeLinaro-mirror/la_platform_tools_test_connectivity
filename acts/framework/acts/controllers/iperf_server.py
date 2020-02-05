@@ -17,7 +17,6 @@
 import json
 import logging
 import math
-import IPy
 import os
 import shlex
 import subprocess
@@ -144,7 +143,6 @@ class IPerfResult(object):
             The value of the throughput in the appropriate units.
         """
         speed_divisor = 1
-        print(self.reporting_speed_units)
         if self.reporting_speed_units[1:].lower() == 'bytes':
             speed_divisor = speed_divisor * BITS_IN_BYTE
         if self.reporting_speed_units[0:1].lower() == 'k':
@@ -244,8 +242,8 @@ class IPerfResult(object):
         """
         if not self._has_data():
             return None
-        instantaneous_rates = self.instantaneous_rates[
-            iperf_ignored_interval:-1]
+        instantaneous_rates = self.instantaneous_rates[iperf_ignored_interval:
+                                                       -1]
         avg_rate = math.fsum(instantaneous_rates) / len(instantaneous_rates)
         sqd_deviations = ([(rate - avg_rate)**2
                            for rate in instantaneous_rates])
@@ -302,7 +300,7 @@ class IPerfServerBase(object):
         Note: If the directory for the file path does not exist, it will be
         created.
 
-        Args:s
+        Args:
             tag: The tag passed in to the server run.
         """
         out_dir = self.log_path
@@ -336,7 +334,7 @@ def _get_port_from_ss_output(ss_output, pid):
         if pid in line:
             # Expected format:
             # tcp LISTEN  0 5 *:<PORT>  *:* users:(("cmd",pid=<PID>,fd=3))
-            return line.split()[4].split(':')[1]
+            return line.split()[4].split(':')[-1]
     else:
         raise ProcessLookupError('Could not find started iperf3 process.')
 
@@ -640,6 +638,7 @@ class IPerfServerOverAdb(IPerfServerBase):
                 cmd=iperf_command,
                 extra_flags=extra_args,
                 log_file=self._get_device_log_path()))
+
         self._iperf_process_adb_pid = ''
         while len(self._iperf_process_adb_pid) == 0:
             self._iperf_process_adb_pid = self._android_device.adb.shell(

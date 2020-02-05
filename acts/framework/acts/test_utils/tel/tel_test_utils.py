@@ -3735,6 +3735,37 @@ def http_file_download_by_sl4a(ad,
             ad.adb.shell("rm %s" % file_path, ignore_status=True)
 
 
+def get_wifi_usage(ad, sid=None, apk=None):
+    if not sid:
+        sid = ad.droid.subscriptionGetDefaultDataSubId()
+    current_time = int(time.time() * 1000)
+    begin_time = current_time - 10 * 24 * 60 * 60 * 1000
+    end_time = current_time + 10 * 24 * 60 * 60 * 1000
+
+    if apk:
+        uid = ad.get_apk_uid(apk)
+        ad.log.debug("apk %s uid = %s", apk, uid)
+        try:
+            return ad.droid.connectivityQueryDetailsForUid(
+                TYPE_WIFI,
+                ad.droid.telephonyGetSubscriberIdForSubscription(sid),
+                begin_time, end_time, uid)
+        except:
+            return ad.droid.connectivityQueryDetailsForUid(
+                ad.droid.telephonyGetSubscriberIdForSubscription(sid),
+                begin_time, end_time, uid)
+    else:
+        try:
+            return ad.droid.connectivityQuerySummaryForDevice(
+                TYPE_WIFI,
+                ad.droid.telephonyGetSubscriberIdForSubscription(sid),
+                begin_time, end_time)
+        except:
+            return ad.droid.connectivityQuerySummaryForDevice(
+                ad.droid.telephonyGetSubscriberIdForSubscription(sid),
+                begin_time, end_time)
+
+
 def get_mobile_data_usage(ad, sid=None, apk=None):
     if not sid:
         sid = ad.droid.subscriptionGetDefaultDataSubId()
@@ -6929,7 +6960,7 @@ def start_sdm_logger(ad):
         seconds = 15 * 60
         # Remove sdm logs modified more than specified seconds ago
         ad.adb.shell(
-            "find %s -type f -iname *.sdm* -not -mtime -%ss -delete" %
+            "find %s -type f -iname [!.]*.sdm* -not -mtime -%ss -delete" %
             (ad.sdm_log_path, seconds))
     # start logging
     cmd = "setprop vendor.sys.modem.logging.enable true"

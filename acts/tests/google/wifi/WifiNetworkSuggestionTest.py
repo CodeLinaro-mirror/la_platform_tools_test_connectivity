@@ -149,7 +149,7 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
         if expect_post_connection_broadcast is not None:
             self.dut.droid.wifiStartTrackingNetworkSuggestionStateChange()
 
-        self.dut.log.info("Adding network suggestions");
+        self.dut.log.info("Adding network suggestions")
         asserts.assert_true(
             self.dut.droid.wifiAddNetworkSuggestions(network_suggestions),
             "Failed to add suggestions")
@@ -218,6 +218,11 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
 
         self.remove_suggestions_disconnect_and_ensure_no_connection_back(
             network_suggestions, wifi_network[WifiEnums.SSID_KEY])
+
+        # Reboot with empty suggestion, verify user approval is kept.
+        self.dut.reboot()
+        time.sleep(DEFAULT_TIMEOUT)
+        asserts.assert_true(self.is_approved(), "User approval should be kept")
 
     @test_tracker_info(uuid="bda8ed20-4382-4380-831a-64cf77eca108")
     def test_connect_to_wpa_psk_2g(self):
@@ -328,6 +333,7 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
         4. Reboot the device.
         5. Wait for the device to connect to back to it.
         6. Remove the suggestions and ensure the device does not connect back.
+        7. Reboot the device again, ensure user approval is kept
         """
         self._test_connect_to_wifi_network_reboot_config_store(
             [self.wpa_psk_5g], self.wpa_psk_5g)
@@ -345,6 +351,7 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
         4. Reboot the device.
         5. Wait for the device to connect to the wifi network.
         6. Remove suggestions and ensure device doesn't connect back to it.
+        7. Reboot the device again, ensure user approval is kept
         """
         self._test_connect_to_wifi_network_reboot_config_store(
             [self.config_aka], self.ent_network_2g)
@@ -362,6 +369,7 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
         4. Reboot the device.
         5. Wait for the device to connect to the wifi network.
         6. Remove suggestions and ensure device doesn't connect back to it.
+        7. Reboot the device again, ensure user approval is kept
         """
         config = dict(self.config_ttls)
         config[WifiEnums.Enterprise.PHASE2] = WifiEnums.EapPhase2.PAP.value
@@ -511,6 +519,7 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
         4. Reboot the device.
         5. Wait for the device to connect to back to it.
         6. Remove the suggestions and ensure the device does not connect back.
+        7. Reboot the device again, ensure user approval is kept
         """
         asserts.skip_if(not hasattr(self, "passpoint_networks"),
                         "No passpoint networks, skip this test")
@@ -571,3 +580,58 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
             self.dut, passpoint_config[WifiEnums.SSID_KEY])
         time.sleep(PASSPOINT_TIMEOUT)
         wutils.wait_for_connect(self.dut, passpoint_config[WifiEnums.SSID_KEY])
+
+    @test_tracker_info(uuid="")
+    def test_initial_auto_join_on_network_suggestion(self):
+        """
+        Add a network suggestion with enableAutojoin bit set to false, ensure the device doesn't
+        auto connect to this network
+
+        Steps:
+        1. Create a network suggestion.
+        2. Set EnableAutojoin to false.
+        3. Add this suggestion
+        4. Ensure device doesn't connect to his network
+        """
+        network_suggestion = self.wpa_psk_5g
+        # Set suggestion auto join initial to false.
+        network_suggestion["enableAutojoin"] = False
+        self.dut.log.info("Adding network suggestions")
+        asserts.assert_true(
+            self.dut.droid.wifiAddNetworkSuggestions([network_suggestion]),
+            "Failed to add suggestions")
+        # Enable suggestions by the app.
+        self.dut.log.debug("Enabling suggestions from test")
+        self.set_approved(True)
+        wutils.start_wifi_connection_scan_and_return_status(self.dut)
+        asserts.assert_false(
+            wutils.wait_for_connect(self.dut, network_suggestion[WifiEnums.SSID_KEY],
+                                    assert_on_fail=False), "Device should not connect.")
+
+    @test_tracker_info(uuid="")
+    def test_user_override_auto_join_on_network_suggestion(self):
+        """
+        Add a network suggestion, user change the auto join to false, ensure the device doesn't
+        auto connect to this network
+
+        Steps:
+        1. Create a network suggestion.
+        2. Add this suggestion, and ensure we connect to this network
+        3. Simulate user change the auto join to false.
+        4. Toggle the Wifi off and on
+        4. Ensure device doesn't connect to his network
+        """
+        network_suggestion = self.wpa_psk_5g
+        self.add_suggestions_and_ensure_connection([network_suggestion],
+                                                   network_suggestion[WifiEnums.SSID_KEY], False)
+        wifi_info = self.dut.droid.wifiGetConnectionInfo()
+        self.dut.log.info(wifi_info)
+        network_id = wifi_info[WifiEnums.NETID_KEY]
+        # Simulate user disable auto join through Settings.
+        self.dut.log.info("Disable auto join on suggestion")
+        self.dut.droid.wifiEnableAutojoin(network_id, False)
+        wutils.wifi_toggle_state(self.dut, False)
+        wutils.wifi_toggle_state(self.dut, True)
+        asserts.assert_false(
+            wutils.wait_for_connect(self.dut, network_suggestion[WifiEnums.SSID_KEY],
+                                    assert_on_fail=False), "Device should not connect.")
