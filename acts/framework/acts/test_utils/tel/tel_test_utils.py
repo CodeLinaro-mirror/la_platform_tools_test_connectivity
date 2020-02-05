@@ -927,11 +927,11 @@ def toggle_airplane_mode_msim(log, ad, new_state=None, strict_checking=True):
         new_state = not cur_state
         ad.log.info("Toggle APM mode, from current tate %s to %s", cur_state,
                     new_state)
-
     sub_id_list = []
     active_sub_info = ad.droid.subscriptionGetAllSubInfoList()
-    for info in active_sub_info:
-        sub_id_list.append(info['subscriptionId'])
+    if active_sub_info:
+        for info in active_sub_info:
+            sub_id_list.append(info['subscriptionId'])
 
     ad.ed.clear_all_events()
     time.sleep(0.1)
@@ -6955,12 +6955,12 @@ def start_sdm_logger(ad):
     # Delete existing SDM logs which were created 15 mins prior
     ad.sdm_log_path = DEFAULT_SDM_LOG_PATH
     file_count = ad.adb.shell(
-        "find %s -type f -iname *.sdm* | wc -l" % ad.sdm_log_path)
+        "find %s -type f -iname sbuff_[0-9]*.sdm* | wc -l" % ad.sdm_log_path)
     if int(file_count) > 3:
         seconds = 15 * 60
         # Remove sdm logs modified more than specified seconds ago
         ad.adb.shell(
-            "find %s -type f -iname [!.]*.sdm* -not -mtime -%ss -delete" %
+            "find %s -type f -iname sbuff_[0-9]*.sdm* -not -mtime -%ss -delete" %
             (ad.sdm_log_path, seconds))
     # start logging
     cmd = "setprop vendor.sys.modem.logging.enable true"
