@@ -53,6 +53,7 @@ from acts import context
 
 ACCEPTANCE_THRESHOLD = 'acceptance_threshold'
 AUTOTESTER_LOG = 'autotester.log'
+DEFAULT_PUSH_FILE_TIMEOUT = 180
 DISCONNECT_USB_FILE = 'disconnectusb.log'
 POLLING_INTERVAL = 0.5
 
@@ -68,7 +69,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
     def __init__(self, configs):
         super().__init__(configs)
 
-        self.metric_logger = BlackboxMappedMetricLogger.for_test_class()
+        self.metric_logger = BlackboxMappedMetricLogger.for_test_case()
         self._test_apk = None
         self._sl4a_apk = None
         self._instr_cmd_builder = None
@@ -118,8 +119,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
 
         if brightness_level is None:
             raise ValueError('no brightness level defined (or left as None) '
-                             'and it is needed.'
-                             % self.ad_dut.model)
+                             'and it is needed.')
 
         self.adb_run(common.screen_brightness.set_value(brightness_level))
         self.adb_run(common.screen_timeout_ms.set_value(1800000))
@@ -127,9 +127,15 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         self.adb_run(common.screensaver.toggle(False))
         self.adb_run(common.wake_gesture.toggle(False))
         self.adb_run(common.doze_mode.toggle(False))
+        self.adb_run(common.doze_always_on.toggle(False))
 
-        # Accelerometer
+        # Sensors
         self.adb_run(common.auto_rotate.toggle(False))
+        self.adb_run(common.disable_sensors)
+        self.adb_run(common.ambient_eq.toggle(False))
+
+        if self.file_exists(common.MOISTURE_DETECTION_SETTING_FILE):
+            self.adb_run(common.disable_moisture_detection)
 
         # Time
         self.adb_run(common.auto_time.toggle(False))
@@ -182,6 +188,11 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             'gms:phenotype:phenotype_flag:debug_bypass_phenotype').toggle(True))
         self.adb_run(DeviceGServices(
             'gms_icing_extension_download_enabled').toggle(False))
+
+        # Comms
+        self.adb_run(common.wifi.toggle(False))
+        self.adb_run(common.bluetooth.toggle(False))
+        self.adb_run(common.airplane_mode.toggle(True))
 
         # Misc. Google features
         self.adb_run(goog.disable_playstore)
@@ -254,6 +265,43 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             path = os.path.join(self.ad_dut.external_storage_path, file_name)
             self.adb_run('rm -rf %s' % path)
 
+    def trigger_scan_on_external_storage(self):
+        cmd = 'am broadcast -a android.intent.action.MEDIA_MOUNTED '
+        cmd = cmd + '-d file://%s ' % self.ad_dut.external_storage_path
+        cmd = cmd + '--receiver-include-background'
+        return self.adb_run(cmd)
+
+    def file_exists(self, file_path):
+        cmd = '(test -f %s && echo yes) || echo no' % file_path
+        result = self.adb_run(cmd)
+        if result[cmd] == 'yes':
+            return True
+        elif result[cmd] == 'no':
+            return False
+        raise ValueError('Couldn\'t determine if %s exists. '
+                         'Expected yes/no, got %s' % (file_path, result[cmd]))
+
+    def push_to_external_storage(self, file_path, dest=None,
+        timeout=DEFAULT_PUSH_FILE_TIMEOUT):
+        """Pushes a file to {$EXTERNAL_STORAGE} and returns its final location.
+
+        Args:
+            file_path: The file to be pushed.
+            dest: Where within {$EXTERNAL_STORAGE} it should be pushed.
+            timeout: Float number of seconds to wait for the file to be pushed.
+
+        Returns: The absolute path where the file was pushed.
+        """
+        if dest is None:
+            dest = os.path.basename(file_path)
+
+        dest_path = os.path.join(self.ad_dut.external_storage_path, dest)
+        self.log.info('clearing %s before pushing %s' % (dest_path, file_path))
+        self.ad_dut.adb.shell('rm -rf %s', dest_path)
+        self.log.info('pushing file %s to %s' % (file_path, dest_path))
+        self.ad_dut.adb.push(file_path, dest_path, timeout=timeout)
+        return dest_path
+
     # Test runtime utils
 
     def power_instrumentation_command_builder(self):
@@ -307,7 +355,8 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         self._log_metrics()
         return result
 
-    def run_and_measure(self, instr_class, instr_method=None, req_params=None):
+    def run_and_measure(self, instr_class, instr_method=None, req_params=None,
+        extra_params=None):
         """Convenience method for setting up the instrumentation test command,
         running it on the device, and starting the Monsoon measurement.
 
@@ -315,6 +364,8 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             instr_class: Fully qualified name of the instrumentation test class
             instr_method: Name of the instrumentation test method
             req_params: List of required parameter names
+            extra_params: List of ad-hoc parameters to be passed defined as
+                tuples of size 2.
 
         Returns: summary of Monsoon measurement
         """
@@ -333,6 +384,11 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         params.update(instr_call_config)
         for name, value in params.items():
             self._instr_cmd_builder.add_key_value_param(name, value)
+
+        if extra_params:
+            for name, value in extra_params:
+                self._instr_cmd_builder.add_key_value_param(name, value)
+
         instr_cmd = self._instr_cmd_builder.build()
         self.log.info('Running instrumentation call: %s' % instr_cmd)
         self.adb_run_async(instr_cmd)

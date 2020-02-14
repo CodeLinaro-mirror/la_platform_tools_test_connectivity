@@ -72,8 +72,7 @@ disable_dialing = DeviceSetprop('ro.telephony.disable-call', 'true', 'false')
 
 # Screen
 
-screen_adaptive_brightness = DeviceSetting(
-    SYSTEM, 'screen_brightness_mode')
+screen_adaptive_brightness = DeviceSetting(SYSTEM, 'screen_brightness_mode')
 
 screen_brightness = DeviceSetting(SYSTEM, 'screen_brightness')
 
@@ -82,6 +81,8 @@ screen_always_on = DeviceState('svc power stayon', 'true', 'false')
 screen_timeout_ms = DeviceSetting(SYSTEM, 'screen_off_timeout')
 
 doze_mode = DeviceSetting(SECURE, 'doze_enabled')
+
+doze_always_on = DeviceSetting(SECURE, 'doze_always_on')
 
 wake_gesture = DeviceSetting(SECURE, 'wake_gesture_enabled')
 
@@ -99,7 +100,7 @@ auto_rotate = DeviceSetting(SYSTEM, 'accelerometer_rotation')
 
 auto_time = DeviceSetting(GLOBAL, 'auto_time')
 
-auto_timezone = DeviceSetting(GLOBAL, 'auto_time_zone')
+auto_timezone = DeviceSetting(GLOBAL, 'auto_timezone')
 
 timezone = DeviceSetprop('persist.sys.timezone')
 
@@ -124,6 +125,16 @@ enable_full_batterystats_history = 'dumpsys batterystats --enable full-history'
 disable_doze = 'dumpsys deviceidle disable'
 
 
+# Sensors
+
+disable_sensors = 'dumpsys sensorservice restrict blah'
+
+MOISTURE_DETECTION_SETTING_FILE = '/sys/class/power_supply/usb/moisture_detection_enabled'
+disable_moisture_detection = 'echo 0 > %s' % MOISTURE_DETECTION_SETTING_FILE
+
+## Ambient EQ: https://support.google.com/googlenest/answer/9137130?hl=en
+ambient_eq = DeviceSetting(SECURE, 'display_white_balance_enabled')
+
 # Miscellaneous
 
 test_harness = DeviceBinaryCommandSeries(
@@ -132,3 +143,5 @@ test_harness = DeviceBinaryCommandSeries(
         DeviceSetprop('ro.test_harness')
     ]
 )
+
+dismiss_keyguard = 'wm dismiss-keyguard'
