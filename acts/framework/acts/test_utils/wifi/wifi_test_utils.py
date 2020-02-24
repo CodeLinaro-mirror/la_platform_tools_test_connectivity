@@ -1779,7 +1779,8 @@ def convert_pem_key_to_pkcs8(in_file, out_file):
     utils.exe_cmd(cmd)
 
 
-def validate_connection(ad, ping_addr=DEFAULT_PING_ADDR, wait_time=2):
+def validate_connection(ad, ping_addr=DEFAULT_PING_ADDR, wait_time=2,
+                        ping_gateway=True):
     """Validate internet connection by pinging the address provided.
 
     Args:
@@ -1792,8 +1793,18 @@ def validate_connection(ad, ping_addr=DEFAULT_PING_ADDR, wait_time=2):
     """
     # wait_time to allow for DHCP to complete.
     time.sleep(wait_time)
-    ping = ad.droid.httpPing(ping_addr)
-    ad.log.info("Http ping result: %s.", ping)
+    ping = False
+    try:
+        ping = ad.droid.httpPing(ping_addr)
+        ad.log.info("Http ping result: %s.", ping)
+    except:
+        pass
+    if not ping and ping_gateway:
+        ad.log.info("Http ping failed. Pinging default gateway")
+        gw = ad.droid.connectivityGetIPv4DefaultGateway()
+        result = ad.adb.shell("ping -c 6 {}".format(gw))
+        ad.log.info("Default gateway ping result: %s" % result)
+        ping = False if "100% packet loss" in result else True
     return ping
 
 
@@ -2164,7 +2175,7 @@ def get_ssrdumps(ad, test_name=""):
         ad.log.info("Pulling ssrdumps %s", logs)
         log_path = os.path.join(ad.log_path, test_name,
                                 "SSRDUMP_%s" % ad.serial)
-        utils.create_dir(log_path)
+        os.makedirs(log_path, exist_ok=True)
         ad.pull_files(logs, log_path)
     ad.adb.shell("find /data/vendor/ssrdump/ -type f -delete")
 
@@ -2182,7 +2193,7 @@ def start_pcap(pcap, wifi_band, test_name):
     """
     log_dir = os.path.join(
         context.get_current_context().get_full_output_path(), 'PacketCapture')
-    utils.create_dir(log_dir)
+    os.makedirs(log_dir, exist_ok=True)
     if wifi_band == 'dual':
         bands = [BAND_2G, BAND_5G]
     else:
@@ -2288,7 +2299,7 @@ def get_cnss_diag_log(ad, test_name=""):
     if logs:
         ad.log.info("Pulling cnss_diag logs %s", logs)
         log_path = os.path.join(ad.device_log_path, "CNSS_DIAG_%s" % ad.serial)
-        utils.create_dir(log_path)
+        os.makedirs(log_path, exist_ok=True)
         ad.pull_files(logs, log_path)
 
 
