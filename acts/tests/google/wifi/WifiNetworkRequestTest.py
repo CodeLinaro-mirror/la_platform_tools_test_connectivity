@@ -84,6 +84,9 @@ class WifiNetworkRequestTest(WifiBaseTest):
         self.dut.droid.wifiReleaseNetworkAll()
         self.dut.droid.wifiDisconnect()
         wutils.reset_wifi(self.dut)
+        # Ensure we disconnected from the current network before the next test.
+        if self.dut.droid.wifiGetConnectionInfo()["supplicant_state"] != "disconnected":
+            wutils.wait_for_disconnect(self.dut)
         self.dut.ed.clear_all_events()
 
     def on_fail(self, test_name, begin_time):
@@ -386,7 +389,8 @@ class WifiNetworkRequestTest(WifiBaseTest):
         Steps:
         1. Send a network specifier with the non-matching SSID pattern.
         2. Ensure that the platform does not retrun any matching networks.
-        3. Wait for the request to timeout.
+        3. Trigger a connect to one of the networks (as a saved network).
+        4. Wait for the request to timeout.
         """
         network = self.wpa_psk_5g
         network_specifier = self.wpa_psk_5g.copy();
@@ -404,9 +408,11 @@ class WifiNetworkRequestTest(WifiBaseTest):
                     network_specifier)
         time.sleep(wifi_constants.NETWORK_REQUEST_CB_REGISTER_DELAY_SEC)
         self.dut.droid.wifiRegisterNetworkRequestMatchCallback()
+        # Trigger a connection to a network as a saved network in the
+        # meantime and ensure that this does not change the behavior.
+        wutils.connect_to_wifi_network(self.dut, network, check_connectivity=False)
         # Wait for the request to timeout.
-        timeout_secs = \
-            NETWORK_REQUEST_TIMEOUT_MS / 1000 + NETWORK_REQUEST_INSTANT_FAILURE_TIMEOUT_SEC
+        timeout_secs = NETWORK_REQUEST_TIMEOUT_MS * 2 / 1000
         try:
             on_unavailable_event = self.dut.ed.pop_event(
                 wifi_constants.WIFI_NETWORK_CB_ON_UNAVAILABLE, timeout_secs)
