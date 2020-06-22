@@ -22,6 +22,7 @@ from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi.aware import aware_const as aconsts
 from acts.test_utils.wifi.aware import aware_test_utils as autils
 from acts.test_utils.wifi.aware.AwareBaseTest import AwareBaseTest
+from acts.test_utils.wifi.WifiBaseTest import WifiBaseTest
 
 
 class DiscoveryTest(AwareBaseTest):
@@ -561,6 +562,7 @@ class DiscoveryTest(AwareBaseTest):
     #######################################
 
     @test_tracker_info(uuid="954ebbde-ed2b-4f04-9e68-88239187d69d")
+    @WifiBaseTest.wifi_test_wrap
     def test_positive_unsolicited_passive_typical(self):
         """Functional test case / Discovery test cases / positive test case:
     - Solicited publish + passive subscribe
@@ -1240,6 +1242,7 @@ class DiscoveryTest(AwareBaseTest):
 
         ##########################################################
 
+    @test_tracker_info(uuid="78d89d63-1cbc-47f6-a8fc-74057fea655e")
     def test_multiple_concurrent_services_diff_ssi_unsolicited_passive(self):
         """Multi service test on same service name but different Service Specific Info
     - Unsolicited publish
@@ -1249,6 +1252,7 @@ class DiscoveryTest(AwareBaseTest):
             type_x=[aconsts.PUBLISH_TYPE_UNSOLICITED, aconsts.SUBSCRIBE_TYPE_PASSIVE],
             type_y=[aconsts.PUBLISH_TYPE_UNSOLICITED, aconsts.SUBSCRIBE_TYPE_PASSIVE])
 
+    @test_tracker_info(uuid="5d349491-48e4-4ca1-a8af-7afb44e7bcbc")
     def test_multiple_concurrent_services_diff_ssi_solicited_active(self):
         """Multi service test on same service name but different Service Specific Info
     - Solicited publish
