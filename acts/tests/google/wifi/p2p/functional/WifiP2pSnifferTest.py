@@ -34,6 +34,7 @@ WPS_DISPLAY = wp2putils.WifiP2PEnums.WpsInfo.WIFI_WPS_INFO_DISPLAY
 WPS_KEYPAD = wp2putils.WifiP2PEnums.WpsInfo.WIFI_WPS_INFO_KEYPAD
 DEFAULT_TIMEOUT = 10
 
+
 class WifiP2pSnifferTest(WifiP2pBaseTest):
     """Tests factory MAC is not leaked for p2p discovery and associated cases.
 
@@ -41,7 +42,6 @@ class WifiP2pSnifferTest(WifiP2pBaseTest):
     * At least two Android devices
     * An access point as sniffer
     """
-
     def __init__(self, controllers):
         WifiP2pBaseTest.__init__(self, controllers)
 
@@ -53,8 +53,8 @@ class WifiP2pSnifferTest(WifiP2pBaseTest):
 
     def setup_test(self):
         super(WifiP2pSnifferTest, self).setup_test()
-        self.pcap_procs = wutils.start_pcap(
-            self.packet_capture, '2g', self.test_name)
+        self.pcap_procs = wutils.start_pcap(self.packet_capture, '2g',
+                                            self.test_name)
 
     def teardown_test(self):
         if self.pcap_procs:
@@ -117,7 +117,9 @@ class WifiP2pSnifferTest(WifiP2pBaseTest):
             go_dut = self.dut2
             gc_dut = self.dut1
 
-        wp2putils.p2p_connection_ping_test(gc_dut, p2pconsts.GO_IP_ADDRESS)
+        go_ip = wp2putils.p2p_go_ip(gc_dut)
+        wp2putils.p2p_connection_ping_test(gc_dut, go_ip)
+
         # trigger disconnect
         wp2putils.p2p_disconnect(self.dut1)
         wp2putils.check_disconnect(self.dut2)
