@@ -18,10 +18,11 @@ from builtins import str
 
 import logging
 import re
-import shellescape
+import shlex
 
-from acts import error
+from acts.controllers.adb_lib.error import AdbError
 from acts.libs.proc import job
+from acts.metrics.loggers import usage_metadata_logger
 
 DEFAULT_ADB_TIMEOUT = 60
 DEFAULT_ADB_PULL_TIMEOUT = 180
@@ -51,20 +52,6 @@ def parsing_parcel_output(output):
     return re.sub(r'[.\s]', '', output)
 
 
-class AdbError(error.ActsError):
-    """Raised when there is an error in adb operations."""
-
-    def __init__(self, cmd, stdout, stderr, ret_code):
-        super().__init__()
-        self.cmd = cmd
-        self.stdout = stdout
-        self.stderr = stderr
-        self.ret_code = ret_code
-
-    def __str__(self):
-        return ("Error executing adb cmd '%s'. ret: %d, stdout: %s, stderr: %s"
-                ) % (self.cmd, self.ret_code, self.stdout, self.stderr)
-
 
 class AdbProxy(object):
     """Proxy class for ADB.
@@ -87,7 +74,7 @@ class AdbProxy(object):
         self.serial = serial
         self._server_local_port = None
         adb_path = job.run("which adb").stdout
-        adb_cmd = [shellescape.quote(adb_path)]
+        adb_cmd = [shlex.quote(adb_path)]
         if serial:
             adb_cmd.append("-s %s" % serial)
         if ssh_connection is not None:
@@ -207,7 +194,7 @@ class AdbProxy(object):
             device_port: Port number to use on the android device.
 
         Returns:
-            The command output for the forward command.
+            Forwarded port on host as int or command output string on error
         """
         if self._ssh_connection:
             # We have to hop through a remote host first.
@@ -217,14 +204,18 @@ class AdbProxy(object):
             remote_port = self._ssh_connection.find_free_port()
             host_port = self._ssh_connection.create_ssh_tunnel(
                 remote_port, local_port=host_port)
-        output = self.forward("tcp:%d tcp:%d" % (host_port, device_port))
+        output = self.forward("tcp:%d tcp:%d" % (host_port, device_port),
+                              ignore_status=True)
         # If hinted_port is 0, the output will be the selected port.
         # Otherwise, there will be no output upon successfully
         # forwarding the hinted port.
-        if output:
-            return int(output)
-        else:
+        if not output:
             return host_port
+        try:
+            output_int = int(output)
+        except ValueError:
+            return output
+        return output_int
 
     def remove_tcp_forward(self, host_port):
         """Stop tcp forwarding a port from localhost to this android device.
@@ -261,12 +252,12 @@ class AdbProxy(object):
     def shell(self, command, ignore_status=False, timeout=DEFAULT_ADB_TIMEOUT):
         return self._exec_adb_cmd(
             'shell',
-            shellescape.quote(command),
+            shlex.quote(command),
             ignore_status=ignore_status,
             timeout=timeout)
 
     def shell_nb(self, command):
-        return self._exec_adb_cmd_nb('shell', shellescape.quote(command))
+        return self._exec_adb_cmd_nb('shell', shlex.quote(command))
 
     def pull(self,
              command,
@@ -277,6 +268,7 @@ class AdbProxy(object):
 
     def __getattr__(self, name):
         def adb_call(*args, **kwargs):
+            usage_metadata_logger.log_usage(self.__module__, name)
             clean_name = name.replace('_', '-')
             arg_str = ' '.join(str(elem) for elem in args)
             return self._exec_adb_cmd(clean_name, arg_str, **kwargs)

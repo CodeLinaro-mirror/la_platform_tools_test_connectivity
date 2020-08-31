@@ -65,6 +65,9 @@ WAIT_TIME_AFTER_MODE_CHANGE = 60
 # Max time to wait for Carrier Config Version to Update in mins
 WAIT_TIME_FOR_CARRIERCONFIG_CHANGE = 20
 
+# Max time to wait for Emergency DB Version to Update in mins
+WAIT_TIME_FOR_ER_DB_CHANGE = 10
+
 # Max time to wait after toggle airplane mode and before
 # get expected event
 MAX_WAIT_TIME_AIRPLANEMODE_EVENT = 90
@@ -73,9 +76,17 @@ MAX_WAIT_TIME_AIRPLANEMODE_EVENT = 90
 # get "onSmsSentSuccess" event
 MAX_WAIT_TIME_SMS_SENT_SUCCESS = 60
 
+# Max time to wait after device sent an SMS and before
+# get "onSmsSentSuccess" event in case of collision.
+MAX_WAIT_TIME_SMS_SENT_SUCCESS_IN_COLLISION = 60
+
 # Max time to wait after MT SMS was sent and before device
 # actually receive this MT SMS.
 MAX_WAIT_TIME_SMS_RECEIVE = 120
+
+# Max time to wait after MT SMS was sent and before device
+# actually receive this MT SMS in case of collision.
+MAX_WAIT_TIME_SMS_RECEIVE_IN_COLLISION = 1200
 
 # Max time to wait for IMS registration
 MAX_WAIT_TIME_IMS_REGISTRATION = 120
@@ -202,6 +213,8 @@ POWER_LEVEL_OUT_OF_SERVICE = -100
 # Callbox Power level which will ensure full service on device
 POWER_LEVEL_FULL_SERVICE = -20
 
+
+
 # These are used in phone_number_formatter
 PHONE_NUMBER_STRING_FORMAT_7_DIGIT = 7
 PHONE_NUMBER_STRING_FORMAT_10_DIGIT = 10
@@ -289,6 +302,7 @@ CARRIER_ESP = 'esp'
 CARRIER_ORG = 'org'
 CARRIER_TEL = 'tel'
 CARRIER_TSA = 'tsa'
+CARRIER_SING = 'singtel'
 CARRIER_USCC = 'uscc'
 CARRIER_ROGERS = 'ROGERS'
 CARRIER_TELUS = 'tls'
@@ -297,6 +311,10 @@ CARRIER_VIDEOTRON = 'vtrn'
 CARRIER_BELL = 'bell'
 CARRIER_FRE = 'fre'
 CARRIER_FI = 'fi'
+CARRIER_NTT_DOCOMO = 'ntt_docomo'
+CARRIER_KDDI = 'kddi'
+CARRIER_RAKUTEN = 'rakuten'
+CARRIER_SBM = 'sbm'
 
 RAT_FAMILY_CDMA = 'cdma'
 RAT_FAMILY_CDMA2000 = 'cdma2000'
@@ -306,6 +324,7 @@ RAT_FAMILY_WCDMA = 'wcdma'
 RAT_FAMILY_UMTS = RAT_FAMILY_WCDMA
 RAT_FAMILY_WLAN = 'wlan'
 RAT_FAMILY_LTE = 'lte'
+RAT_FAMILY_NR = 'nr'
 RAT_FAMILY_TDSCDMA = 'tdscdma'
 RAT_FAMILY_UNKNOWN = 'unknown'
 
@@ -443,11 +462,14 @@ CALL_PRESENTATION_UNKNOWN = "UNKNOWN"
 GEN_2G = "2G"
 GEN_3G = "3G"
 GEN_4G = "4G"
+GEN_5G = "5G"
 GEN_UNKNOWN = "UNKNOWN"
 
 # Constant for Network RAT
 RAT_IWLAN = "IWLAN"
+RAT_NR = "NR"
 RAT_LTE = "LTE"
+RAT_5G = "5G"
 RAT_4G = "4G"
 RAT_3G = "3G"
 RAT_2G = "2G"
@@ -600,9 +622,22 @@ NETWORK_MODE_LTE_TDSCDMA_WCDMA = "NETWORK_MODE_LTE_TDSCDMA_WCDMA"
 NETWORK_MODE_LTE_TDSCDMA_GSM_WCDMA = "NETWORK_MODE_LTE_TDSCDMA_GSM_WCDMA"
 NETWORK_MODE_TDSCDMA_CDMA_EVDO_WCDMA = "NETWORK_MODE_TDSCDMA_CDMA_EVDO_WCDMA"
 NETWORK_MODE_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA = "NETWORK_MODE_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA"
+NETWORK_MODE_NR_LTE_GSM_WCDMA = "NETWORK_MODE_NR_LTE_GSM_WCDMA"
+NETWORK_MODE_NR_ONLY = "NETWORK_MODE_NR_ONLY"
+NETWORK_MODE_NR_LTE = "NETWORK_MODE_NR_LTE"
+NETWORK_MODE_NR_LTE_CDMA_EVDO = "NETWORK_MODE_NR_LTE_CDMA_EVDO"
+NETWORK_MODE_NR_LTE_CDMA_EVDO_GSM_WCDMA = "NETWORK_MODE_NR_LTE_CDMA_EVDO_GSM_WCDMA"
+NETWORK_MODE_NR_LTE_WCDMA = "NETWORK_MODE_NR_LTE_WCDMA"
+NETWORK_MODE_NR_LTE_TDSCDMA = "NETWORK_MODE_NR_LTE_TDSCDMA"
+NETWORK_MODE_NR_LTE_TDSCDMA_GSM = "NETWORK_MODE_NR_LTE_TDSCDMA_GSM"
+NETWORK_MODE_NR_LTE_TDSCDMA_WCDMA = "NETWORK_MODE_NR_LTE_TDSCDMA_WCDMA"
+NETWORK_MODE_NR_LTE_TDSCDMA_GSM_WCDMA = "NETWORK_MODE_NR_LTE_TDSCDMA_GSM_WCDMA"
+NETWORK_MODE_NR_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA = "NETWORK_MODE_NR_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA"
 
 # Carrier Config Update
 CARRIER_ID_VERSION = "3"
+ER_DB_ID_VERSION = "99999"
+
 CARRIER_ID_VERSION_P = "5"
 WAIT_TIME_FOR_CARRIERID_CHANGE = 6
 CARRIER_ID_METADATA_URL = "am broadcast -a com.google.android.gms." \
@@ -678,6 +713,7 @@ EventVolteServiceStateChanged = "VolteServiceStateChanged"
 EventMessageWaitingIndicatorChanged = "MessageWaitingIndicatorChanged"
 EventConnectivityChanged = "ConnectivityChanged"
 EventActiveDataSubIdChanged = "ActiveDataSubIdChanged"
+EventDisplayInfoChanged = "DisplayInfoChanged"
 
 # Constant for Packet Keep Alive Call Back
 EventPacketKeepaliveCallback = "PacketKeepaliveCallback"
@@ -729,6 +765,18 @@ class CallStateContainer:
     SUBSCRIPTION_ID = "subscriptionId"
     CALL_STATE = "callState"
 
+class DisplayInfoContainer:
+    TIME = "time"
+    NETWORK = "network"
+    OVERRIDE = "override"
+    SUBSCRIPTION_ID = "subscriptionId"
+
+class OverrideNetworkContainer:
+    OVERRIDE_NETWORK_TYPE_NONE = "NONE"
+    OVERRIDE_NETWORK_TYPE_LTE_CA = "LTE_CA"
+    OVERRIDE_NETWORK_TYPE_LTE_ADVANCED_PRO = "LTE_ADVANCED_PRO"
+    OVERRIDE_NETWORK_TYPE_NR_NSA = "NR_NSA"
+    OVERRIDE_NETWORK_TYPE_NR_MMWAVE = "NR_MMWAVE"
 
 class PreciseCallStateContainer:
     TYPE = "type"

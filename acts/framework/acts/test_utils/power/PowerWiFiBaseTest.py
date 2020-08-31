@@ -17,9 +17,11 @@
 import acts.test_utils.power.PowerBaseTest as PBT
 from acts.test_utils.wifi import wifi_test_utils as wutils
 from acts.test_utils.wifi import wifi_power_test_utils as wputils
+from acts.test_utils.power import plot_utils
 
 IPERF_DURATION = 'iperf_duration'
 INITIAL_ATTEN = [0, 0, 90, 90]
+IPERF_TAIL = 5
 
 
 class PowerWiFiBaseTest(PBT.PowerBaseTest):
@@ -27,7 +29,6 @@ class PowerWiFiBaseTest(PBT.PowerBaseTest):
 
     Inherited from the PowerBaseTest class
     """
-
     def setup_class(self):
 
         super().setup_class()
@@ -47,7 +48,7 @@ class PowerWiFiBaseTest(PBT.PowerBaseTest):
         if hasattr(self, 'iperf_servers'):
             self.iperf_server = self.iperf_servers[0]
         if self.iperf_duration:
-            self.mon_duration = self.iperf_duration - 10
+            self.mon_duration = self.iperf_duration - self.mon_offset - IPERF_TAIL
             self.create_monsoon_info()
 
     def teardown_test(self):
@@ -85,7 +86,10 @@ class PowerWiFiBaseTest(PBT.PowerBaseTest):
             for ap in self.access_points:
                 ap.close()
 
-    def setup_ap_connection(self, network, bandwidth=80, connect=True,
+    def setup_ap_connection(self,
+                            network,
+                            bandwidth=80,
+                            connect=True,
                             ap=None):
         """Setup AP and connect DUT to it.
 
@@ -100,8 +104,9 @@ class PowerWiFiBaseTest(PBT.PowerBaseTest):
         wutils.wifi_toggle_state(self.dut, True)
         if not ap:
             if hasattr(self, 'access_points'):
-                self.brconfigs = wputils.ap_setup(
-                    self.access_point, network, bandwidth=bandwidth)
+                self.brconfigs = wputils.ap_setup(self.access_point,
+                                                  network,
+                                                  bandwidth=bandwidth)
         else:
             self.brconfigs = wputils.ap_setup(ap, network, bandwidth=bandwidth)
         if connect:
@@ -121,5 +126,5 @@ class PowerWiFiBaseTest(PBT.PowerBaseTest):
             throughput = self.process_iperf_results()
             tag = '_RSSI_{0:d}dBm_Throughput_{1:.2f}Mbps'.format(
                 self.RSSI, throughput)
-            wputils.monsoon_data_plot(self.mon_info, result, tag=tag)
+            plot_utils.monsoon_data_plot(self.mon_info, result, tag=tag)
         return result

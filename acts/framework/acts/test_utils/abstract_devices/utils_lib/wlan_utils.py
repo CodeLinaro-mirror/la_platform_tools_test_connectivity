@@ -192,22 +192,6 @@ def status(client):
     return status
 
 
-def is_connected(client):
-    """Gets status to determine if WLAN is connected or not.
-
-    Args:
-        None
-    """
-    connected = False
-    client_status = status(client)
-    if client_status and client_status['state'] == 'ConnectionsEnabled':
-        for index, network in enumerate(client_status['networks']):
-            if network['state'] == 'Connected':
-                connected = True
-
-    return connected
-
-
 def disconnect(client):
     """Disconnect client from its WLAN network.
 

@@ -1,6 +1,6 @@
-#!/usr/bin/env python3.5
+#!/usr/bin/env python3
 #
-#   Copyright 2019 - Google
+#   Copyright 2020 - Google
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -21,10 +21,12 @@ import math
 import shutil
 import fnmatch
 import posixpath
+import tempfile
 from collections import namedtuple
 
 from acts import utils
 from acts import signals
+from acts.libs.proc import job
 from acts.controllers.android_device import list_adb_devices
 from acts.controllers.android_device import list_fastboot_devices
 from acts.controllers.android_device import DEFAULT_QXDM_LOG_PATH
@@ -32,15 +34,18 @@ from acts.controllers.android_device import SL4A_APK_NAME
 from acts.test_utils.wifi import wifi_test_utils as wutils
 from acts.test_utils.tel import tel_test_utils as tutils
 from acts.utils import get_current_epoch_time
+from acts.utils import epoch_to_human_time
 
 WifiEnums = wutils.WifiEnums
 PULL_TIMEOUT = 300
 GNSSSTATUS_LOG_PATH = (
     "/storage/emulated/0/Android/data/com.android.gpstool/files/")
 QXDM_MASKS = ["GPS.cfg", "GPS-general.cfg", "default.cfg"]
-TTFF_REPORT = namedtuple("TTFF_REPORT", "ttff_loop ttff_sec ttff_pe ttff_cn")
+TTFF_REPORT = namedtuple(
+    "TTFF_REPORT", "utc_time ttff_loop ttff_sec ttff_pe ttff_ant_cn "
+                   "ttff_base_cn")
 TRACK_REPORT = namedtuple(
-    "TRACK_REPORT", "track_l5flag track_pe track_top4cn track_cn")
+    "TRACK_REPORT", "l5flag pe ant_top4cn ant_cn base_top4cn base_cn")
 LOCAL_PROP_FILE_CONTENTS =  """\
 log.tag.LocationManagerService=VERBOSE
 log.tag.GnssLocationProvider=VERBOSE
@@ -49,7 +54,26 @@ log.tag.GpsNetInitiatedHandler=VERBOSE
 log.tag.GnssNetworkConnectivityHandler=VERBOSE
 log.tag.ConnectivityService=VERBOSE
 log.tag.ConnectivityManager=VERBOSE
-log.tag.GnssVisibilityControl=VERBOSE"""
+log.tag.GnssVisibilityControl=VERBOSE
+log.tag.NtpTimeHelper=VERBOSE
+log.tag.NtpTrustedTime=VERBOSE"""
+TEST_PACKAGE_NAME = "com.google.android.apps.maps"
+LOCATION_PERMISSIONS = [
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.ACCESS_COARSE_LOCATION"
+]
+GNSSTOOL_PACKAGE_NAME = "com.android.gpstool"
+GNSSTOOL_PERMISSIONS = [
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.ACCESS_COARSE_LOCATION",
+    "android.permission.CALL_PHONE",
+    "android.permission.WRITE_CONTACTS",
+    "android.permission.CAMERA",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+    "android.permission.READ_CONTACTS",
+    "android.permission.ACCESS_BACKGROUND_LOCATION"
+]
 
 
 class GnssTestUtilsError(Exception):
@@ -64,13 +88,13 @@ def remount_device(ad):
     """
     for retries in range(5):
         ad.root_adb()
+        if ad.adb.getprop("ro.boot.veritymode") == "enforcing":
+            disable_verity_result = ad.adb.disable_verity()
+            reboot(ad)
         remount_result = ad.adb.remount()
         ad.log.info("Attempt %d - %s" % (retries + 1, remount_result))
         if "remount succeeded" in remount_result:
             break
-        if ad.adb.getprop("ro.boot.veritymode") == "enforcing":
-            disable_verity_result = ad.adb.disable_verity()
-            reboot(ad)
 
 
 def reboot(ad):
@@ -95,7 +119,7 @@ def enable_gnss_verbose_logging(ad):
     """
     remount_device(ad)
     ad.log.info("Enable GNSS VERBOSE Logging and persistent logcat.")
-    ad.adb.shell("echo DEBUG_LEVEL = 5 >> /vendor/etc/gps.conf")
+    ad.adb.shell("echo -e '\nDEBUG_LEVEL = 5' >> /vendor/etc/gps.conf")
     ad.adb.shell("echo %r >> /data/local.prop" % LOCAL_PROP_FILE_CONTENTS)
     ad.adb.shell("chmod 644 /data/local.prop")
     ad.adb.shell("setprop persist.logd.logpersistd.size 20000")
@@ -155,8 +179,8 @@ def disable_xtra_throttle(ad):
     """
     remount_device(ad)
     ad.log.info("Disable XTRA Throttle.")
-    ad.adb.shell("echo XTRA_TEST_ENABLED=1 >> /vendor/etc/gps.conf")
-    ad.adb.shell("echo XTRA_THROTTLE_ENABLED=0 >> /vendor/etc/gps.conf")
+    ad.adb.shell("echo -e '\nXTRA_TEST_ENABLED=1' >> /vendor/etc/gps.conf")
+    ad.adb.shell("echo -e '\nXTRA_THROTTLE_ENABLED=0' >> /vendor/etc/gps.conf")
 
 
 def enable_supl_mode(ad):
@@ -167,7 +191,7 @@ def enable_supl_mode(ad):
     """
     remount_device(ad)
     ad.log.info("Enable SUPL mode.")
-    ad.adb.shell("echo SUPL_MODE=1 >> /etc/gps_debug.conf")
+    ad.adb.shell("echo -e '\nSUPL_MODE=1' >> /etc/gps_debug.conf")
 
 
 def disable_supl_mode(ad):
@@ -178,7 +202,7 @@ def disable_supl_mode(ad):
     """
     remount_device(ad)
     ad.log.info("Disable SUPL mode.")
-    ad.adb.shell("echo SUPL_MODE=0 >> /etc/gps_debug.conf")
+    ad.adb.shell("echo -e '\nSUPL_MODE=0' >> /etc/gps_debug.conf")
     reboot(ad)
 
 
@@ -225,8 +249,8 @@ def _init_device(ad):
     check_location_service(ad)
     set_wifi_and_bt_scanning(ad, True)
     disable_private_dns_mode(ad)
-    init_gtw_gpstool(ad)
     reboot(ad)
+    init_gtw_gpstool(ad)
 
 
 def connect_to_wifi_network(ad, network):
@@ -421,38 +445,6 @@ def gnss_trigger_modem_ssr_by_mds(ad, dwelltime=60):
             "Failed to trigger modem SSR crash by MDS. \n%s" % output)
 
 
-def pull_mdstool(ad):
-    """Pull ModemDiagnosticSystemTest.apk from device.
-
-    Args:
-        ad: An AndroidDevice object.
-    """
-    out = ad.adb.shell("pm path com.google.mdstest")
-    result = re.search(r"package:(.*)", out)
-    if not result:
-        raise signals.TestError("No ModemDiagnosticSystemTest.apk found.")
-    else:
-        mds_tool = result.group(1)
-        ad.log.info("Get ModemDiagnosticSystemTest.apk from %s" % mds_tool)
-        apkdir = "/tmp/MDS/"
-        os.makedirs(apkdir, exist_ok=True)
-        ad.pull_files([mds_tool], apkdir)
-
-
-def reinstall_mdstool(ad):
-    """Reinstall ModemDiagnosticSystemTest.apk.
-
-    Args:
-        ad: An AndroidDevice object.
-    """
-    ad.log.info("Re-install ModemDiagnosticSystemTest.apk")
-    ad.adb.install("-r -g -t /tmp/MDS/base.apk")
-    mds_check = ad.adb.shell("pm path com.google.mdstest")
-    if not mds_check:
-        raise signals.TestError("MDS Tool is not properly re-installed.")
-    ad.log.info("MDS Tool is re-installed successfully.")
-
-
 def check_xtra_download(ad, begin_time):
     """Verify XTRA download success log message in logcat.
 
@@ -475,36 +467,50 @@ def check_xtra_download(ad, begin_time):
     return False
 
 
-def pull_gtw_gpstool(ad):
-    """Pull GTW_GPSTool apk from device.
+def pull_package_apk(ad, package_name):
+    """Pull apk of given package_name from device.
 
     Args:
         ad: An AndroidDevice object.
+        package_name: Package name of apk to pull.
+
+    Returns:
+        The temp path of pulled apk.
     """
-    out = ad.adb.shell("pm path com.android.gpstool")
+    out = ad.adb.shell("pm path %s" % package_name)
     result = re.search(r"package:(.*)", out)
     if not result:
-        tutils.abort_all_tests(ad.log, "Couldn't find GTW GPSTool apk")
+        tutils.abort_all_tests(ad.log, "Couldn't find apk of %s" % package_name)
     else:
-        GTW_GPSTool_apk = result.group(1)
-        ad.log.info("Get GTW GPSTool apk from %s" % GTW_GPSTool_apk)
-        apkdir = "/tmp/GNSS/"
-        os.makedirs(apkdir, exist_ok=True)
-        ad.pull_files([GTW_GPSTool_apk], apkdir)
+        apk_source = result.group(1)
+        ad.log.info("Get apk of %s from %s" % (package_name, apk_source))
+        apk_path = tempfile.mkdtemp()
+        ad.pull_files([apk_source], apk_path)
+    return apk_path
 
 
-def reinstall_gtw_gpstool(ad):
-    """Reinstall GTW_GPSTool apk.
+def reinstall_package_apk(ad, package_name, apk_path):
+    """Reinstall apk of given package_name.
 
     Args:
         ad: An AndroidDevice object.
+        package_name: Package name of apk.
+        apk_path: The temp path of pulled apk.
     """
-    ad.log.info("Re-install GTW GPSTool")
-    ad.adb.install("-r -g -t /tmp/GNSS/base.apk")
-    gpstool_check = ad.adb.shell("pm path com.android.gpstool")
-    if not gpstool_check:
-        raise signals.TestError("GTW GPSTool is not properly re-installed.")
-    ad.log.info("GTW GPSTool is re-installed successfully.")
+    for path_key in os.listdir(apk_path):
+        if fnmatch.fnmatch(path_key, "*.apk"):
+            apk_path = os.path.join(apk_path, path_key)
+            break
+    else:
+        raise signals.TestError("No apk is found in %s" % apk_path)
+    ad.log.info("Re-install %s with path: %s" % (package_name, apk_path))
+    ad.adb.shell("settings put global verifier_verify_adb_installs 0")
+    ad.adb.install("-r -d -g --user 0 %s" % apk_path)
+    package_check = ad.adb.shell("pm path %s" % package_name)
+    if not package_check:
+        tutils.abort_all_tests(
+            ad.log, "%s is not properly re-installed." % package_name)
+    ad.log.info("%s is re-installed successfully." % package_name)
 
 
 def init_gtw_gpstool(ad):
@@ -514,9 +520,8 @@ def init_gtw_gpstool(ad):
         ad: An AndroidDevice object.
     """
     remount_device(ad)
-    pull_gtw_gpstool(ad)
-    ad.adb.shell("settings put global verifier_verify_adb_installs 0")
-    reinstall_gtw_gpstool(ad)
+    gpstool_path = pull_package_apk(ad, "com.android.gpstool")
+    reinstall_package_apk(ad, "com.android.gpstool", gpstool_path)
 
 
 def fastboot_factory_reset(ad):
@@ -535,16 +540,9 @@ def fastboot_factory_reset(ad):
     """
     status = True
     skip_setup_wizard = True
-    out = ad.adb.shell("pm path %s" % SL4A_APK_NAME)
-    result = re.search(r"package:(.*)", out)
-    if not result:
-        tutils.abort_all_tests(ad.log, "Couldn't find sl4a apk")
-    else:
-        sl4a_apk = result.group(1)
-        ad.log.info("Get sl4a apk from %s" % sl4a_apk)
-        ad.pull_files([sl4a_apk], "/tmp/")
-    pull_gtw_gpstool(ad)
-    pull_mdstool(ad)
+    sl4a_path = pull_package_apk(ad, SL4A_APK_NAME)
+    gpstool_path = pull_package_apk(ad, "com.android.gpstool")
+    mds_path = pull_package_apk(ad, "com.google.mdstest")
     tutils.stop_qxdm_logger(ad)
     ad.stop_services()
     attempts = 3
@@ -566,11 +564,9 @@ def fastboot_factory_reset(ad):
                 break
             if ad.is_sl4a_installed():
                 break
-            ad.log.info("Re-install sl4a")
-            ad.adb.shell("settings put global verifier_verify_adb_installs 0")
-            ad.adb.install("-r -g -t /tmp/base.apk")
-            reinstall_gtw_gpstool(ad)
-            reinstall_mdstool(ad)
+            reinstall_package_apk(ad, SL4A_APK_NAME, sl4a_path)
+            reinstall_package_apk(ad, "com.android.gpstool", gpstool_path)
+            reinstall_package_apk(ad, "com.google.mdstest", mds_path)
             time.sleep(10)
             break
         except Exception as e:
@@ -625,7 +621,7 @@ def start_gnss_by_gtw_gpstool(ad, state, type="gnss", bgdisplay=False):
     time.sleep(3)
 
 
-def process_gnss_by_gtw_gpstool(ad, criteria, type="gnss"):
+def process_gnss_by_gtw_gpstool(ad, criteria, type="gnss", clear_data=True):
     """Launch GTW GPSTool and Clear all GNSS aiding data
        Start GNSS tracking on GTW_GPSTool.
 
@@ -633,6 +629,8 @@ def process_gnss_by_gtw_gpstool(ad, criteria, type="gnss"):
         ad: An AndroidDevice object.
         criteria: Criteria for current test item.
         type: Different API for location fix. Use gnss/flp/nmea
+        clear_data: True to clear GNSS aiding data. False is not to. Defalt
+        set to True.
 
     Returns:
         True: First fix TTFF are within criteria.
@@ -640,8 +638,14 @@ def process_gnss_by_gtw_gpstool(ad, criteria, type="gnss"):
     """
     retries = 3
     for i in range(retries):
+        if not ad.is_adb_logcat_on:
+            ad.start_adb_logcat()
+        check_adblog_functionality(ad)
+        check_location_runtime_permissions(
+            ad, GNSSTOOL_PACKAGE_NAME, GNSSTOOL_PERMISSIONS)
         begin_time = get_current_epoch_time()
-        clear_aiding_data_by_gtw_gpstool(ad)
+        if clear_data:
+            clear_aiding_data_by_gtw_gpstool(ad)
         ad.log.info("Start %s on GTW_GPSTool - attempt %d" % (type.upper(),
                                                               i+1))
         start_gnss_by_gtw_gpstool(ad, True, type)
@@ -659,8 +663,6 @@ def process_gnss_by_gtw_gpstool(ad, criteria, type="gnss"):
                                           "within %d seconds criteria."
                                           % (type.upper(), criteria))
             time.sleep(1)
-        if not ad.is_adb_logcat_on:
-            ad.start_adb_logcat()
         check_currrent_focus_app(ad)
         start_gnss_by_gtw_gpstool(ad, False, type)
     raise signals.TestFailure("Fail to get %s location fixed within %d "
@@ -733,8 +735,10 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
     """
     test_logfile = {}
     track_data = {}
-    history_top4_cn = 0
-    history_cn = 0
+    ant_top4_cn = 0
+    ant_cn = 0
+    base_top4_cn = 0
+    base_cn = 0
     l5flag = "false"
     file_count = int(ad.adb.shell("find %s -type f -iname *.txt | wc -l"
                                   % GNSSSTATUS_LOG_PATH))
@@ -755,33 +759,41 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
         raise signals.TestError("Failed to get test log file in device.")
     lines = ad.adb.shell("cat %s" % test_logfile).split("\n")
     for line in lines:
-        if "History Avg Top4" in line:
-            history_top4_cn = float(line.split(":")[-1].strip())
-        if "History Avg" in line:
-            history_cn = float(line.split(":")[-1].strip())
-        if "L5 used in fix" in line:
+        if "Antenna_History Avg Top4" in line:
+            ant_top4_cn = float(line.split(":")[-1].strip())
+        elif "Antenna_History Avg" in line:
+            ant_cn = float(line.split(":")[-1].strip())
+        elif "Baseband_History Avg Top4" in line:
+            base_top4_cn = float(line.split(":")[-1].strip())
+        elif "Baseband_History Avg" in line:
+            base_cn = float(line.split(":")[-1].strip())
+        elif "L5 used in fix" in line:
             l5flag = line.split(":")[-1].strip()
-        if "Latitude" in line:
+        elif "Latitude" in line:
             track_lat = float(line.split(":")[-1].strip())
-        if "Longitude" in line:
+        elif "Longitude" in line:
             track_long = float(line.split(":")[-1].strip())
-        if "Time" in line:
+        elif "Time" in line:
             track_utc = line.split("Time:")[-1].strip()
             if track_utc in track_data.keys():
                 continue
-            track_pe = calculate_position_error(ad, track_lat, track_long,
-                                                true_position)
-            track_data[track_utc] = TRACK_REPORT(track_l5flag=l5flag,
-                                                 track_pe=track_pe,
-                                                 track_top4cn=history_top4_cn,
-                                                 track_cn=history_cn)
+            pe = calculate_position_error(ad, track_lat, track_long,
+                                          true_position)
+            track_data[track_utc] = TRACK_REPORT(l5flag=l5flag,
+                                                 pe=pe,
+                                                 ant_top4cn=ant_top4_cn,
+                                                 ant_cn=ant_cn,
+                                                 base_top4cn=base_top4_cn,
+                                                 base_cn=base_cn)
     ad.log.debug(track_data)
     prop_basename = "TestResult %s_tracking_" % type.upper()
     time_list = sorted(track_data.keys())
-    l5flag_list = [track_data[key].track_l5flag for key in time_list]
-    pe_list = [float(track_data[key].track_pe) for key in time_list]
-    top4cn_list = [float(track_data[key].track_top4cn) for key in time_list]
-    cn_list = [float(track_data[key].track_cn) for key in time_list]
+    l5flag_list = [track_data[key].l5flag for key in time_list]
+    pe_list = [float(track_data[key].pe) for key in time_list]
+    ant_top4cn_list = [float(track_data[key].ant_top4cn) for key in time_list]
+    ant_cn_list = [float(track_data[key].ant_cn) for key in time_list]
+    base_top4cn_list = [float(track_data[key].base_top4cn) for key in time_list]
+    base_cn_list = [float(track_data[key].base_cn) for key in time_list]
     ad.log.info(prop_basename+"StartTime %s" % time_list[0].replace(" ", "-"))
     ad.log.info(prop_basename+"EndTime %s" % time_list[-1].replace(" ", "-"))
     ad.log.info(prop_basename+"TotalFixPoints %d" % len(time_list))
@@ -789,8 +801,10 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
         percent=l5flag_list.count("true")/len(l5flag_list)))
     ad.log.info(prop_basename+"AvgDis %.1f" % (sum(pe_list)/len(pe_list)))
     ad.log.info(prop_basename+"MaxDis %.1f" % max(pe_list))
-    ad.log.info(prop_basename+"AvgTop4Signal %.1f" % top4cn_list[-1])
-    ad.log.info(prop_basename+"AvgSignal %.1f" % cn_list[-1])
+    ad.log.info(prop_basename+"Ant_AvgTop4Signal %.1f" % ant_top4cn_list[-1])
+    ad.log.info(prop_basename+"Ant_AvgSignal %.1f" % ant_cn_list[-1])
+    ad.log.info(prop_basename+"Base_AvgTop4Signal %.1f" % base_top4cn_list[-1])
+    ad.log.info(prop_basename+"Base_AvgSignal %.1f" % base_cn_list[-1])
 
 
 def process_ttff_by_gtw_gpstool(ad, begin_time, true_position, type="gnss"):
@@ -814,25 +828,15 @@ def process_ttff_by_gtw_gpstool(ad, begin_time, true_position, type="gnss"):
                                     "message in logcat. Abort test.")
         if not ad.is_adb_logcat_on:
             ad.start_adb_logcat()
-        stop_gps_results = ad.search_logcat("stop gps test", begin_time)
-        if stop_gps_results:
-            ad.send_keycode("HOME")
-            break
-        crash_result = ad.search_logcat("Force finishing activity "
-                                        "com.android.gpstool/.GPSTool",
-                                        begin_time)
-        if crash_result:
-            raise signals.TestError("GPSTool crashed. Abort test.")
-        logcat_results = ad.search_logcat("write TTFF log", begin_time)
+        logcat_results = ad.search_logcat("write TTFF log", ttff_loop_time)
         if logcat_results:
+            ttff_loop_time = get_current_epoch_time()
             ttff_log = logcat_results[-1]["log_message"].split()
             ttff_loop = int(ttff_log[8].split(":")[-1])
-            if ttff_loop in ttff_data.keys():
-                continue
-            ttff_loop_time = get_current_epoch_time()
             ttff_sec = float(ttff_log[11])
             if ttff_sec != 0.0:
-                ttff_cn = float(ttff_log[18].strip("]"))
+                ttff_ant_cn = float(ttff_log[18].strip("]"))
+                ttff_base_cn = float(ttff_log[25].strip("]"))
                 if type == "gnss":
                     gnss_results = ad.search_logcat("GPSService: Check item",
                                                     begin_time)
@@ -844,32 +848,54 @@ def process_ttff_by_gtw_gpstool(ad, begin_time, true_position, type="gnss"):
                             gnss_location_log[8].split("=")[-1].strip(","))
                         ttff_lon = float(
                             gnss_location_log[9].split("=")[-1].strip(","))
+                        loc_time = int(
+                            gnss_location_log[10].split("=")[-1].strip(","))
+                        utc_time = epoch_to_human_time(loc_time)
                 elif type == "flp":
                     flp_results = ad.search_logcat("GPSService: FLP Location",
                                                    begin_time)
                     if flp_results:
                         ad.log.debug(flp_results[-1]["log_message"])
-                        flp_location_log = \
-                            flp_results[-1]["log_message"].split()
+                        flp_location_log = flp_results[-1][
+                            "log_message"].split()
                         ttff_lat = float(flp_location_log[8].split(",")[0])
                         ttff_lon = float(flp_location_log[8].split(",")[1])
+                        utc_time = epoch_to_human_time(get_current_epoch_time())
             else:
-                ttff_cn = float(ttff_log[19].strip("]"))
-                ttff_lat = 0.0
-                ttff_lon = 0.0
+                ttff_ant_cn = float(ttff_log[19].strip("]"))
+                ttff_base_cn = float(ttff_log[26].strip("]"))
+                ttff_lat = 0
+                ttff_lon = 0
+                utc_time = epoch_to_human_time(get_current_epoch_time())
             ad.log.debug("TTFF Loop %d - (Lat, Lon) = (%s, %s)" % (ttff_loop,
                                                                    ttff_lat,
                                                                    ttff_lon))
             ttff_pe = calculate_position_error(ad, ttff_lat, ttff_lon,
                                                true_position)
-            ttff_data[ttff_loop] = TTFF_REPORT(ttff_loop=ttff_loop,
+            ttff_data[ttff_loop] = TTFF_REPORT(utc_time=utc_time,
+                                               ttff_loop=ttff_loop,
                                                ttff_sec=ttff_sec,
                                                ttff_pe=ttff_pe,
-                                               ttff_cn=ttff_cn)
-            ad.log.info("Loop %d = %.1f seconds, "
+                                               ttff_ant_cn=ttff_ant_cn,
+                                               ttff_base_cn=ttff_base_cn)
+            ad.log.info("UTC Time = %s, Loop %d = %.1f seconds, "
                         "Position Error = %.1f meters, "
-                        "Average Signal = %.1f dbHz"
-                        % (ttff_loop, ttff_sec, ttff_pe, ttff_cn))
+                        "Antenna Average Signal = %.1f dbHz, "
+                        "Baseband Average Signal = %.1f dbHz" % (utc_time,
+                                                                 ttff_loop,
+                                                                 ttff_sec,
+                                                                 ttff_pe,
+                                                                 ttff_ant_cn,
+                                                                 ttff_base_cn))
+        stop_gps_results = ad.search_logcat("stop gps test", begin_time)
+        if stop_gps_results:
+            ad.send_keycode("HOME")
+            break
+        crash_result = ad.search_logcat("Force finishing activity "
+                                        "com.android.gpstool/.GPSTool",
+                                        begin_time)
+        if crash_result:
+            raise signals.TestError("GPSTool crashed. Abort test.")
     return ttff_data
 
 
@@ -919,7 +945,10 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
     prop_basename = "TestResult "+ttff_mode.replace(" ", "_")+"_TTFF_"
     sec_list = [float(ttff_data[key].ttff_sec) for key in ttff_data.keys()]
     pe_list = [float(ttff_data[key].ttff_pe) for key in ttff_data.keys()]
-    cn_list = [float(ttff_data[key].ttff_cn) for key in ttff_data.keys()]
+    ant_cn_list = [float(ttff_data[key].ttff_ant_cn) for key in
+                   ttff_data.keys()]
+    base_cn_list = [float(ttff_data[key].ttff_base_cn) for key in
+                   ttff_data.keys()]
     timeoutcount = sec_list.count(0.0)
     if len(sec_list) == timeoutcount:
         avgttff = 9527
@@ -931,13 +960,15 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
         maxttff = max(sec_list)
     avgdis = sum(pe_list)/len(pe_list)
     maxdis = max(pe_list)
-    avgcn = sum(cn_list)/len(cn_list)
+    ant_avgcn = sum(ant_cn_list)/len(ant_cn_list)
+    base_avgcn = sum(base_cn_list)/len(base_cn_list)
     ad.log.info(prop_basename+"AvgTime %.1f" % avgttff)
     ad.log.info(prop_basename+"MaxTime %.1f" % maxttff)
     ad.log.info(prop_basename+"TimeoutCount %d" % timeoutcount)
     ad.log.info(prop_basename+"AvgDis %.1f" % avgdis)
     ad.log.info(prop_basename+"MaxDis %.1f" % maxdis)
-    ad.log.info(prop_basename+"AvgSignal %.1f" % avgcn)
+    ad.log.info(prop_basename+"Ant_AvgSignal %.1f" % ant_avgcn)
+    ad.log.info(prop_basename+"Base_AvgSignal %.1f" % base_avgcn)
 
 
 def calculate_position_error(ad, latitude, longitude, true_position):
@@ -1028,7 +1059,7 @@ def check_network_location(ad, retries, location_type, criteria=30):
     Args:
         ad: An AndroidDevice object.
         retries: Retry time.
-        location_type: neworkLocationType of cell or wifi.
+        location_type: cell or wifi.
         criteria: expected nlp return time, default 30 seconds
 
     Returns:
@@ -1036,22 +1067,20 @@ def check_network_location(ad, retries, location_type, criteria=30):
         otherwise return False.
     """
     criteria = criteria * 1000
+    search_pattern = ("GPSTool : networkLocationType = %s" % location_type)
     for i in range(retries):
-        time.sleep(1)
         begin_time = get_current_epoch_time()
         ad.log.info("Try to get NLP status - attempt %d" % (i+1))
         ad.adb.shell(
             "am start -S -n com.android.gpstool/.GPSTool --es mode nlp")
         while get_current_epoch_time() - begin_time <= criteria:
-            logcat_results = ad.search_logcat("LocationManagerService: "
-                                              "incoming location: Location",
-                                              begin_time)
-            if logcat_results:
-                for logcat_result in logcat_results:
-                    if location_type in logcat_result["log_message"]:
-                        ad.log.info(logcat_result["log_message"])
-                        ad.send_keycode("BACK")
-                        return True
+            # Search pattern in 1 second interval
+            time.sleep(1)
+            result = ad.search_logcat(search_pattern, begin_time)
+            if result:
+                ad.log.info("Pattern Found: %s." % result[-1]["log_message"])
+                ad.send_keycode("BACK")
+                return True
         if not ad.is_adb_logcat_on:
             ad.start_adb_logcat()
         ad.send_keycode("BACK")
@@ -1222,3 +1251,157 @@ def start_toggle_gnss_by_gtw_gpstool(ad, iteration):
                                   "within %d minutes" % (iteration * 4))
     finally:
         ad.send_keycode("HOME")
+
+
+def grant_location_permission(ad, option):
+    """Grant or revoke location related permission.
+
+    Args:
+        ad: An AndroidDevice object.
+        option: Boolean to grant or revoke location related permissions.
+    """
+    action = "grant" if option else "revoke"
+    for permission in LOCATION_PERMISSIONS:
+        ad.log.info(
+            "%s permission:%s on %s" % (action, permission, TEST_PACKAGE_NAME))
+        ad.adb.shell("pm %s %s %s" % (action, TEST_PACKAGE_NAME, permission))
+
+
+def check_location_runtime_permissions(ad, package, permissions):
+    """Check if runtime permissions are granted on selected package.
+
+    Args:
+        ad: An AndroidDevice object.
+        package: Apk package name to check.
+        permissions: A list of permissions to be granted.
+    """
+    for _ in range(3):
+        location_runtime_permission = ad.adb.shell(
+            "dumpsys package %s | grep ACCESS_FINE_LOCATION" % package)
+        if "true" not in location_runtime_permission:
+            ad.log.info("ACCESS_FINE_LOCATION is NOT granted on %s" % package)
+            for permission in permissions:
+                ad.log.debug("Grant %s on %s" % (permission, package))
+                ad.adb.shell("pm grant %s %s" % (package, permission))
+        else:
+            ad.log.info("ACCESS_FINE_LOCATION is granted on %s" % package)
+            break
+    else:
+        raise signals.TestError(
+            "Fail to grant ACCESS_FINE_LOCATION on %s" % package)
+
+
+def install_mdstest_app(ad, mdsapp):
+    """
+        Install MDS test app in DUT
+
+        Args:
+            ad: An Android Device Object
+            mdsapp: Installation path of MDSTest app
+    """
+    if not ad.is_apk_installed("com.google.mdstest"):
+        ad.adb.install("-r %s" % mdsapp, timeout=300, ignore_status=True)
+
+
+def write_modemconfig(ad, mdsapp, nvitem_dict, modemparfile):
+    """
+        Modify the NV items using modem_tool.par
+        Note: modem_tool.par
+
+        Args:
+            ad:  An Android Device Object
+            mdsapp: Installation path of MDSTest app
+            nvitem_dict: dictionary of NV items and values.
+            modemparfile: modem_tool.par path.
+    """
+    ad.log.info("Verify MDSTest app installed in DUT")
+    install_mdstest_app(ad, mdsapp)
+    os.system("chmod 777 %s" % modemparfile)
+    for key, value in nvitem_dict.items():
+        if key.isdigit():
+            op_name = "WriteEFS"
+        else:
+            op_name = "WriteNV"
+        ad.log.info("Modifying the NV{!r} using {}".format(key, op_name))
+        job.run("{} --op {} --item {} --data '{}'".
+                format(modemparfile, op_name, key, value))
+        time.sleep(2)
+
+
+def verify_modemconfig(ad, nvitem_dict, modemparfile):
+    """
+        Verify the NV items using modem_tool.par
+        Note: modem_tool.par
+
+        Args:
+            ad:  An Android Device Object
+            nvitem_dict: dictionary of NV items and values
+            modemparfile: modem_tool.par path.
+    """
+    os.system("chmod 777 %s" % modemparfile)
+    for key, value in nvitem_dict.items():
+        if key.isdigit():
+            op_name = "ReadEFS"
+        else:
+            op_name = "ReadNV"
+        # Sleeptime to avoid Modem communication error
+        time.sleep(5)
+        result = job.run(
+            "{} --op {} --item {}".format(modemparfile, op_name, key))
+        output = str(result.stdout)
+        ad.log.info("Actual Value for NV{!r} is {!r}".format(key, output))
+        if not value.casefold() in output:
+            ad.log.error("NV Value is wrong {!r} in {!r}".format(value, result))
+            raise ValueError(
+                "could not find {!r} in {!r}".format(value, result))
+
+
+def check_ttff_pe(ad, ttff_data, ttff_mode, pecriteria):
+    """Verify all TTFF results from ttff_data.
+
+    Args:
+        ad: An AndroidDevice object.
+        ttff_data: TTFF data of secs, position error and signal strength.
+        ttff_mode: TTFF Test mode for current test item.
+        criteria: Criteria for current test item.
+
+    """
+    ad.log.info("%d iterations of TTFF %s tests finished.",
+                (len(ttff_data.keys()), ttff_mode))
+    ad.log.info("%s PASS criteria is %f meters", (ttff_mode, pecriteria))
+    ad.log.debug("%s TTFF data: %s", (ttff_mode, ttff_data))
+
+    if len(ttff_data.keys()) == 0:
+        ad.log.error("GTW_GPSTool didn't process TTFF properly.")
+        raise signals.TestFailure("GTW_GPSTool didn't process TTFF properly.")
+
+    elif any(float(ttff_data[key].ttff_pe) >= pecriteria for key in
+             ttff_data.keys()):
+        ad.log.error("One or more TTFF %s are over test criteria %f meters",
+                     (ttff_mode, pecriteria))
+        raise signals.TestFailure("GTW_GPSTool didn't process TTFF properly.")
+    ad.log.info("All TTFF %s are within test criteria %f meters.",
+                (ttff_mode, pecriteria))
+
+
+def check_adblog_functionality(ad):
+    """Restart adb logcat if system can't write logs into file after checking
+    adblog file size.
+
+    Args:
+        ad: An AndroidDevice object.
+    """
+    logcat_path = os.path.join(ad.device_log_path, "adblog_%s_debug.txt" %
+                               ad.serial)
+    if not os.path.exists(logcat_path):
+        raise signals.TestError("Logcat file %s does not exist." % logcat_path)
+    original_log_size = os.path.getsize(logcat_path)
+    ad.log.debug("Original adblog size is %d" % original_log_size)
+    time.sleep(.5)
+    current_log_size = os.path.getsize(logcat_path)
+    ad.log.debug("Current adblog size is %d" % current_log_size)
+    if current_log_size == original_log_size:
+        ad.log.warn("System can't write logs into file. Restart adb "
+                    "logcat process now.")
+        ad.stop_adb_logcat()
+        ad.start_adb_logcat()

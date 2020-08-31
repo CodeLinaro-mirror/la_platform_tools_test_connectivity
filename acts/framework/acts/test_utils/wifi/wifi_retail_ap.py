@@ -45,6 +45,7 @@ def create(configs):
         ("Netgear", "R7800"): "NetgearR7800AP",
         ("Netgear", "R8000"): "NetgearR8000AP",
         ("Netgear", "R8500"): "NetgearR8500AP",
+        ("Netgear", "RAX"): "NetgearRAXAP",
         ("Google", "Wifi"): "GoogleWifiAP"
     }
     objs = []
@@ -59,7 +60,8 @@ def create(configs):
 
 
 def detroy(objs):
-    return
+    for obj in objs:
+        obj.teardown()
 
 
 class BlockingBrowser(splinter.driver.webdriver.chrome.WebDriver):
@@ -209,6 +211,18 @@ class WifiRetailAP(object):
         if self.ap_settings.get('lock_ap', 0):
             self.lock_timeout = self.ap_settings.get('lock_timeout', 3600)
             self._lock_ap()
+
+    def teardown(self):
+        """Function to perform destroy operations."""
+        self._unlock_ap()
+
+    def reset(self):
+        """Function that resets AP.
+
+        Function implementation is AP dependent and intended to perform any
+        necessary reset operations as part of controller destroy.
+        """
+        pass
 
     def read_ap_settings(self):
         """Function that reads current ap settings.
@@ -424,7 +438,7 @@ class WifiRetailAP(object):
 
 
 class NetgearR7000AP(WifiRetailAP):
-    """Class that implements Netgear R7500 AP."""
+    """Class that implements Netgear R7000 AP."""
     def __init__(self, ap_settings):
         super().__init__(ap_settings)
         self.init_gui_data()
@@ -974,7 +988,7 @@ class NetgearR7800AP(NetgearR7500AP):
     """Class that implements Netgear R7800 AP.
 
     Since most of the class' implementation is shared with the R7500, this
-    class inherits from NetgearR7500AP and simply redifines config parameters
+    class inherits from NetgearR7500AP and simply redefines config parameters
     """
     def __init__(self, ap_settings):
         super().__init__(ap_settings)
@@ -991,11 +1005,10 @@ class NetgearR8000AP(NetgearR7000AP):
     """Class that implements Netgear R8000 AP.
 
     Since most of the class' implementation is shared with the R7000, this
-    class inherits from NetgearR7000AP and simply redifines config parameters
+    class inherits from NetgearR7000AP and simply redefines config parameters
     """
-    def __init__(self, ap_settings):
-        super().__init__(ap_settings)
-        self.init_gui_data()
+    def init_gui_data(self):
+        super().init_gui_data()
         # Overwrite minor differences from R7000 AP
         self.config_page = (
             "{protocol}://{username}:{password}@"
@@ -1046,17 +1059,13 @@ class NetgearR8000AP(NetgearR7000AP):
             ("5G_1", "password"): "passphrase_an",
             ("5G_2", "password"): "passphrase_an_2"
         }
-        # Read and update AP settings
-        self.read_ap_settings()
-        if not set(ap_settings.items()).issubset(self.ap_settings.items()):
-            self.update_ap_settings(ap_settings)
 
 
 class NetgearR8500AP(NetgearR7000AP):
     """Class that implements Netgear R8500 AP.
 
     Since most of the class' implementation is shared with the R7000, this
-    class inherits from NetgearR7000AP and simply redifines config parameters
+    class inherits from NetgearR7000AP and simply redefines config parameters
     """
     def __init__(self, ap_settings):
         super().__init__(ap_settings)
@@ -1123,6 +1132,62 @@ class NetgearR8500AP(NetgearR7000AP):
             self.update_ap_settings(ap_settings)
 
 
+class NetgearRAXAP(NetgearR7000AP):
+    """Class that implements Netgear RAX AP.
+
+    Since most of the class' implementation is shared with the R7000, this
+    class inherits from NetgearR7000AP and simply redefines config parameters
+    """
+    def init_gui_data(self):
+        super().init_gui_data()
+        # Overwrite minor differences from R7000 AP
+        self.config_page = (
+            "{protocol}://{username}:{password}@"
+            "{ip_address}:{port}/WLG_wireless_dual_band_r10.htm").format(
+                protocol=self.ap_settings["protocol"],
+                username=self.ap_settings["admin_username"],
+                password=self.ap_settings["admin_password"],
+                ip_address=self.ap_settings["ip_address"],
+                port=self.ap_settings["port"])
+        self.config_page_nologin = (
+            "{protocol}://{ip_address}:{port}/"
+            "WLG_wireless_dual_band_r10.htm").format(
+                protocol=self.ap_settings["protocol"],
+                ip_address=self.ap_settings["ip_address"],
+                port=self.ap_settings["port"])
+        self.config_page_advanced = (
+            "{protocol}://{username}:{password}@"
+            "{ip_address}:{port}/WLG_adv_dual_band2.htm").format(
+                protocol=self.ap_settings["protocol"],
+                username=self.ap_settings["admin_username"],
+                password=self.ap_settings["admin_password"],
+                ip_address=self.ap_settings["ip_address"],
+                port=self.ap_settings["port"])
+        self.networks = ["2G", "5G_1", "5G_2"]
+        self.channel_band_map = {
+            "2G": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            "5G_1": [
+                36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120,
+                124, 128, 132, 136, 140, 149, 153, 157, 161, 165
+            ]
+        }
+
+        self.bw_mode_values = {
+            "g and b": "11g",
+            "145Mbps": "VHT20",
+            "300Mbps": "VHT40",
+            "HT80": "VHT80",
+            "HT160": "VHT160"
+        }
+        self.bw_mode_text = {
+            "11g": "Up to 54 Mbps",
+            "VHT20": "Up to 600 Mbps",
+            "VHT40": "Up to 1200 Mbps",
+            "VHT80": "Up to 2400 Mbps",
+            "VHT160": "Up to 4800 Mbps"
+        }
+
+
 class GoogleWifiAP(WifiRetailAP):
     """ Class that implements Google Wifi AP.
 
@@ -1159,6 +1224,14 @@ class GoogleWifiAP(WifiRetailAP):
             "bandwidth_5G_1": "VHT20",
             "power_2G": "auto",
             "power_5G_1": "auto",
+            "mode_2G": None,
+            "num_streams_2G": None,
+            "rate_2G": "auto",
+            "short_gi_2G": 0,
+            "mode_5G_1": None,
+            "num_streams_5G_1": None,
+            "rate_5G_1": "auto",
+            "short_gi_5G_1": 0,
             "security_type_2G": "Open",
             "security_type_5G_1": "Open",
             "subnet_2G": "192.168.1.0/24",
@@ -1169,7 +1242,7 @@ class GoogleWifiAP(WifiRetailAP):
 
         for setting in self.default_settings.keys():
             if setting not in self.ap_settings:
-                self.log.warning(
+                self.log.debug(
                     "{0} not found during init. Setting {0} = {1}".format(
                         setting, self.default_settings[setting]))
                 self.ap_settings[setting] = self.default_settings[setting]
@@ -1277,6 +1350,12 @@ class GoogleWifiAP(WifiRetailAP):
         self.access_point.bridge.startup(brconfigs)
         self.access_point.start_ap(config)
         self.set_power(network, self.ap_settings["power_{}".format(network)])
+        self.set_rate(
+            network,
+            mode=self.ap_settings["mode_{}".format(network)],
+            num_streams=self.ap_settings["num_streams_{}".format(network)],
+            rate=self.ap_settings["rate_{}".format(network)],
+            short_gi=self.ap_settings["short_gi_{}".format(network)])
         self.log.info("AP started on channel {} with SSID {}".format(
             channel, ssid))
 
@@ -1310,7 +1389,7 @@ class GoogleWifiAP(WifiRetailAP):
                  network,
                  mode=None,
                  num_streams=None,
-                 rate=None,
+                 rate='auto',
                  short_gi=0):
         """Function that sets rate.
 
@@ -1324,11 +1403,21 @@ class GoogleWifiAP(WifiRetailAP):
         if "2G" in network:
             interface = self.access_point.wlan_2g
             interface_short = "2.4"
+            self.ap_settings["mode_2G"] = mode
+            self.ap_settings["num_streams_2G"] = num_streams
+            self.ap_settings["rate_2G"] = rate
+            self.ap_settings["short_gi_2G"] = short_gi
         elif "5G_1" in network:
             interface = self.access_point.wlan_5g
             interface_short = "5"
+            self.ap_settings["mode_5G_1"] = mode
+            self.ap_settings["num_streams_5G_1"] = num_streams
+            self.ap_settings["rate_5G_1"] = rate
+            self.ap_settings["short_gi_5G_1"] = short_gi
 
-        if "legacy" in mode.lower():
+        if rate == "auto":
+            cmd_string = "iw dev {0} set bitrates".format(interface)
+        elif "legacy" in mode.lower():
             cmd_string = "iw dev {0} set bitrates legacy-{1} {2} ht-mcs-{1} vht-mcs-{1}".format(
                 interface, interface_short, rate)
         elif "vht" in mode.lower():

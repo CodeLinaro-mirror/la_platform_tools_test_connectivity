@@ -16,6 +16,7 @@
 
 import bokeh, bokeh.plotting
 import collections
+import hashlib
 import itertools
 import json
 import logging
@@ -42,6 +43,7 @@ CONST_3dB = 3.01029995664
 RSSI_ERROR_VAL = float('nan')
 RTT_REGEX = re.compile(r'^\[(?P<timestamp>\S+)\] .*? time=(?P<rtt>\S+)')
 LOSS_REGEX = re.compile(r'(?P<loss>\S+)% packet loss')
+FW_REGEX = re.compile(r'FW:(?P<firmware>\S+) HW:')
 
 
 # Threading decorator
@@ -73,13 +75,20 @@ class LinkLayerStats():
     MODE_MAP = {'0': '11a/g', '1': '11b', '2': '11n', '3': '11ac'}
     BW_MAP = {'0': 20, '1': 40, '2': 80}
 
-    def __init__(self, dut):
+    def __init__(self, dut, llstats_enabled=True):
         self.dut = dut
+        self.llstats_enabled = llstats_enabled
         self.llstats_cumulative = self._empty_llstats()
         self.llstats_incremental = self._empty_llstats()
 
     def update_stats(self):
-        llstats_output = self.dut.adb.shell(self.LLSTATS_CMD)
+        if self.llstats_enabled:
+            try:
+                llstats_output = self.dut.adb.shell(self.LLSTATS_CMD, timeout=0.1)
+            except:
+                llstats_output = ''
+        else:
+            llstats_output = ''
         self._update_stats(llstats_output)
 
     def reset_stats(self):
@@ -241,6 +250,13 @@ class BokehFigure():
         'square_cross', 'triangle', 'x'
     ]
 
+    TOOLS = ('box_zoom,box_select,pan,crosshair,redo,undo,reset,hover,save')
+    TOOLTIPS = [
+        ('index', '$index'),
+        ('(x,y)', '($x, $y)'),
+        ('info', '@hover_text'),
+    ]
+
     def __init__(self,
                  title=None,
                  x_label=None,
@@ -249,30 +265,27 @@ class BokehFigure():
                  height=700,
                  width=1100,
                  title_size='15pt',
-                 axis_label_size='12pt'):
-        self.figure_data = []
-        self.fig_property = {
-            'title': title,
-            'x_label': x_label,
-            'primary_y_label': primary_y_label,
-            'secondary_y_label': secondary_y_label,
-            'num_lines': 0,
-            'height': height,
-            'width': width,
-            'title_size': title_size,
-            'axis_label_size': axis_label_size
-        }
-        self.TOOLS = (
-            'box_zoom,box_select,pan,crosshair,redo,undo,reset,hover,save')
-        self.TOOLTIPS = [
-            ('index', '$index'),
-            ('(x,y)', '($x, $y)'),
-            ('info', '@hover_text'),
-        ]
+                 axis_label_size='12pt',
+                 json_file=None):
+        if json_file:
+            self.load_from_json(json_file)
+        else:
+            self.figure_data = []
+            self.fig_property = {
+                'title': title,
+                'x_label': x_label,
+                'primary_y_label': primary_y_label,
+                'secondary_y_label': secondary_y_label,
+                'num_lines': 0,
+                'height': height,
+                'width': width,
+                'title_size': title_size,
+                'axis_label_size': axis_label_size
+            }
 
     def init_plot(self):
         self.plot = bokeh.plotting.figure(
-            sizing_mode='scale_width',
+            sizing_mode='scale_both',
             plot_width=self.fig_property['width'],
             plot_height=self.fig_property['height'],
             title=self.fig_property['title'],
@@ -393,7 +406,7 @@ class BokehFigure():
         })
         self.fig_property['num_lines'] += 1
 
-    def generate_figure(self, output_file=None):
+    def generate_figure(self, output_file=None, save_json=True):
         """Function to generate and save BokehFigure.
 
         Args:
@@ -466,31 +479,37 @@ class BokehFigure():
         self.plot.title.text_font_size = self.fig_property['title_size']
 
         if output_file is not None:
-            self.save_figure(output_file)
+            self.save_figure(output_file, save_json)
         return self.plot
+
+    def load_from_json(self, file_path):
+        with open(file_path, 'r') as json_file:
+            fig_dict = json.load(json_file)
+        self.fig_property = fig_dict['fig_property']
+        self.figure_data = fig_dict['figure_data']
 
     def _save_figure_json(self, output_file):
         """Function to save a json format of a figure"""
         figure_dict = collections.OrderedDict(fig_property=self.fig_property,
-                                              figure_data=self.figure_data,
-                                              tools=self.TOOLS,
-                                              tooltips=self.TOOLTIPS)
+                                              figure_data=self.figure_data)
         output_file = output_file.replace('.html', '_plot_data.json')
         with open(output_file, 'w') as outfile:
             json.dump(figure_dict, outfile, indent=4)
 
-    def save_figure(self, output_file):
+    def save_figure(self, output_file, save_json=True):
         """Function to save BokehFigure.
 
         Args:
             output_file: string specifying output file path
+            save_json: flag controlling json outputs
         """
         bokeh.plotting.output_file(output_file)
         bokeh.plotting.save(self.plot)
-        self._save_figure_json(output_file)
+        if save_json:
+            self._save_figure_json(output_file)
 
     @staticmethod
-    def save_figures(figure_array, output_file_path):
+    def save_figures(figure_array, output_file_path, save_json=True):
         """Function to save list of BokehFigures in one file.
 
         Args:
@@ -499,9 +518,10 @@ class BokehFigure():
         """
         for idx, figure in enumerate(figure_array):
             figure.generate_figure()
-            json_file_path = output_file_path.replace(
-                '.html', '{}-plot_data.json'.format(idx))
-            figure._save_figure_json(json_file_path)
+            if save_json:
+                json_file_path = output_file_path.replace(
+                    '.html', '{}-plot_data.json'.format(idx))
+                figure._save_figure_json(json_file_path)
         plot_array = [figure.plot for figure in figure_array]
         all_plots = bokeh.layouts.column(children=plot_array,
                                          sizing_mode='scale_width')
@@ -678,7 +698,8 @@ def get_connected_rssi(dut,
                        num_measurements=1,
                        polling_frequency=SHORT_SLEEP,
                        first_measurement_delay=0,
-                       disconnect_warning=True):
+                       disconnect_warning=True,
+                       ignore_samples=0):
     """Gets all RSSI values reported for the connected access point/BSSID.
 
     Args:
@@ -686,6 +707,7 @@ def get_connected_rssi(dut,
         num_measurements: number of scans done, and RSSIs collected
         polling_frequency: time to wait between RSSI measurements
         disconnect_warning: boolean controlling disconnection logging messages
+        ignore_samples: number of leading samples to ignore
     Returns:
         connected_rssi: dict containing the measurements results for
         all reported RSSI values (signal_poll, per chain, etc.) and their
@@ -765,6 +787,8 @@ def get_connected_rssi(dut,
         if 'data' not in val:
             continue
         filtered_rssi_values = [x for x in val['data'] if not math.isnan(x)]
+        if len(filtered_rssi_values) > ignore_samples:
+            filtered_rssi_values = filtered_rssi_values[ignore_samples:]
         if filtered_rssi_values:
             connected_rssi[key]['mean'] = statistics.mean(filtered_rssi_values)
             if len(filtered_rssi_values) > 1:
@@ -783,9 +807,11 @@ def get_connected_rssi_nb(dut,
                           num_measurements=1,
                           polling_frequency=SHORT_SLEEP,
                           first_measurement_delay=0,
-                          disconnect_warning=True):
+                          disconnect_warning=True,
+                          ignore_samples=0):
     return get_connected_rssi(dut, num_measurements, polling_frequency,
-                              first_measurement_delay)
+                              first_measurement_delay, disconnect_warning,
+                              ignore_samples)
 
 
 def get_scan_rssi(dut, tracked_bssids, num_measurements=1):
@@ -851,6 +877,83 @@ def atten_by_label(atten_list, path_label, atten_level):
             atten.set_atten(atten_level)
 
 
+def get_atten_for_target_rssi(target_rssi, attenuators, dut, ping_server):
+    """Function to estimate attenuation to hit a target RSSI.
+
+    This function estimates a constant attenuation setting on all atennuation
+    ports to hit a target RSSI. The estimate is not meant to be exact or
+    guaranteed.
+
+    Args:
+        target_rssi: rssi of interest
+        attenuators: list of attenuator ports
+        dut: android device object assumed connected to a wifi network.
+        ping_server: ssh connection object to ping server
+    Returns:
+        target_atten: attenuation setting to achieve target_rssi
+    """
+    logging.info('Searching attenuation for RSSI = {}dB'.format(target_rssi))
+    # Set attenuator to 0 dB
+    for atten in attenuators:
+        atten.set_atten(0, strict=False)
+    # Start ping traffic
+    dut_ip = dut.droid.connectivityGetIPv4Addresses('wlan0')[0]
+    # Measure starting RSSI
+    ping_future = get_ping_stats_nb(src_device=ping_server,
+                                    dest_address=dut_ip,
+                                    ping_duration=1.5,
+                                    ping_interval=0.02,
+                                    ping_size=64)
+    current_rssi = get_connected_rssi(dut,
+                                      num_measurements=4,
+                                      polling_frequency=0.25,
+                                      first_measurement_delay=0.5,
+                                      disconnect_warning=1,
+                                      ignore_samples=1)
+    current_rssi = current_rssi['signal_poll_rssi']['mean']
+    ping_future.result()
+    target_atten = 0
+    logging.debug("RSSI @ {0:.2f}dB attenuation = {1:.2f}".format(
+        target_atten, current_rssi))
+    within_range = 0
+    for idx in range(20):
+        atten_delta = max(min(current_rssi - target_rssi, 20), -20)
+        target_atten = int((target_atten + atten_delta) * 4) / 4
+        if target_atten < 0:
+            return 0
+        if target_atten > attenuators[0].get_max_atten():
+            return attenuators[0].get_max_atten()
+        for atten in attenuators:
+            atten.set_atten(target_atten, strict=False)
+        ping_future = get_ping_stats_nb(src_device=ping_server,
+                                        dest_address=dut_ip,
+                                        ping_duration=1.5,
+                                        ping_interval=0.02,
+                                        ping_size=64)
+        current_rssi = get_connected_rssi(dut,
+                                          num_measurements=4,
+                                          polling_frequency=0.25,
+                                          first_measurement_delay=0.5,
+                                          disconnect_warning=1,
+                                          ignore_samples=1)
+        current_rssi = current_rssi['signal_poll_rssi']['mean']
+        ping_future.result()
+        logging.info("RSSI @ {0:.2f}dB attenuation = {1:.2f}".format(
+            target_atten, current_rssi))
+        if abs(current_rssi - target_rssi) < 1:
+            if within_range:
+                logging.info(
+                    'Reached RSSI: {0:.2f}. Target RSSI: {1:.2f}.'
+                    'Attenuation: {2:.2f}, Iterations = {3:.2f}'.format(
+                        current_rssi, target_rssi, target_atten, idx))
+                return target_atten
+            else:
+                within_range = True
+        else:
+            within_range = False
+    return target_atten
+
+
 def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
     """Function to detect mapping between attenuator ports and DUT chains.
 
@@ -865,7 +968,6 @@ def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
         attenuators: list of attenuator ports
         dut: android device object assumed connected to a wifi network.
         ping_server: ssh connection object to ping server
-        ping_ip: ip to ping to keep connection alive and RSSI updated
     Returns:
         chain_map: list of dut chains, one entry per attenuator port
     """
@@ -951,6 +1053,12 @@ def get_full_rf_connection_map(attenuators, dut, ping_server, networks):
 
 
 # Miscellaneous Wifi Utilities
+def extract_sub_dict(full_dict, fields):
+    sub_dict = collections.OrderedDict(
+        (field, full_dict[field]) for field in fields)
+    return sub_dict
+
+
 def validate_network(dut, ssid):
     """Check that DUT has a valid internet connection through expected SSID
 
@@ -1115,6 +1223,31 @@ def health_check(dut, batt_thresh=5, temp_threshold=53, cooldown=1):
     else:
         logging.debug("DUT Temperature = {} C".format(temperature))
     return health_check
+
+
+def get_sw_signature(dut):
+    """Function that checks the signature for wifi firmware and config files.
+
+    Returns:
+        bdf_signature: signature consisting of last three digits of bdf cksums
+        fw_signature: floating point firmware version, i.e., major.minor
+    """
+    bdf_output = dut.adb.shell('cksum /vendor/firmware/bdwlan*')
+    logging.debug('BDF Checksum output: {}'.format(bdf_output))
+    bdf_signature = sum(
+        [int(line.split(' ')[0]) for line in bdf_output.splitlines()]) % 1000
+
+    fw_output = dut.adb.shell('halutil -logger -get fw')
+    logging.debug('Firmware version output: {}'.format(fw_output))
+    fw_version = re.search(FW_REGEX, fw_output).group('firmware')
+    fw_signature = fw_version.split('.')[-3:-1]
+    fw_signature = float('.'.join(fw_signature))
+    serial_hash = int(hashlib.md5(dut.serial.encode()).hexdigest(), 16) % 1000
+    return {
+        'bdf_signature': bdf_signature,
+        'fw_signature': fw_signature,
+        'serial_hash': serial_hash
+    }
 
 
 def push_bdf(dut, bdf_file):

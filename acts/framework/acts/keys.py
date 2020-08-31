@@ -15,6 +15,7 @@
 #   limitations under the License.
 
 import enum
+
 """This module has the global key values that are used across framework
 modules.
 """
@@ -40,6 +41,7 @@ class Config(enum.Enum):
     key_test_failure_tracebacks = 'test_failure_tracebacks'
     # Config names for controllers packaged in ACTS.
     key_android_device = 'AndroidDevice'
+    key_bits = 'Bits'
     key_bluetooth_pts_device = 'BluetoothPtsDevice'
     key_fuchsia_device = 'FuchsiaDevice'
     key_buds_device = 'BudsDevice'
@@ -55,6 +57,7 @@ class Config(enum.Enum):
     key_sniffer = 'Sniffer'
     key_arduino_wifi_dongle = 'ArduinoWifiDongle'
     key_packet_capture = 'PacketCapture'
+    key_pdu = 'PduDevice'
     # Internal keys, used internally, not exposed to user's config files.
     ikey_user_param = 'user_params'
     ikey_testbed_name = 'testbed_name'
@@ -62,6 +65,7 @@ class Config(enum.Enum):
     ikey_logpath = 'log_path'
     ikey_summary_writer = 'summary_writer'
     # module name of controllers packaged in ACTS.
+    m_key_bits = 'bits'
     m_key_monsoon = 'monsoon'
     m_key_android_device = 'android_device'
     m_key_fuchsia_device = 'fuchsia_device'
@@ -78,6 +82,7 @@ class Config(enum.Enum):
     m_key_sniffer = 'sniffer'
     m_key_arduino_wifi_dongle = 'arduino_wifi_dongle'
     m_key_packet_capture = 'packet_capture'
+    m_key_pdu = 'pdu'
 
     # A list of keys whose values in configs should not be passed to test
     # classes without unpacking first.
@@ -86,6 +91,7 @@ class Config(enum.Enum):
     # Controller names packaged with ACTS.
     builtin_controller_names = [
         key_android_device,
+        key_bits,
         key_bluetooth_pts_device,
         key_fuchsia_device,
         key_buds_device,
@@ -101,6 +107,7 @@ class Config(enum.Enum):
         key_chameleon_device,
         key_arduino_wifi_dongle,
         key_packet_capture,
+        key_pdu
     ]
 
     # Keys that are file or folder paths.

@@ -21,7 +21,10 @@ COMMAND_CONNECT = "wlan.connect"
 COMMAND_DISCONNECT = "wlan.disconnect"
 COMMAND_STATUS = "wlan.status"
 COMMAND_GET_IFACE_ID_LIST = "wlan.get_iface_id_list"
+COMMAND_GET_PHY_ID_LIST = "wlan.get_phy_id_list"
 COMMAND_DESTROY_IFACE = "wlan.destroy_iface"
+COMMAND_GET_COUNTRY = "wlan_phy.get_country"
+COMMAND_QUERY_IFACE = "wlan.query_iface"
 
 
 class FuchsiaWlanLib(BaseLib):
@@ -94,6 +97,18 @@ class FuchsiaWlanLib(BaseLib):
 
         return self.send_command(test_id, test_cmd, {})
 
+    def wlanPhyIdList(self):
+        """ Get a list if wlan phy IDs.
+
+        Returns:
+            List of IDs if success, error if error.
+        """
+        test_cmd = COMMAND_GET_PHY_ID_LIST
+        test_id = self.build_id(self.test_counter)
+        self.test_counter += 1
+
+        return self.send_command(test_id, test_cmd, {})
+
     def wlanStatus(self):
         """ Request connection status
 
@@ -106,3 +121,36 @@ class FuchsiaWlanLib(BaseLib):
         self.test_counter += 1
 
         return self.send_command(test_id, test_cmd, {})
+
+    def wlanGetCountry(self, phy_id):
+        """ Reads the currently configured country for `phy_id`.
+
+        Args:
+            phy_id: unsigned 16-bit integer.
+
+        Returns:
+            Dictionary, String if success, error if error.
+        """
+        test_cmd = COMMAND_GET_COUNTRY
+        test_args = {"phy_id": phy_id}
+        test_id = self.build_id(self.test_counter)
+        self.test_counter += 1
+
+        return self.send_command(test_id, test_cmd, test_args)
+
+    def wlanQueryInterface(self, iface_id):
+        """ Retrieves interface info for given wlan iface id.
+
+        Args:
+            iface_id: unsigned 16-bit int, the wlan interface id.
+
+        Returns:
+            Dictionary, containing interface id, role, phy_id, phy_assigned_id
+            and mac addr.
+        """
+        test_cmd = COMMAND_QUERY_IFACE
+        test_args = {'iface_id': iface_id}
+        test_id = self.build_id(self.test_counter)
+        self.test_counter += 1
+
+        return self.send_command(test_id, test_cmd, test_args)
