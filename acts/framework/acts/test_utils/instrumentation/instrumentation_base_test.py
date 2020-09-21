@@ -15,24 +15,24 @@
 #   limitations under the License.
 
 import os
-
 import yaml
-from acts.keys import Config
-from acts.test_utils.instrumentation import instrumentation_proto_parser \
-    as proto_parser
-from acts.test_utils.instrumentation.config_wrapper import ConfigWrapper
-from acts.test_utils.instrumentation.device.command.adb_commands import common
 
 from acts import base_test
 from acts import context
-from acts import utils
+from acts import error
+
+from acts.test_utils.instrumentation import instrumentation_proto_parser as proto_parser
+from acts.test_utils.instrumentation import instrumentation_text_output_parser
+from acts.test_utils.instrumentation.config_wrapper import ConfigWrapper
+from acts.test_utils.instrumentation.device.command.adb_command_types import GenericCommand
+from acts.test_utils.instrumentation.device.command.instrumentation_command_builder import DEFAULT_INSTRUMENTATION_LOG_OUTPUT
 
 RESOLVE_FILE_MARKER = 'FILE'
 FILE_NOT_FOUND = 'File is missing from ACTS config'
 DEFAULT_INSTRUMENTATION_CONFIG_FILE = 'instrumentation_config.yaml'
 
 
-class InstrumentationTestError(Exception):
+class InstrumentationTestError(error.ActsError):
     pass
 
 
@@ -46,27 +46,21 @@ class InstrumentationBaseTest(base_test.BaseTestClass):
             configs: Dict representing the test configuration
         """
         super().__init__(configs)
-        # Take instrumentation config path directly from ACTS config if found,
-        # otherwise try to find the instrumentation config in the same directory
-        # as the ACTS config
-        instrumentation_config_path = ''
         if 'instrumentation_config' in self.user_params:
             instrumentation_config_path = (
                 self.user_params['instrumentation_config'][0])
-        elif Config.key_config_path.value in self.user_params:
-            instrumentation_config_path = os.path.join(
-                self.user_params[Config.key_config_path.value],
-                DEFAULT_INSTRUMENTATION_CONFIG_FILE)
+        else:
+            raise InstrumentationTestError(
+                'Instrumentation config file not specified. Please add a valid '
+                '"instrumentation_config" path to the ACTS config.')
         self._instrumentation_config = ConfigWrapper()
         if os.path.exists(instrumentation_config_path):
             self._instrumentation_config = self._load_instrumentation_config(
                 instrumentation_config_path)
-            self._class_config = self._instrumentation_config.get_config(
-                self.__class__.__name__)
         else:
-            self.log.warning(
-                'Instrumentation config file %s does not exist' %
-                instrumentation_config_path)
+            raise InstrumentationTestError(
+                'Instrumentation config file %s does not exist'
+                % instrumentation_config_path)
 
     def _load_instrumentation_config(self, path):
         """Load the instrumentation config file into an
@@ -83,13 +77,13 @@ class InstrumentationBaseTest(base_test.BaseTestClass):
                 config_dict = yaml.safe_load(f)
         except Exception as e:
             raise InstrumentationTestError(
-                'Cannot open or parse instrumentation config file %s'
-                % path) from e
+                'Cannot open or parse instrumentation config file %s. Error: %s'
+                % (path, e))
 
         # Write out a copy of the instrumentation config
         with open(os.path.join(
-                self.log_path, 'instrumentation_config.yaml'),
-                  mode='w', encoding='utf-8') as f:
+                self.log_path, DEFAULT_INSTRUMENTATION_CONFIG_FILE),
+                mode='w', encoding='utf-8') as f:
             yaml.safe_dump(config_dict, f)
 
         return ConfigWrapper(config_dict)
@@ -100,9 +94,25 @@ class InstrumentationBaseTest(base_test.BaseTestClass):
 
     def teardown_test(self):
         """Test teardown. Takes bugreport and cleans up device."""
-        self._ad_take_bugreport(self.ad_dut, 'teardown_class',
-                                utils.get_current_epoch_time())
         self._cleanup_device()
+
+    def on_exception(self, test_name, begin_time):
+        """Called upon unhandled test exception."""
+        if self._instrumentation_config.get('bugreport_on_exception',
+                                            default=True):
+            self._take_bug_report(test_name, begin_time)
+
+    def on_pass(self, test_name, begin_time):
+        """Called upon test pass."""
+        if self._instrumentation_config.get('bugreport_on_pass',
+                                            default=True):
+            self._take_bug_report(test_name, begin_time)
+
+    def on_fail(self, test_name, begin_time):
+        """Called upon test failure."""
+        if self._instrumentation_config.get('bugreport_on_fail',
+                                            default=True):
+            self._take_bug_report(test_name, begin_time)
 
     def _prepare_device(self):
         """Prepares the device for testing."""
@@ -150,13 +160,47 @@ class InstrumentationBaseTest(base_test.BaseTestClass):
             config_name: Name of the config to fetch
         Returns: The merged config, as a ConfigWrapper
         """
-        merged_config = self._instrumentation_config.get_config(
-            config_name)
-        merged_config.update(self._class_config.get_config(config_name))
+        class_config = self._instrumentation_config.get_config(
+            self.__class__.__name__)
+
+        merged_config = self._instrumentation_config.get_config(config_name)
+        merged_config.update(class_config.get_config(config_name))
         if self.current_test_name:
-            case_config = self._class_config.get_config(self.current_test_name)
+            case_config = class_config.get_config(self.current_test_name)
             merged_config.update(case_config.get_config(config_name))
         return merged_config
+
+    def context_specific_config(self, config):
+        """Constructs a config for the current most specific context.
+
+        If invoked at class level, it will wrap the passed config within the
+        test class context. If invoked at test level, it will wrap the passed
+        config within the test context.
+
+        Examples:
+            If invoked at ActsTestClass level,
+            context_specific_config({'hello':'world'}) returns
+            {
+                'ActsTestClass': {'hello':'world'}
+            }
+
+            If invoked at ActsTestClass.test_case level,
+            context_specific_config({'hello':'world'}) returns
+            {
+                'ActsTestClass': {
+                    'test_case' : {'hello':'world'}
+                 }
+            }
+
+        Args:
+            config: The config to wrap within the context.
+        Returns:
+            A ConfigWrapper.
+        """
+        if not self.current_test_name:
+            return ConfigWrapper({self.__class__.__name__: config})
+        return ConfigWrapper(
+            {self.__class__.__name__: {self.current_test_name: config}})
 
     def get_files_from_config(self, config_key):
         """Get a list of file paths on host from self.user_params with the
@@ -185,80 +229,155 @@ class InstrumentationBaseTest(base_test.BaseTestClass):
         """
         return self.get_files_from_config(config_key)[-1]
 
-    def adb_run(self, cmds):
+    def adb_run(self, cmds, ad=None):
         """Run the specified command, or list of commands, with the ADB shell.
 
         Args:
-            cmds: A string or list of strings representing ADB shell command(s)
+            cmds: A string, A GenericCommand, a list of strings or a list of
+                  GenericCommand representing ADB shell command(s)
+            ad: The device to run on. Defaults to self.ad_dut.
 
         Returns: dict mapping command to resulting stdout
         """
-        if isinstance(cmds, str):
+        if ad is None:
+            ad = self.ad_dut
+        if isinstance(cmds, str) or isinstance(cmds, GenericCommand):
             cmds = [cmds]
+
         out = {}
         for cmd in cmds:
-            out[cmd] = self.ad_dut.adb.shell(cmd)
+            if isinstance(cmd, GenericCommand):
+                if cmd.desc:
+                    ad.log.debug('Applying command that: %s' % cmd.desc)
+                cmd = cmd.cmd
+            out[cmd] = ad.adb.shell(cmd)
         return out
 
-    def adb_run_async(self, cmds):
+    def fastboot_run(self, cmds, ad=None):
+        """Run the specified command, or list of commands, with the FASTBOOT shell.
+
+        Args:
+            cmds: A string, A GenericCommand, a list of strings or a list of
+                  GenericCommand representing FASTBOOT command(s)
+            ad: The device to run on. Defaults to self.ad_dut.
+
+        Returns: dict mapping command to resulting stdout
+        """
+        if ad is None:
+            ad = self.ad_dut
+        if isinstance(cmds, str) or isinstance(cmds, GenericCommand):
+            cmds = [cmds]
+
+        out = {}
+        for cmd in cmds:
+            if isinstance(cmd, GenericCommand):
+                if cmd.desc:
+                    ad.log.debug('Applying command that: %s' % cmd.desc)
+                cmd = cmd.cmd
+            out[cmd] = ad.fastboot._exec_fastboot_cmd(cmd, '')
+        return out
+
+    def adb_run_async(self, cmds, ad=None):
         """Run the specified command, or list of commands, with the ADB shell.
         (async)
 
         Args:
             cmds: A string or list of strings representing ADB shell command(s)
+            ad: The device to run on. Defaults to self.ad_dut.
 
         Returns: dict mapping command to resulting subprocess.Popen object
         """
-        if isinstance(cmds, str):
+        if ad is None:
+            ad = self.ad_dut
+
+        if isinstance(cmds, str) or isinstance(cmds, GenericCommand):
             cmds = [cmds]
+
         procs = {}
         for cmd in cmds:
-            procs[cmd] = self.ad_dut.adb.shell_nb(cmd)
+            if isinstance(cmd, GenericCommand):
+                if cmd.desc:
+                    ad.log.debug('Applying command to: %s' % cmd.desc)
+                cmd = cmd.cmd
+            procs[cmd] = ad.adb.shell_nb(cmd)
         return procs
 
-    def dump_instrumentation_result_proto(self):
-        """Dump the instrumentation result proto as a human-readable txt file
-        in the log directory.
+    def parse_instrumentation_result(self):
+        """Parse the instrumentation result and write it to a human-readable
+        txt file in the log directory.
 
         Returns: The parsed instrumentation_data_pb2.Session
         """
-        session = proto_parser.get_session_from_device(self.ad_dut)
-        proto_txt_path = os.path.join(
-            context.get_current_context().get_full_output_path(),
-            'instrumentation_proto.txt')
-        with open(proto_txt_path, 'w') as f:
-            f.write(str(session))
-        return session
+        log_path = context.get_current_context().get_full_output_path()
 
-    # Basic setup methods
+        if proto_parser.has_instrumentation_proto(self.ad_dut):
+            proto_file = proto_parser.pull_proto(self.ad_dut, log_path)
+            proto_txt_path = os.path.join(log_path, 'instrumentation_proto.txt')
+            session = proto_parser.get_session_from_local_file(proto_file)
+            with open(proto_txt_path, 'w') as f:
+                f.write(str(session))
+            return session
 
-    def mode_airplane(self):
-        """Mode for turning on airplane mode only."""
-        self.log.info('Enabling airplane mode.')
-        self.adb_run(common.airplane_mode.toggle(True))
-        self.adb_run(common.auto_time.toggle(False))
-        self.adb_run(common.auto_timezone.toggle(False))
-        self.adb_run(common.location_gps.toggle(False))
-        self.adb_run(common.location_network.toggle(False))
-        self.adb_run(common.wifi.toggle(False))
-        self.adb_run(common.bluetooth.toggle(False))
+        on_device = os.path.join(
+            self.ad_dut.external_storage_path,
+            DEFAULT_INSTRUMENTATION_LOG_OUTPUT)
+        if self.file_exists(on_device):
+            plain_output = instrumentation_text_output_parser.pull_output(
+                self.ad_dut,
+                log_path,
+                on_device)
+            proto_txt_path = os.path.join(
+                log_path,
+                'instrumentation_proto.from_plain_text.txt')
+            session = instrumentation_text_output_parser.parse_from_file(
+                plain_output)
+            with open(proto_txt_path, 'w') as f:
+                f.write(str(session))
+            return session
 
-    def mode_wifi(self):
-        """Mode for turning on airplane mode and wifi."""
-        self.log.info('Enabling airplane mode and wifi.')
-        self.adb_run(common.airplane_mode.toggle(True))
-        self.adb_run(common.location_gps.toggle(False))
-        self.adb_run(common.location_network.toggle(False))
-        self.adb_run(common.wifi.toggle(True))
-        self.adb_run(common.bluetooth.toggle(False))
+        raise InstrumentationTestError('No instrumentation output was detected '
+                                       'in either proto nor text format.')
 
-    def mode_bluetooth(self):
-        """Mode for turning on airplane mode and bluetooth."""
-        self.log.info('Enabling airplane mode and bluetooth.')
-        self.adb_run(common.airplane_mode.toggle(True))
-        self.adb_run(common.auto_time.toggle(False))
-        self.adb_run(common.auto_timezone.toggle(False))
-        self.adb_run(common.location_gps.toggle(False))
-        self.adb_run(common.location_network.toggle(False))
-        self.adb_run(common.wifi.toggle(False))
-        self.adb_run(common.bluetooth.toggle(True))
+    def file_exists(self, file_path, ad=None):
+        """Returns whether a file exists on a device.
+
+        Args:
+            file_path: The path of the file to check for.
+            ad: The AndroiDevice to check on. If left undefined the default
+            device under test will be used.
+        """
+        if ad is None:
+            ad = self.ad_dut
+
+        cmd = '(test -f %s && echo yes) || echo no' % file_path
+        result = self.adb_run(cmd, ad)
+        if result[cmd] == 'yes':
+            return True
+        elif result[cmd] == 'no':
+            return False
+        raise ValueError('Couldn\'t determine if %s exists. '
+                         'Expected yes/no, got %s' % (file_path, result[cmd]))
+
+    def log_instrumentation_result(self, session):
+        """Logs instrumentation test result.
+
+        Args:
+            session: an instrumentation_data_pb2.Session
+
+        Returns: The parsed instrumentation result
+        """
+        result = proto_parser.get_instrumentation_result(session)
+
+        if result['status_code']:
+            self.log.error('Instrumentation session aborted!')
+            if 'error_text' in result:
+                self.log.error('Instrumentation error: %s'
+                               % result['error_text'])
+            return result
+
+        log = self.log.info if result['result_code'] == -1 else self.log.error
+        log('Instrumentation command finished with result_code %d.'
+            % result['result_code'])
+        if 'stream' in result:
+            log('Instrumentation output: %s' % result['stream'])
+        return result

@@ -16,7 +16,7 @@
 
 import unittest
 import mobly.config_parser as mobly_config_parser
-import tests.test_utils.power.tel.lab.mock_bokeh
+import mock_bokeh
 from acts.controllers.anritsu_lib import md8475_cellular_simulator as anritsu
 from acts.controllers.rohdeschwarz_lib import cmw500_cellular_simulator as cmw
 from unittest import mock
@@ -99,7 +99,8 @@ class InitializeSimulatorTest(unittest.TestCase):
         """
         self.test.unpack_userparams(md8475_version=None,
                                md8475a_ip_address=None,
-                               cmw500_ip='12345')
+                               cmw500_ip='12345',
+                               cmw500_port=None)
         with self.assertRaises(RuntimeError), mock.patch.object(
                 cmw.CMW500CellularSimulator, '__init__', return_value=None):
             self.test.initialize_simulator()

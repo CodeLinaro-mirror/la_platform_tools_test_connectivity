@@ -78,17 +78,6 @@ class WifiRssiTest(base_test.BaseTestClass):
         os.makedirs(self.log_path, exist_ok=True)
         self.log.info('Access Point Configuration: {}'.format(
             self.access_point.ap_settings))
-        if hasattr(self, 'bdf'):
-            self.log.info('Pushing WiFi BDF to DUT.')
-            wputils.push_bdf(self.dut, self.bdf)
-        if hasattr(self, 'firmware'):
-            self.log.info('Pushing WiFi firmware to DUT.')
-            wlanmdsp = [
-                file for file in self.firmware if "wlanmdsp.mbn" in file
-            ][0]
-            data_msc = [file for file in self.firmware
-                        if "Data.msc" in file][0]
-            wputils.push_firmware(self.dut, wlanmdsp, data_msc)
         self.testclass_results = []
 
         # Turn WiFi ON
@@ -491,6 +480,10 @@ class WifiRssiTest(base_test.BaseTestClass):
             thread_future = wputils.get_ping_stats_nb(
                 self.remote_server, self.dut_ip,
                 testcase_params['traffic_timeout'], 0.02, 64)
+        else:
+            thread_future = wputils.get_ping_stats_nb(
+                self.remote_server, self.dut_ip,
+                testcase_params['traffic_timeout'], 0.5, 64)
         for atten in testcase_params['rssi_atten_range']:
             # Set Attenuation
             self.log.info('Setting attenuation to {} dB'.format(atten))
@@ -517,10 +510,10 @@ class WifiRssiTest(base_test.BaseTestClass):
         # Stop iperf traffic if needed
         for attenuator in self.attenuators:
             attenuator.set_atten(0)
-        if testcase_params['active_traffic']:
-            thread_future.result()
-            if testcase_params['traffic_type'] == 'iperf':
-                self.iperf_server.stop()
+        thread_future.result()
+        if testcase_params['active_traffic'] and testcase_params[
+                'traffic_type'] == 'iperf':
+            self.iperf_server.stop()
         return rssi_result
 
     def setup_ap(self, testcase_params):
@@ -562,7 +555,7 @@ class WifiRssiTest(base_test.BaseTestClass):
             self.main_network[testcase_params['band']][
                 'channel'] = testcase_params['channel']
             wutils.set_wifi_country_code(self.dut,
-                self.testclass_params['country_code'])
+                                         self.testclass_params['country_code'])
             wutils.wifi_connect(self.dut,
                                 self.main_network[testcase_params['band']],
                                 num_of_tries=5)
@@ -922,13 +915,6 @@ class WifiOtaRssiTest(WifiRssiTest):
                 test_result['postprocessed_results']['chain_1_rssi']['mean']
                 [0])
 
-        chamber_mode = self.testclass_results[0]['testcase_params'][
-            'chamber_mode']
-        if chamber_mode == 'orientation':
-            x_label = 'Angle (deg)'
-        elif chamber_mode == 'stepped stirrers':
-            x_label = 'Position Index'
-
         # Publish test class metrics
         for channel, channel_data in testclass_data.items():
             for rssi_metric, rssi_metric_value in channel_data['rssi'].items():
@@ -939,6 +925,14 @@ class WifiOtaRssiTest(WifiRssiTest):
                     metric_name, metric_value)
 
         # Plot test class results
+        chamber_mode = self.testclass_results[0]['testcase_params'][
+            'chamber_mode']
+        if chamber_mode == 'orientation':
+            x_label = 'Angle (deg)'
+        elif chamber_mode == 'stepped stirrers':
+            x_label = 'Position Index'
+        elif chamber_mode == 'StirrersOn':
+            return
         plots = []
         for channel, channel_data in testclass_data.items():
             current_plot = wputils.BokehFigure(

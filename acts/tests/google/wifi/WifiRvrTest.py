@@ -65,9 +65,9 @@ class WifiRvrTest(base_test.BaseTestClass):
         self.dut = self.android_devices[-1]
         req_params = [
             'RetailAccessPoints', 'rvr_test_params', 'testbed_params',
-            'RemoteServer'
+            'RemoteServer', 'main_network'
         ]
-        opt_params = ['main_network', 'golden_files_list', 'OTASniffer']
+        opt_params = ['golden_files_list', 'OTASniffer']
         self.unpack_userparams(req_params, opt_params)
         self.testclass_params = self.rvr_test_params
         self.num_atten = self.attenuators[0].instrument.num_atten
@@ -76,29 +76,23 @@ class WifiRvrTest(base_test.BaseTestClass):
             ssh.settings.from_config(self.RemoteServer[0]['ssh_config']))
         self.iperf_client = self.iperf_clients[0]
         self.access_point = retail_ap.create(self.RetailAccessPoints)[0]
-        if hasattr(self, 'OTASniffer'):
+        if hasattr(self,
+                   'OTASniffer') and self.testbed_params['sniffer_enable']:
             self.sniffer = ota_sniffer.create(self.OTASniffer)[0]
         self.log.info('Access Point Configuration: {}'.format(
             self.access_point.ap_settings))
         self.log_path = os.path.join(logging.log_path, 'results')
         os.makedirs(self.log_path, exist_ok=True)
         if not hasattr(self, 'golden_files_list'):
-            self.golden_files_list = [
-                os.path.join(self.testbed_params['golden_results_path'], file)
-                for file in os.listdir(
-                    self.testbed_params['golden_results_path'])
-            ]
-        if hasattr(self, 'bdf'):
-            self.log.info('Pushing WiFi BDF to DUT.')
-            wputils.push_bdf(self.dut, self.bdf)
-        if hasattr(self, 'firmware'):
-            self.log.info('Pushing WiFi firmware to DUT.')
-            wlanmdsp = [
-                file for file in self.firmware if "wlanmdsp.mbn" in file
-            ][0]
-            data_msc = [file for file in self.firmware
-                        if "Data.msc" in file][0]
-            wputils.push_firmware(self.dut, wlanmdsp, data_msc)
+            if 'golden_results_path' in self.testbed_params:
+                self.golden_files_list = [
+                    os.path.join(self.testbed_params['golden_results_path'],
+                                 file) for file in
+                    os.listdir(self.testbed_params['golden_results_path'])
+                ]
+            else:
+                self.log.warning('No golden files found.')
+                self.golden_files_list = []
         self.testclass_results = []
 
         # Turn WiFi ON
@@ -376,6 +370,8 @@ class WifiRvrTest(base_test.BaseTestClass):
             if self.testbed_params['sniffer_enable']:
                 self.sniffer.start_capture(
                     network=testcase_params['test_network'],
+                    chan=int(testcase_params['channel']),
+                    bw=int(testcase_params['mode'][3:]),
                     duration=self.testclass_params['iperf_duration'] / 5)
             # Start iperf session
             self.iperf_server.start(tag=str(atten))

@@ -43,6 +43,9 @@ def create_wlan_device(hardware_device):
                          type(hardware_device))
 
 
+FUCHSIA_VALID_SECURITY_TYPES = {"none", "wep", "wpa", "wpa2", "wpa3"}
+
+
 class WlanDevice(object):
     """Class representing a generic WLAN device.
 
@@ -131,11 +134,23 @@ class WlanDevice(object):
         raise NotImplementedError("{} must be defined.".format(
             inspect.currentframe().f_code.co_name))
 
-    def is_connected(self):
+    def is_connected(self, ssid=None):
         raise NotImplementedError("{} must be defined.".format(
             inspect.currentframe().f_code.co_name))
 
     def ping(self, dest_ip, count=3, interval=1000, timeout=1000, size=25):
+        raise NotImplementedError("{} must be defined.".format(
+            inspect.currentframe().f_code.co_name))
+
+    def hard_power_cycle(self, pdus=None):
+        raise NotImplementedError("{} must be defined.".format(
+            inspect.currentframe().f_code.co_name))
+
+    def save_network(self, ssid):
+        raise NotImplementedError("{} must be defined.".format(
+            inspect.currentframe().f_code.co_name))
+
+    def clear_saved_networks(self):
         raise NotImplementedError("{} must be defined.".format(
             inspect.currentframe().f_code.co_name))
 
@@ -216,14 +231,26 @@ class AndroidWlanDevice(WlanDevice):
     def get_interface_ip_addresses(self, interface):
         return get_interface_ip_addresses(self.device, interface)
 
-    def is_connected(self):
-        return 'BSSID' in self.device.droid.wifiGetConnectionInfo()
+    def is_connected(self, ssid=None):
+        wifi_info = self.device.droid.wifiGetConnectionInfo()
+        if ssid:
+            return 'BSSID' in wifi_info and wifi_info['SSID'] == ssid
+        return 'BSSID' in wifi_info
 
     def ping(self, dest_ip, count=3, interval=1000, timeout=1000, size=25):
         return adb_shell_ping(self.device,
                               dest_ip=dest_ip,
                               count=count,
                               timeout=timeout)
+
+    def hard_power_cycle(self, pdus):
+        pass
+
+    def save_network(self, ssid):
+        pass
+
+    def clear_saved_networks(self):
+        pass
 
 
 class FuchsiaWlanDevice(WlanDevice):
@@ -333,5 +360,55 @@ class FuchsiaWlanDevice(WlanDevice):
     def get_interface_ip_addresses(self, interface):
         return get_interface_ip_addresses(self.device, interface)
 
-    def is_connected(self):
-        return fwutils.is_connected(self)
+    def is_connected(self, ssid=None):
+        """ Determines if wlan_device is connected to wlan network.
+        
+        Args:
+            ssid (optional): string, to check if device is connect to a specific
+                network.
+
+        Returns:
+            True, if connected to a network or to the correct network when SSID
+                is provided.
+            False, if not connected or connect to incorrect network when SSID is
+                provided.
+        """
+        response = self.status()
+        if response.get('error'):
+            raise ConnectionError(
+                'Failed to get client network connection status')
+
+        status = response.get('result')
+        if status and status.get('connected_to'):
+            if ssid:
+                connected_ssid = ''.join(
+                    chr(i) for i in status['connected_to']['ssid'])
+                if ssid != connected_ssid:
+                    return False
+            return True
+        return False
+
+    def hard_power_cycle(self, pdus):
+        self.device.reboot(reboot_type='hard', testbed_pdus=pdus)
+
+    def save_network(self, target_ssid, security_type=None, target_pwd=None):
+        if security_type and security_type not in FUCHSIA_VALID_SECURITY_TYPES:
+            raise TypeError('Invalid security type: %s' % security_type)
+        response = self.device.wlan_policy_lib.wlanSaveNetwork(
+            target_ssid, security_type, target_pwd=target_pwd)
+        if response.get('error'):
+            raise EnvironmentError('Failed to save network %s. Err: %s' %
+                                   (target_ssid, response.get('error')))
+
+    def clear_saved_networks(self):
+        # TODO(fxb/55852): Replace with WlanPolicyLib command once its implemented.
+        response = self.device.wlan_policy_lib.wlanGetSavedNetworks()
+        if response.get('error'):
+            raise ConnectionError('Failed to get saved networks: %s' %
+                                  response.get('error'))
+        for ssid in response.get('result'):
+            delete_response = self.device.wlan_policy_lib.wlanRemoveNetwork(
+                ssid, None)
+            if delete_response.get('error'):
+                raise EnvironmentError('Failed to delete network %s: %s' %
+                                       (ssid, delete_response.get('error')))

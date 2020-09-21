@@ -204,6 +204,21 @@ def get_carrierid_from_slot_index(ad, sim_slot_index):
             return info['carrierId']
     return None
 
+def get_isopportunistic_from_slot_index(ad, sim_slot_index):
+    """ Get the isOppotunistic field for a particular slot
+
+    Args:
+        ad: android_device object.
+        sim_slot_index: slot 0 or slot 1
+
+    Returns:
+        result: True or False based on Value set
+    """
+    subInfo = ad.droid.subscriptionGetAllSubInfoList()
+    for info in subInfo:
+        if info['simSlotIndex'] == sim_slot_index:
+            return info['isOpportunistic']
+    return None
 
 def set_subid_for_data(ad, sub_id, time_to_sleep=WAIT_TIME_CHANGE_DATA_SUB_ID):
     """Set subId for data
@@ -316,6 +331,9 @@ def perform_dds_switch(ad):
 def set_dds_on_slot_0(ad):
     sub_id = get_subid_from_slot_index(ad.log, ad, 0)
     operator = get_operatorname_from_slot_index(ad, 0)
+    if get_default_data_sub_id(ad) == sub_id:
+        ad.log.info("Current DDS is already on %s", operator)
+        return True
     ad.log.info("Setting DDS on %s", operator)
     set_subid_for_data(ad, sub_id)
     ad.droid.telephonyToggleDataConnection(True)
@@ -329,6 +347,9 @@ def set_dds_on_slot_0(ad):
 def set_dds_on_slot_1(ad):
     sub_id = get_subid_from_slot_index(ad.log, ad, 1)
     operator = get_operatorname_from_slot_index(ad, 1)
+    if get_default_data_sub_id(ad) == sub_id:
+        ad.log.info("Current DDS is already on %s", operator)
+        return True
     ad.log.info("Setting DDS on %s", operator)
     set_subid_for_data(ad, sub_id)
     ad.droid.telephonyToggleDataConnection(True)
@@ -372,6 +393,7 @@ def get_cbrs_and_default_sub_id(ad):
         cbrs_subId
         default_subId
     """
+    cbrs_subid, default_subid = None, None
     slot_dict = {0: {}, 1: {}}
     for slot in (0, 1):
         slot_dict[slot]['sub_id'] = get_subid_from_slot_index(
@@ -388,4 +410,63 @@ def get_cbrs_and_default_sub_id(ad):
                     slot_dict[slot]['sub_id'],
                     slot_dict[slot]['carrier_id'],
                     slot_dict[slot]['operator'])
+        if not cbrs_subid:
+            ad.log.error("CBRS sub_id is not ACTIVE")
     return cbrs_subid, default_subid
+
+def get_subid_on_same_network_of_host_ad(ads, host_sub_id=None, type="voice"):
+    ad_host = ads[0]
+    ad_p1 = ads[1]
+
+    try:
+        ad_p2 = ads[2]
+    except:
+        ad_p2 = None
+
+    if not host_sub_id:
+        if type == "sms":
+            host_sub_id = get_outgoing_message_sub_id(ad_host)
+        else:
+            host_sub_id = get_incoming_voice_sub_id(ad_host)
+    host_mcc = ad_host.telephony["subscription"][host_sub_id]["mcc"]
+    host_mnc = ad_host.telephony["subscription"][host_sub_id]["mnc"]
+    p1_sub_id = INVALID_SUB_ID
+    p2_sub_id = INVALID_SUB_ID
+    p1_mcc = None
+    p1_mnc = None
+    p2_mcc = None
+    p2_mnc = None
+
+    for ad in [ad_p1, ad_p2]:
+        if ad:
+            for sub_id in ad.telephony["subscription"]:
+                mcc = ad.telephony["subscription"][sub_id]["mcc"]
+                mnc = ad.telephony["subscription"][sub_id]["mnc"]
+
+                if ad == ad_p1:
+                    if p1_sub_id == INVALID_SUB_ID:
+                        p1_sub_id = sub_id
+                    if not p1_mcc:
+                        p1_mcc = mcc
+                    if not p1_mnc:
+                        p1_mnc = mnc
+                elif ad == ad_p2:
+                    if p2_sub_id == INVALID_SUB_ID:
+                        p2_sub_id = sub_id
+                    if not p2_mcc:
+                        p2_mcc = mcc
+                    if not p2_mnc:
+                        p2_mnc = mnc
+
+                if mcc == host_mcc and mnc == host_mnc:
+                    if ad == ad_p1:
+                        p1_sub_id = sub_id
+                        p1_mcc = mcc
+                        p1_mnc = mnc
+
+                    elif ad == ad_p2:
+                        p2_sub_id = sub_id
+                        p2_mcc = mcc
+                        p2_mnc = mnc
+
+    return host_sub_id, p1_sub_id, p2_sub_id

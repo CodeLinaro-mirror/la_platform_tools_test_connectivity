@@ -42,7 +42,8 @@ class PowerGnssBaseTest(PBT.PowerBaseTest):
 
     def setup_class(self):
         super().setup_class()
-        req_params = ['customjsfile', 'maskfile']
+        req_params = ['customjsfile', 'maskfile', 'dpooff_nv_dict',
+                      'dpoon_nv_dict', 'mdsapp', 'modemparfile']
         self.unpack_userparams(req_params)
 
     def collect_power_data(self):
@@ -76,7 +77,7 @@ class PowerGnssBaseTest(PBT.PowerBaseTest):
         avg_current = total_current / total_samples
 
         time_relative = [
-            data_point.time
+            data_point.relative_time
             for monsoon_result in monsoon_results
             for data_point in monsoon_result.get_data_points()
         ]

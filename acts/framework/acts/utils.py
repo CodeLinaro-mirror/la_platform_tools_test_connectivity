@@ -23,6 +23,7 @@ import ipaddress
 import json
 import logging
 import os
+import platform
 import random
 import re
 import signal
@@ -36,7 +37,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 from acts import signals
-from acts.controllers import adb
+from acts.controllers.adb_lib.error import AdbError
 from acts.libs.proc import job
 
 # File name length is limited to 255 chars on some OS, so we need to make sure
@@ -555,6 +556,7 @@ def timeout(sec):
     Raises:
         TimeoutError is raised when time out happens.
     """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -864,7 +866,7 @@ def bypass_setup_wizard(ad):
         ad.adb.shell("am start -n \"com.google.android.setupwizard/"
                      ".SetupWizardExitActivity\"")
         logging.debug("No error during default bypass call.")
-    except adb.AdbError as adb_error:
+    except AdbError as adb_error:
         if adb_error.stdout == "ADB_CMD_OUTPUT:0":
             if adb_error.stderr and \
                     not adb_error.stderr.startswith("Error type 3\n"):
@@ -881,7 +883,7 @@ def bypass_setup_wizard(ad):
                 ad.adb.shell("am start -n \"com.google.android.setupwizard/"
                              ".SetupWizardExitActivity\"")
                 logging.debug("No error during rooted bypass call.")
-            except adb.AdbError as adb_error:
+            except AdbError as adb_error:
                 if adb_error.stdout == "ADB_CMD_OUTPUT:0":
                     if adb_error.stderr and \
                             not adb_error.stderr.startswith("Error type 3\n"):
@@ -1283,6 +1285,7 @@ class SuppressLogOutput(object):
     """Context manager used to suppress all logging output for the specified
     logger and level(s).
     """
+
     def __init__(self, logger=logging.getLogger(), log_levels=None):
         """Create a SuppressLogOutput context manager
 
@@ -1315,6 +1318,7 @@ class BlockingTimer(object):
     """Context manager used to block until a specified amount of time has
      elapsed.
      """
+
     def __init__(self, secs):
         """Initializes a BlockingTimer
 
@@ -1386,38 +1390,89 @@ def get_interface_ip_addresses(comm_channel, interface):
 
     Returns:
         A list of dictionaries of the the various IP addresses:
-            ipv4_private_local_addresses: Any 192.168, 172.16, or 10
+            ipv4_private_local_addresses: Any 192.168, 172.16, 10, or 169.254
                 addresses
             ipv4_public_addresses: Any IPv4 public addresses
             ipv6_link_local_addresses: Any fe80:: addresses
             ipv6_private_local_addresses: Any fd00:: addresses
             ipv6_public_addresses: Any publicly routable addresses
     """
+    # Local imports are used here to prevent cyclic dependency.
+    from acts.controllers.android_device import AndroidDevice
+    from acts.controllers.fuchsia_device import FuchsiaDevice
+    from acts.controllers.utils_lib.ssh.connection import SshConnection
     ipv4_private_local_addresses = []
     ipv4_public_addresses = []
     ipv6_link_local_addresses = []
     ipv6_private_local_addresses = []
     ipv6_public_addresses = []
-    all_interfaces_and_addresses = comm_channel.run(
-        'ip -o addr | awk \'!/^[0-9]*: ?lo|link\/ether/ {gsub("/", " "); '
-        'print $2" "$4}\'').stdout
-    ifconfig_output = comm_channel.run('ifconfig %s' % interface).stdout
+    is_local = comm_channel == job
+    if type(comm_channel) is AndroidDevice:
+        all_interfaces_and_addresses = comm_channel.adb.shell(
+            'ip -o addr | awk \'!/^[0-9]*: ?lo|link\/ether/ {gsub("/", " "); '
+            'print $2" "$4}\'')
+        ifconfig_output = comm_channel.adb.shell('ifconfig %s' % interface)
+    elif (type(comm_channel) is SshConnection or is_local):
+        all_interfaces_and_addresses = comm_channel.run(
+            'ip -o addr | awk \'!/^[0-9]*: ?lo|link\/ether/ {gsub("/", " "); '
+            'print $2" "$4}\'').stdout
+        ifconfig_output = comm_channel.run('ifconfig %s' % interface).stdout
+    elif type(comm_channel) is FuchsiaDevice:
+        all_interfaces_and_addresses = []
+        comm_channel.netstack_lib.init()
+        interfaces = comm_channel.netstack_lib.netstackListInterfaces()
+        if interfaces.get('error') is not None:
+            raise ActsUtilsError('Failed with {}'.format(
+                interfaces.get('error')))
+        for item in interfaces.get('result'):
+            for ipv4_address in item['ipv4_addresses']:
+                ipv4_address = '.'.join(map(str, ipv4_address))
+                all_interfaces_and_addresses.append(
+                    '%s %s' % (item['name'], ipv4_address))
+            for ipv6_address in item['ipv6_addresses']:
+                converted_ipv6_address = []
+                for octet in ipv6_address:
+                    converted_ipv6_address.append(format(octet, 'x').zfill(2))
+                ipv6_address = ''.join(converted_ipv6_address)
+                ipv6_address = (':'.join(
+                    ipv6_address[i:i + 4]
+                    for i in range(0, len(ipv6_address), 4)))
+                all_interfaces_and_addresses.append(
+                    '%s %s' %
+                    (item['name'], str(ipaddress.ip_address(ipv6_address))))
+        all_interfaces_and_addresses = '\n'.join(all_interfaces_and_addresses)
+        ifconfig_output = all_interfaces_and_addresses
+    else:
+        raise ValueError('Unsupported method to send command to device.')
+
     for interface_line in all_interfaces_and_addresses.split('\n'):
         if interface != interface_line.split()[0]:
             continue
         on_device_ip = ipaddress.ip_address(interface_line.split()[1])
-        if on_device_ip.version() == 4:
-            if on_device_ip.is_private():
-                ipv4_private_local_addresses.append(str(on_device_ip))
-            elif on_device_ip.is_global():
-                ipv4_public_addresses.append(str(on_device_ip))
-        elif on_device_ip.version() == 6:
-            if on_device_ip.is_link_local():
-                ipv6_link_local_addresses.append(str(on_device_ip))
-            elif on_device_ip.is_private():
-                ipv6_private_local_addresses.append(str(on_device_ip))
-            elif on_device_ip.is_global():
-                ipv6_public_addresses.append(str(on_device_ip))
+        if on_device_ip.version == 4:
+            if on_device_ip.is_private:
+                if str(on_device_ip) in ifconfig_output:
+                    ipv4_private_local_addresses.append(str(on_device_ip))
+            elif on_device_ip.is_global or (
+                    # Carrier private doesn't have a property, so we check if
+                    # all other values are left unset.
+                    not on_device_ip.is_reserved
+                    and not on_device_ip.is_unspecified
+                    and not on_device_ip.is_link_local
+                    and not on_device_ip.is_loopback
+                    and not on_device_ip.is_multicast):
+                if str(on_device_ip) in ifconfig_output:
+                    ipv4_public_addresses.append(str(on_device_ip))
+        elif on_device_ip.version == 6:
+            if on_device_ip.is_link_local:
+                if str(on_device_ip) in ifconfig_output:
+                    ipv6_link_local_addresses.append(str(on_device_ip))
+            elif on_device_ip.is_private:
+                if str(on_device_ip) in ifconfig_output:
+                    ipv6_private_local_addresses.append(str(on_device_ip))
+            elif on_device_ip.is_global:
+                if str(on_device_ip) in ifconfig_output:
+                    ipv6_public_addresses.append(str(on_device_ip))
     return {
         'ipv4_private': ipv4_private_local_addresses,
         'ipv4_public': ipv4_public_addresses,
@@ -1462,3 +1517,85 @@ def renew_linux_ip_address(comm_channel, interface):
     comm_channel.run('sudo ifconfig %s up' % interface)
     comm_channel.run('sudo dhclient -r %s' % interface)
     comm_channel.run('sudo dhclient %s' % interface)
+
+
+def is_pingable(ip):
+    """Returns whether an ip is pingable or not.
+
+    Args:
+        ip: string, ip address to ping
+    Returns:
+        True if ping was successful, else False
+    """
+    if is_valid_ipv4_address(ip):
+        ping_binary = 'ping'
+    elif is_valid_ipv6_address(ip):
+        ping_binary = 'ping6'
+    else:
+        raise ValueError('Invalid ip addr: %s' % ip)
+
+    os_type = platform.system()
+    if os_type == 'Darwin':
+        if is_valid_ipv6_address(ip):
+            # ping6 on MacOS doesn't support timeout
+            timeout_flag = []
+        else:
+            timeout_flag = ['-t', '1']
+    elif os_type == 'Linux':
+        timeout_flag = ['-W', '1']
+    else:
+        raise ValueError('Invalid OS.  Only Linux and MacOS are supported.')
+
+    ping_cmd = [ping_binary, *timeout_flag, '-c', '1', ip]
+
+    result = job.run(ping_cmd, timeout=10, ignore_status=True)
+    return result.exit_status == 0
+
+
+def ip_in_subnet(ip, subnet):
+    """Validate that ip is in a given subnet.
+
+    Args:
+        ip: string, ip address to verify (eg. '192.168.42.158')
+        subnet: string, subnet to check (eg. '192.168.42.0/24')
+
+    Returns:
+        True, if ip in subnet, else False
+    """
+    return ipaddress.ip_address(ip) in ipaddress.ip_network(subnet)
+
+
+def mac_address_str_to_list(mac_addr_str):
+    """Converts mac address string to list of decimal octets.
+
+    Args:
+        mac_addr_string: string, mac address
+            e.g. '12:34:56:78:9a:bc'
+
+    Returns
+        list, representing mac address octets in decimal
+            e.g. [18, 52, 86, 120, 154, 188]
+    """
+    return [int(octet, 16) for octet in mac_addr_str.split(':')]
+
+
+def mac_address_list_to_str(mac_addr_list):
+    """Converts list of decimal octets represeting mac address to string.
+
+    Args:
+        mac_addr_list: list, representing mac address octets in decimal
+            e.g. [18, 52, 86, 120, 154, 188]
+
+    Returns:
+        string, mac address
+            e.g. '12:34:56:78:9a:bc'
+    """
+    hex_list = []
+    for octet in mac_addr_list:
+        hex_octet = hex(octet)[2:]
+        if octet < 16:
+            hex_list.append('0%s' % hex_octet)
+        else:
+            hex_list.append(hex_octet)
+
+    return ':'.join(hex_list)
