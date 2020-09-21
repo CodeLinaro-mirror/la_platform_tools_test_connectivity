@@ -229,21 +229,27 @@ def connect_phone_to_headset(android,
     # If already connected, skip pair and connect attempt.
     while not connected and (time.time() - start_time < timeout):
         bonded_info = android.droid.bluetoothGetBondedDevices()
+        connected_info = android.droid.bluetoothGetConnectedDevices()
         if headset.mac_address not in [
                 info["address"] for info in bonded_info
         ]:
             # Use SL4A to pair and connect with headset.
             headset.enter_pairing_mode()
             android.droid.bluetoothDiscoverAndBond(headset_mac_address)
-        else:  # Device is bonded but not connected
+        elif headset.mac_address not in [
+                info["address"] for info in connected_info
+        ]:
+            #Device is bonded but not connected
             android.droid.bluetoothConnectBonded(headset_mac_address)
+        else:
+            #Headset is connected, but A2DP profile is not
+            android.droid.bluetoothA2dpConnect(headset_mac_address)
         log.info('Waiting for connection...')
         time.sleep(connection_check_period)
         # Check for connection.
         connected = is_a2dp_src_device_connected(android, headset_mac_address)
     log.info('Devices connected after pair attempt: %s' % connected)
     return connected
-
 
 def connect_pri_to_sec(pri_ad, sec_ad, profiles_set, attempts=2):
     """Connects pri droid to secondary droid.
@@ -777,8 +783,9 @@ def get_bt_metric(ad_list, duration=1, tag="bt_metric", processed=True):
                 sum(metrics_dict["rssi"][ad.serial]) /
                 len(metrics_dict["rssi"][ad.serial]), 2)
             # Returns last noted value for power level
-            metrics_dict["pwlv"][ad.serial] = metrics_dict["pwlv"][
-                ad.serial][-1]
+            metrics_dict["pwlv"][ad.serial] = float(
+                sum(metrics_dict["pwlv"][ad.serial]) /
+                len(metrics_dict["pwlv"][ad.serial]))
 
     return metrics_dict
 
