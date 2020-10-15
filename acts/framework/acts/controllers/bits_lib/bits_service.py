@@ -17,8 +17,9 @@
 import atexit
 import json
 import logging
-import re
 import os
+import re
+import signal
 import tempfile
 import time
 
@@ -87,11 +88,31 @@ class BitsService(object):
             self._log.error('Cleaning up bits_service %s at exit.', self.name)
             self._cleanup()
 
+    def _write_extra_debug_logs(self):
+        dmesg_log = '%s.dmesg.txt' % self._output_log.name
+        dmesg = job.run(['dmesg', '-e'], ignore_status=True)
+        with open(dmesg_log, 'w') as f:
+            f.write(dmesg.stdout)
+
+        free_log = '%s.free.txt' % self._output_log.name
+        free = job.run(['free', '-m'], ignore_status=True)
+        with open(free_log, 'w') as f:
+            f.write(free.stdout)
+
+        df_log = '%s.df.txt' % self._output_log.name
+        df = job.run(['df', '-h'], ignore_status=True)
+        with open(df_log, 'w') as f:
+            f.write(df.stdout)
+
     def _cleanup(self):
+        self._write_extra_debug_logs()
         self.port = None
         self._collections_dir.cleanup()
         if self._process and self._process.is_running():
-            self._process.stop()
+            self._process.signal(signal.SIGINT)
+            self._log.debug('SIGINT sent to bits_service %s.' % self.name)
+            self._process.wait(kill_timeout=60.0)
+            self._log.debug('bits_service %s has been stopped.' % self.name)
         self._output_log.close()
         if self.config.has_monsoon:
             job.run([self.config.monsoon_config.monsoon_binary,
@@ -131,8 +152,6 @@ class BitsService(object):
             f.write(json.dumps(self.config.config_dic, indent=2))
 
         cmd = [binary,
-               '--verbosity',
-               'debug',
                '--port',
                '0',
                '--collections_folder',
@@ -186,8 +205,8 @@ class BitsService(object):
             time.sleep(0.1)
 
         self._cleanup()
-        raise BitsServiceError('bits_service %s did not start successfully',
-                               self.name)
+        raise BitsServiceError(
+            'bits_service %s did not start successfully' % self.name)
 
     def stop(self):
         """Stops the bits service."""

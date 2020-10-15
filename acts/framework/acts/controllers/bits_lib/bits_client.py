@@ -112,7 +112,7 @@ class BitsClient(object):
         self._log.info('exporting collection %s to %s',
                        self._active_collection.name,
                        collection_path)
-        job.run(cmd)
+        job.run(cmd, timeout=600)
 
     def _flush_markers(self):
         for ts, marker in sorted(self._active_collection.markers_buffer,
@@ -167,6 +167,8 @@ class BitsClient(object):
                    str(end_ns),
                    '--aggregates_yaml_path',
                    tf.name]
+            if self._server_config.has_virtual_metrics_file:
+                cmd = cmd + ['--vm_file', 'default']
             job.run(cmd)
             with open(tf.name) as mf:
                 self._log.debug(
@@ -221,7 +223,7 @@ class BitsClient(object):
                '--time',
                ONE_YEAR,
                '--default_sampling_rate',
-               '5000',
+               '1000',
                '--disk_space_saver',
                ]
         self._log.info('starting collection %s', self._active_collection.name)
@@ -257,3 +259,19 @@ class BitsClient(object):
         self._export()
         self._log.info('stopped collection %s', self._active_collection.name)
         self._active_collection = None
+
+    def list_devices(self):
+        """Lists devices managed by the bits_server this client is connected
+        to.
+
+        Returns:
+            bits' output when called with --list devices.
+        """
+        cmd = [self._binary,
+               '--port',
+               self._service.port,
+               '--list',
+               'devices']
+        self._log.debug('listing devices')
+        result = job.run(cmd, timeout=20)
+        return result.stdout

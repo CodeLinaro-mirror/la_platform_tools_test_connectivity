@@ -113,6 +113,8 @@ class TelLiveVoiceTest(TelephonyBaseTest):
             "long_duration_call_total_duration",
             DEFAULT_LONG_DURATION_CALL_TOTAL_DURATION)
         self.number_of_devices = 2
+        self.call_server_number = self.user_params.get(
+                "call_server_number", STORY_LINE)
         self.tel_logger = TelephonyMetricLogger.for_test_case()
 
 
@@ -139,7 +141,7 @@ class TelLiveVoiceTest(TelephonyBaseTest):
         for iteration in range(3):
             result = True
             ad.log.info("Attempt %d", iteration + 1)
-            if not initiate_call(ad.log, ad, STORY_LINE):
+            if not initiate_call(ad.log, ad, self.call_server_number):
                 ad.log.error("Call Failed to Initiate")
                 result = False
                 continue
@@ -307,7 +309,7 @@ class TelLiveVoiceTest(TelephonyBaseTest):
             self.log.error("Phone Failed to Set Up Properly.")
             return False
 
-        return call_setup_teardown(
+        if not call_setup_teardown(
             self.log,
             ads[0],
             ads[1],
@@ -315,7 +317,10 @@ class TelLiveVoiceTest(TelephonyBaseTest):
             is_phone_in_call_volte,
             is_phone_in_call_volte,
             WAIT_TIME_IN_CALL_FOR_IMS,
-            dialing_number_length=10)
+            dialing_number_length=10):
+            return False
+
+        return True
 
     @test_tracker_info(uuid="4fd3aa62-2398-4cee-994e-7fc5cadbcbc1")
     @TelephonyBaseTest.tel_test_wrap
@@ -3741,6 +3746,54 @@ class TelLiveVoiceTest(TelephonyBaseTest):
         return self._test_call_setup_in_active_data_transfer(
             None, DIRECTION_MOBILE_TERMINATED)
 
+    @test_tracker_info(uuid="d1bf0739-ffb7-4bf8-ab94-570619f812a8")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_call_mo_voice_apm_wifi_in_active_data_transfer_cellular(self):
+        """Test call can be established during active data connection.
+
+        Turn on wifi, airplane mode and wifi.
+        Starting downloading file from Internet.
+        Initiate a MO voice call. Verify call can be established.
+        Hangup Voice Call, verify file is downloaded successfully.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_iwlan_cellular_preferred(self.log,
+                                 self.android_devices[0],
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM, WIFI")
+            return False
+        return self._test_call_setup_in_active_data_transfer(
+            None, DIRECTION_MOBILE_ORIGINATED)
+
+    @test_tracker_info(uuid="76b2cdaf-b783-4c1a-b91b-207f82ffa816")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_call_mt_voice_apm_wifi_in_active_data_transfer_cellular(self):
+        """Test call can be established during active data connection.
+
+        Turn on wifi, airplane mode and wifi.
+        Starting downloading file from Internet.
+        Initiate a MT voice call. Verify call can be established.
+        Hangup Voice Call, verify file is downloaded successfully.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_iwlan_cellular_preferred(self.log,
+                                 self.android_devices[0],
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM, WIFI and WFC on")
+            return False
+        return self._test_call_setup_in_active_data_transfer(
+            None, DIRECTION_MOBILE_TERMINATED)
+
     def _test_call_setup_in_active_youtube_video(
             self,
             nw_gen=None,
@@ -4093,6 +4146,52 @@ class TelLiveVoiceTest(TelephonyBaseTest):
         """
         if not phone_setup_iwlan(self.log, self.android_devices[0], True,
                                  WFC_MODE_WIFI_PREFERRED,
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM, WIFI and WFC on")
+            return False
+        return self._test_call_setup_in_active_youtube_video(
+            None, DIRECTION_MOBILE_TERMINATED)
+
+    @test_tracker_info(uuid="88822edf-4c4a-4bc4-9280-2f27ee9e28d5")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_call_mo_voice_apm_wifi_in_active_youtube_video_cellular(self):
+        """Test call can be established during active youtube video.
+
+        Turn on wifi, Cellular Preferred, airplane mode and wifi.
+        Starting an youtube video.
+        Initiate a MO voice call. Verify call can be established.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_iwlan_cellular_preferred(self.log,
+                                 self.android_devices[0],
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM, WIFI and WFC on")
+            return False
+        return self._test_call_setup_in_active_youtube_video(
+            None, DIRECTION_MOBILE_ORIGINATED)
+
+    @test_tracker_info(uuid="c4b066b0-3cfd-4831-9c61-5d6b132648c4")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_call_mt_voice_apm_wifi_in_active_youtube_video_cellular(self):
+        """Test call can be established during active youtube video.
+
+        Turn on cellular calling, airplane mode and wifi.
+        Starting youtube video.
+        Initiate a MT voice call. Verify call can be established.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_iwlan_cellular_preferred(self.log,
+                                 self.android_devices[0],
                                  self.wifi_network_ssid,
                                  self.wifi_network_pass):
             self.android_devices[0].log.error(

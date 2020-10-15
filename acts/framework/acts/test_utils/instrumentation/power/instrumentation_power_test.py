@@ -19,7 +19,6 @@ import shutil
 import tempfile
 import time
 
-import tzlocal
 from acts import asserts
 from acts import context
 from acts.controllers import monsoon as monsoon_controller
@@ -38,8 +37,11 @@ from acts.test_utils.instrumentation.instrumentation_base_test import Instrument
 from acts.test_utils.instrumentation.instrumentation_base_test import InstrumentationTestError
 from acts.test_utils.instrumentation.instrumentation_proto_parser import DEFAULT_INST_LOG_DIR
 from acts.test_utils.instrumentation.power.power_metrics import AbsoluteThresholds
+from acts.test_utils.instrumentation.power.data_graph import power_audio_chart
+import tzlocal
 
 ACCEPTANCE_THRESHOLD = 'acceptance_threshold'
+DEFAULT_DEVICE_STABILIZATION_TIME = 300
 DEFAULT_PUSH_FILE_TIMEOUT = 180
 DEFAULT_WAIT_FOR_DEVICE_TIMEOUT = 180
 POLLING_INTERVAL = 0.5
@@ -72,6 +74,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         self._sl4a_apk = None
         self._instr_cmd_builder = None
         self.prefer_bits_over_monsoon = False
+        self.generate_chart = False
 
     def setup_class(self):
         super().setup_class()
@@ -96,6 +99,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         else:
             power_monitors = [power_monitor_lib.PowerMonitorMonsoonFacade(
                 monsoon) for monsoon in self.monsoons]
+            self.generate_chart = True
         return power_monitors
 
     def setup_test(self):
@@ -153,16 +157,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         # Screen
         self.adb_run(common.screen_always_on.toggle(True))
         self.adb_run(common.screen_adaptive_brightness.toggle(False))
-
-        brightness_level = None
-        if 'brightness_level' in self._instrumentation_config:
-            brightness_level = self._instrumentation_config['brightness_level']
-
-        if brightness_level is None:
-            raise ValueError('no brightness level defined (or left as None) '
-                             'and it is needed.')
-
-        self.adb_run(common.screen_brightness.set_value(brightness_level))
+        self.set_screen_brightness_level()
         self.adb_run(common.screen_timeout_ms.set_value(1800000))
         self.adb_run(common.notification_led.toggle(False))
         self.adb_run(common.screensaver.toggle(False))
@@ -241,6 +236,18 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
 
         # Enable clock dump info
         self.adb_run('echo 1 > /d/clk/debug_suspend')
+
+    def set_screen_brightness_level(self):
+        """set screen brightness level"""
+        brightness_level = None
+        if 'brightness_level' in self._instrumentation_config:
+            brightness_level = self._instrumentation_config['brightness_level']
+
+        if brightness_level is None:
+            raise ValueError('no brightness level defined (or left as None) '
+                             'and it is needed.')
+
+        self.adb_run(common.screen_brightness.set_value(brightness_level))
 
     def _setup_power_monitor(self, **kwargs):
         """Set up the Monsoon controller for this testclass/testcase."""
@@ -363,12 +370,14 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             if self.ad_dut.adb.shell('ls %s || true' % disconnect_usb_file):
                 self.log.info('Disconnection signal received. File: '
                               '"%s"' % disconnect_usb_file)
+                self.ad_dut.pull_files(disconnect_usb_file,
+                                       self.ad_dut.device_log_path)
                 return
             time.sleep(POLLING_INTERVAL)
         raise InstrumentationTestError('Timeout while waiting for USB '
                                        'disconnect signal.')
 
-    def measure_power(self):
+    def measure_power(self, count=None, attempt_number=None):
         """Measures power consumption with a power_monitor. See power_monitor's
         API for more details.
 
@@ -398,7 +407,15 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             measurement_args))
 
         power_data_path = os.path.join(
-            context.get_current_context().get_full_output_path(), 'monsoon.txt')
+            context.get_current_context().get_full_output_path(),
+            'monsoon.txt' if count is None else 'monsoon_%s.txt' % count)
+
+        if attempt_number != None:
+            power_data_path = os.path.join(
+                context.get_current_context().get_full_output_path(),
+                'monsoon_attempt_%s.txt' %
+                attempt_number if count is None else 'monsoon_%s_attempt_%s.txt' %
+                                                     (count, attempt_number))
 
         # TODO(b/155426729): Create an accurate host-to-device time difference
         # measurement.
@@ -415,7 +432,6 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             start_time=device_to_host_offset)
         self.power_monitor.connect_usb()
         self._reinstall_sl4a()
-
         # Gather relevant metrics from measurements
         instrumentation_result = self.parse_instrumentation_result()
         self.log_instrumentation_result(instrumentation_result)
@@ -426,10 +442,12 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             timestamps=proto_parser.get_test_timestamps(instrumentation_result))
 
         self.power_monitor.release_resources()
+        if self.generate_chart:
+          self.generate_power_chart(power_data_path)
         return power_metrics
 
     def run_and_measure(self, instr_class, instr_method=None, req_params=None,
-                        extra_params=None):
+                        extra_params=None, count=None, attempt_number=None):
         """Convenience method for setting up the instrumentation test command,
         running it on the device, and starting the Monsoon measurement.
 
@@ -439,6 +457,10 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             req_params: List of required parameter names
             extra_params: List of ad-hoc parameters to be passed defined as
                 tuples of size 2.
+            count: Measurement count in one test, default None means only measure
+                one time
+            attempt_number: Repeat test run attempt number, default None means no
+                repeated test
 
         Returns: summary of Monsoon measurement
         """
@@ -464,9 +486,15 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
 
         instr_cmd = self._instr_cmd_builder.build()
         self._uninstall_sl4a()
+
+        # Allow device to stabilize for 5 minutes
+        self.ad_dut.log.debug('Waiting 5 minutes for device to stabilize')
+        time.sleep(self._instrumentation_config.get_int(
+            'device_stabilization_time', DEFAULT_DEVICE_STABILIZATION_TIME))
+
         self.log.info('Running instrumentation call: %s' % instr_cmd)
         self.adb_run_async(instr_cmd)
-        return self.measure_power()
+        return self.measure_power(count=count, attempt_number=attempt_number)
 
     def get_absolute_thresholds_for_metric(self, instr_test_name, metric_name):
         all_thresholds = self._get_merged_config(ACCEPTANCE_THRESHOLD)
@@ -577,3 +605,15 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         asserts.explicit_pass(
             msg='All measurements meet the criteria',
             extras=summaries)
+
+    def generate_power_chart(self, power_data_path):
+        """Generate power chat by using the monsoon raw data."""
+        power_chart_path = power_data_path.rsplit('.', 1)[0] + '.html'
+        self.log.info('power_chart_path: %s' % power_chart_path)
+        file_path = os.path.dirname(__file__)
+        self.log.info('current file directory: %s' % file_path)
+        template_file_path = os.path.join(file_path, 'data_graph/template.html')
+        self.log.info('template file path: %s' % template_file_path)
+
+        power_audio_chart.generate_chart(
+            power_data_path, power_chart_path, template_file_path)

@@ -15,6 +15,7 @@
 #   limitations under the License.
 
 
+import os
 import statistics
 import tempfile
 import time
@@ -28,6 +29,8 @@ from acts.test_utils.instrumentation.device.apps.app_installer import AppInstall
 from acts.test_utils.instrumentation.instrumentation_base_test import InstrumentationTestError
 
 DEFAULT_WAIT_TO_FASTBOOT_MODE = 10
+DEFAULT_DEVICE_COOL_DOWN_TIME = 25
+DEFAULT_WAIT_FOR_REBOOT = 120
 
 def get_median_current(test_results):
   """Returns the median current, or a failure if the test failed."""
@@ -60,7 +63,7 @@ class VzWDoUAutomationBaseTest(
     self.adb_run(goog.location_off_warning_dialog.toggle(False))
     self.adb_run(common.airplane_mode.toggle(False))
     self.adb_run(common.auto_rotate.toggle(False))
-    self.adb_run(common.screen_brightness.set_value(58))
+    self.set_screen_brightness_level()
     self.adb_run(common.screen_adaptive_brightness.toggle(False))
     self.adb_run(common.modem_diag.toggle(False))
     self.adb_run(common.skip_gesture.toggle(False))
@@ -92,6 +95,11 @@ class VzWDoUAutomationBaseTest(
     self._factory_reset()
     super()._prepare_device()
     self.base_device_configuration()
+    self._cut_band()
+
+  def _cleanup_device(self):
+    super()._cleanup_device()
+    self.adb_run('input keyevent 26')
 
   def _factory_reset(self):
     """Factory reset device before testing."""
@@ -103,6 +111,7 @@ class VzWDoUAutomationBaseTest(
     self.adb_run(goog.remove_gmail_account)
     self.ad_dut.reboot()
     self.ad_dut.wait_for_boot_completion()
+    time.sleep(DEFAULT_DEVICE_COOL_DOWN_TIME)
     self.ad_dut.adb.ensure_root()
     self.ad_dut.log.debug('Reboot to bootloader')
     self.ad_dut.stop_services()
@@ -112,6 +121,7 @@ class VzWDoUAutomationBaseTest(
     self.ad_dut.log.debug('Reboot in fastboot')
     self.ad_dut.fastboot.reboot()
     self.ad_dut.wait_for_boot_completion()
+    time.sleep(DEFAULT_DEVICE_COOL_DOWN_TIME)
     self.ad_dut.root_adb()
     if not self.ad_dut.is_sl4a_installed() and self._sl4a_apk:
       self._sl4a_apk.install()
@@ -127,3 +137,67 @@ class VzWDoUAutomationBaseTest(
     if not self._google_account_util.is_installed():
       raise InstrumentationTestError(
           'Failed to install google account util APK.')
+
+  def _cut_band(self):
+    additional_setting = self._get_merged_config('additional_setting')
+    band_to_cut = None
+    if additional_setting:
+      band_to_cut = additional_setting.get('band_to_cut')
+    if band_to_cut:
+      self.log.info('Cutting band: {}'.format(band_to_cut))
+      self.ad_dut.adb.ensure_root()
+      self.adb_run('setprop ro.test_harness 1')
+      lock_band_cmd = ('am instrument -w -r -e lock_band {} -e '
+                       'skip_pre_test_conditions TRUE -e '
+                       'skip_post_test_conditions TRUE -e class '
+                       'com.google.android.platform.dou.MDSSwitchBandTests#testSwitchBand'
+                       ' '
+                       'com.google.android.platform.dou/androidx.test.runner.AndroidJUnitRunner').format(
+          band_to_cut)
+      self.adb_run(lock_band_cmd, timeout=480)
+      self.ad_dut.reboot()
+      self.ad_dut.wait_for_boot_completion()
+      time.sleep(DEFAULT_DEVICE_COOL_DOWN_TIME)
+
+  def generate_random_ssid(self):
+    # Generate random permutations as ssid
+    ssid = os.popen('shuf -i 1111111111-9999999999 -n 1').read(10)
+    return ssid.strip()
+
+  def push_movies_to_dut(self):
+    # Push the movies folder to Android device
+    sdcard_movies_path_dut = '/sdcard/Movies/'
+    sdcard_movies_path = self.user_params['sdcard_movies_path']
+    self.log.info('sdcard_movies_path is %s' % sdcard_movies_path)
+    self.ad_dut.adb.push(sdcard_movies_path + '/*', sdcard_movies_path_dut)
+    self.ad_dut.reboot()
+    self.ad_dut.wait_for_boot_completion()
+    time.sleep(DEFAULT_WAIT_FOR_REBOOT)
+
+  def log_in_gmail_account(self):
+    # Log in to gmail account
+    self._install_google_account_util_apk()
+    time.sleep(DEFAULT_DEVICE_COOL_DOWN_TIME)
+    additional_setting = self._get_merged_config('additional_setting')
+    gmail_account = additional_setting.get('gmail_account')
+    gmail_phrase = additional_setting.get('gmail_phrase')
+    log_in_cmd = (
+        'am instrument -w -e account {} -e '
+        'password {} -e sync false -e wait-for-checkin false '
+        'com.google.android.tradefed.account/.AddAccount'
+    ).format(gmail_account, gmail_phrase)
+    self.log.info('gmail log in commands %s' % log_in_cmd)
+    self.adb_run(log_in_cmd, timeout=300)
+    self.ad_dut.reboot()
+    self.ad_dut.wait_for_boot_completion()
+    time.sleep(DEFAULT_WAIT_FOR_REBOOT)
+
+  def push_music_to_dut(self):
+    # Push the music folder to Android device
+    sdcard_music_path_dut = '/sdcard/Music/'
+    sdcard_music_path = self.user_params['sdcard_music_path']
+    self.log.info('sdcard_music_path is %s' % sdcard_music_path)
+    self.ad_dut.adb.push(sdcard_music_path + '/*', sdcard_music_path_dut)
+    self.ad_dut.reboot()
+    self.ad_dut.wait_for_boot_completion()
+    time.sleep(DEFAULT_DEVICE_COOL_DOWN_TIME)

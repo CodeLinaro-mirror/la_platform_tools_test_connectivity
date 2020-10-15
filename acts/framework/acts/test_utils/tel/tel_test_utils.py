@@ -127,6 +127,7 @@ from acts.test_utils.tel.tel_defines import WAIT_TIME_CHANGE_DATA_SUB_ID
 from acts.test_utils.tel.tel_defines import WAIT_TIME_IN_CALL
 from acts.test_utils.tel.tel_defines import WAIT_TIME_LEAVE_VOICE_MAIL
 from acts.test_utils.tel.tel_defines import WAIT_TIME_REJECT_CALL
+from acts.test_utils.tel.tel_defines import WAIT_TIME_SYNC_DATE_TIME_FROM_NETWORK
 from acts.test_utils.tel.tel_defines import WAIT_TIME_VOICE_MAIL_SERVER_RESPONSE
 from acts.test_utils.tel.tel_defines import WFC_MODE_DISABLED
 from acts.test_utils.tel.tel_defines import WFC_MODE_CELLULAR_PREFERRED
@@ -3760,6 +3761,7 @@ def active_file_download_task(log, ad, file_name="5MB", method="curl"):
     }
     url_map = {
         "1MB": [
+            "http://146.148.91.8/download/1MB.zip",
             "http://ipv4.download.thinkbroadband.com/1MB.zip"
         ],
         "5MB": [
@@ -10362,3 +10364,38 @@ def is_sms_partial_match_among_multiple_sms(event, phonenumber_tx, phonenumber_t
                 return True
 
     return False
+
+def set_time_sync_from_network(ad, action):
+    if (action == 'enable'):
+        ad.log.info('Enabling sync time from network.')
+        ad.adb.shell('settings put global auto_time 1')
+
+    elif (action == 'disable'):
+        ad.log.info('Disabling sync time from network.')
+        ad.adb.shell('settings put global auto_time 0')
+
+    time.sleep(WAIT_TIME_SYNC_DATE_TIME_FROM_NETWORK)
+
+def datetime_handle(ad, action, set_datetime_value='', get_year=False):
+    get_value = ''
+    if (action == 'get'):
+        if (get_year):
+            datetime_string = ad.adb.shell('date')
+            datetime_list = datetime_string.split()
+            try:
+                get_value = datetime_list[5]
+            except Exception as e:
+                self.log.error("Fail to get year from datetime: %s. " \
+                                "Exception error: %s", datetime_list
+                                , str(e))
+                raise signals.TestSkip("Fail to get year from datetime" \
+                                    ", the format is changed. Skip the test.")
+        else:
+            get_value = ad.adb.shell('date')
+
+    elif (action == 'set'):
+        ad.adb.shell('date %s' % set_datetime_value)
+        time.sleep(WAIT_TIME_SYNC_DATE_TIME_FROM_NETWORK)
+        ad.adb.shell('am broadcast -a android.intent.action.TIME_SET')
+
+    return get_value
