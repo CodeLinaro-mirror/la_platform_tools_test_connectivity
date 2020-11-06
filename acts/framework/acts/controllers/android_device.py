@@ -806,8 +806,8 @@ class AndroidDevice:
             return
         # Disable adb log spam filter. Have to stop and clear settings first
         # because 'start' doesn't support --clear option before Android N.
-        self.adb.shell("logpersist.stop --clear")
-        self.adb.shell("logpersist.start")
+        self.adb.shell("logpersist.stop --clear", ignore_status=True)
+        self.adb.shell("logpersist.start", ignore_status=True)
         if hasattr(self, 'adb_logcat_param'):
             extra_params = self.adb_logcat_param
         else:
@@ -1221,7 +1221,8 @@ class AndroidDevice:
             'Device %s booting process timed out.' % self.serial,
             serial=self.serial)
 
-    def reboot(self, stop_at_lock_screen=False, timeout=180):
+    def reboot(self, stop_at_lock_screen=False, timeout=180,
+               wait_after_reboot_complete=1):
         """Reboots the device.
 
         Terminate all sl4a sessions, reboot the device, wait for device to
@@ -1233,6 +1234,8 @@ class AndroidDevice:
                 phase. Sl4a checking need the device unlocked after rebooting.
             timeout: time in seconds to wait for the device to complete
                 rebooting.
+            wait_after_reboot_complete: time in seconds to wait after the boot
+                completion.
         """
         if self.is_bootloader:
             self.fastboot.reboot()
@@ -1257,6 +1260,9 @@ class AndroidDevice:
                 break
         self.wait_for_boot_completion(
             timeout=(timeout - time.time() + timeout_start))
+
+        self.log.debug('Wait for a while after boot completion.')
+        time.sleep(wait_after_reboot_complete)
         self.root_adb()
         skip_sl4a = self.skip_sl4a
         self.skip_sl4a = self.skip_sl4a or stop_at_lock_screen
@@ -1497,7 +1503,8 @@ class AndroidDevice:
             self.adb.shell(
                 "am start -a com.android.setupwizard.EXIT", ignore_status=True)
             self.adb.shell(
-                "pm disable %s" % self.get_setupwizard_package_name())
+                "pm disable %s" % self.get_setupwizard_package_name(),
+                ignore_status=True)
         # Wait up to 5 seconds for user_setup_complete to be updated
         end_time = time.time() + 5
         while time.time() < end_time:

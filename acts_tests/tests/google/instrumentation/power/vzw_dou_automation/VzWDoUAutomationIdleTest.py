@@ -18,6 +18,7 @@ from acts.test_decorators import repeated_test
 from acts.test_utils.instrumentation.power.vzw_dou_automation import \
     vzw_dou_automation_base_test
 from acts.test_utils.instrumentation.device.command.adb_commands import common
+from acts.test_utils.instrumentation.device.command.adb_commands import goog
 
 
 class VzWDoUAutomationIdleTest(
@@ -25,7 +26,7 @@ class VzWDoUAutomationIdleTest(
   """Class for running VZW DoU idle test cases"""
 
   @repeated_test(
-      num_passes=3,
+      num_passes=1,
       acceptable_failures=2,
       result_selector=vzw_dou_automation_base_test.get_median_current)
   def test_flight_mode_idle(self, attempt_number):
@@ -45,9 +46,25 @@ class VzWDoUAutomationIdleTest(
   def test_idle(self, attempt_number):
     """Measures power when the device is in idle mode."""
 
-    self.log_in_gmail_account()
+    self.adb_run(goog.disable_betterbug)
     metrics = self.run_and_measure(
         'com.google.android.platform.dou.IdleStandbyModeTests',
         'testIdleStandbyMode', attempt_number=attempt_number)
+    self.record_metrics(metrics)
+    self.validate_metrics(metrics)
+
+  @repeated_test(
+      num_passes=3,
+      acceptable_failures=2,
+      result_selector=vzw_dou_automation_base_test.get_median_current)
+  def test_idle_wifi(self, attempt_number):
+    """Measures power when the device is in idle mode with wifi connected."""
+
+    self.adb_run(common.wifi_state.toggle(True))
+    metrics = self.run_and_measure(
+        'com.google.android.platform.dou.IdleStandbyModeTests',
+        'testIdleStandbyMode',
+        extra_params=[('wifi_ssid', vzw_dou_automation_base_test.WIFI_SSID)],
+        attempt_number=attempt_number)
     self.record_metrics(metrics)
     self.validate_metrics(metrics)

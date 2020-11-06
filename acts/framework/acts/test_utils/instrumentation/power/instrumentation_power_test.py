@@ -18,16 +18,20 @@ import os
 import shutil
 import tempfile
 import time
+import json
 
 from acts import asserts
 from acts import context
+from acts import signals
 from acts.controllers import monsoon as monsoon_controller
 from acts.controllers import power_monitor as power_monitor_lib
 from acts.controllers.android_device import SL4A_APK_NAME
+from acts.controllers.android_lib.errors import AndroidDeviceError
 from acts.metrics.loggers.blackbox import BlackboxMappedMetricLogger
 from acts.metrics.loggers.bounded_metrics import BoundedMetricsLogger
 from acts.test_utils.instrumentation import instrumentation_proto_parser as proto_parser
 from acts.test_utils.instrumentation.device.apps.app_installer import AppInstaller
+from acts.test_utils.instrumentation.device.apps.google_apps_test_utils import GoogleAppsTestUtils
 from acts.test_utils.instrumentation.device.apps.permissions import PermissionsUtil
 from acts.test_utils.instrumentation.device.command.adb_commands import common
 from acts.test_utils.instrumentation.device.command.adb_commands import goog
@@ -36,15 +40,15 @@ from acts.test_utils.instrumentation.device.command.instrumentation_command_buil
 from acts.test_utils.instrumentation.instrumentation_base_test import InstrumentationBaseTest
 from acts.test_utils.instrumentation.instrumentation_base_test import InstrumentationTestError
 from acts.test_utils.instrumentation.instrumentation_proto_parser import DEFAULT_INST_LOG_DIR
-from acts.test_utils.instrumentation.power.power_metrics import AbsoluteThresholds
 from acts.test_utils.instrumentation.power.data_graph import power_audio_chart
-import tzlocal
+from acts.test_utils.instrumentation.power.thresholds import AbsoluteThresholds
 
 ACCEPTANCE_THRESHOLD = 'acceptance_threshold'
 DEFAULT_DEVICE_STABILIZATION_TIME = 300
 DEFAULT_PUSH_FILE_TIMEOUT = 180
 DEFAULT_WAIT_FOR_DEVICE_TIMEOUT = 180
 POLLING_INTERVAL = 0.5
+RESET_SLEEP_TIME = 0.5
 
 AUTOTESTER_LOG = 'autotester.log'
 DISCONNECT_USB_FILE = 'disconnectusb.log'
@@ -75,12 +79,20 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         self._instr_cmd_builder = None
         self.prefer_bits_over_monsoon = False
         self.generate_chart = False
+        self.tigertail = None
+        self._google_apps_test_utils = None
+        self._permissions_util = None
+
+        # When using tigertail, sets this value to True in the test or test_setup
+        self.use_tigertail_if_available = False
 
     def setup_class(self):
         super().setup_class()
         power_monitor_lib.update_registry(self.user_params)
         self.power_monitors = self.pick_power_monitor()
         self.power_monitor = self.power_monitors[0]
+        if hasattr(self, 'tigertails'):
+            self.tigertail = self.tigertails[0]
 
     def pick_power_monitor(self):
         there_are_monsoons = hasattr(self, 'monsoons')
@@ -122,13 +134,20 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             self.ad_dut,
             self.get_file_from_config('permissions_apk'))
         self._permissions_util.grant_all()
+        self._google_apps_test_utils = GoogleAppsTestUtils(
+            self.ad_dut,
+            self.get_file_from_config('google_apps_test_utils_apk'))
+        self._google_apps_test_utils.prevent_playstore_auto_updates()
         self._install_test_apk()
 
     def _cleanup_device(self):
         """Clean up device after power testing."""
         if self._test_apk:
             self._test_apk.uninstall()
-        self._permissions_util.close()
+        if self._google_apps_test_utils:
+            self._google_apps_test_utils.close()
+        if self._permissions_util:
+            self._permissions_util.close()
         self._pull_test_files()
         self._cleanup_test_files()
 
@@ -139,12 +158,109 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         self.ad_dut.adb.ensure_root()
         self.adb_run(common.dismiss_keyguard)
         self.ad_dut.ensure_screen_on()
+        self.adb_run(common.screen_always_on.toggle(True))
+        self.adb_run(common.menu_button)
+        self.adb_run(common.home_button)
+        self.adb_run(common.airplane_mode.toggle(True))
+
+        self.set_screen_brightness_level()
+        self.adb_run(common.screen_adaptive_brightness.toggle(False))
+        self.adb_run(common.location_gps.toggle(False))
+        self.adb_run(common.location_network.toggle(False))
+        self.adb_run(common.auto_time.toggle(False))
+        self.adb_run(common.wifi_global.toggle(False))
+        self.adb_run(common.auto_timezone.toggle(False))
+        self.adb_run(common.wifi_state.toggle(False))
+        self.adb_run(common.bluetooth.toggle(False))
+        self.adb_run(common.crashed_activities)
+        self.adb_run(common.dismiss_keyguard)
+        self.adb_run(common.screen_always_on.toggle(True))
+        self.adb_run(common.menu_button)
+        self.adb_run(common.home_button)
+        self.adb_run(common.airplane_mode.toggle(True))
+        self.set_screen_brightness_level()
+
+        self.adb_run(common.notification_led.toggle(False))
+        self.adb_run(common.screen_timeout_ms.set_value(1800000))
+        self.adb_run(common.auto_rotate.toggle(False))
+        self.adb_run(common.screen_adaptive_brightness.toggle(False))
+        self.adb_run(common.skip_gesture.toggle(False))
+        self.adb_run(common.screensaver.toggle(False))
+        self.adb_run(common.doze_pulse_on_pick_up.toggle(False))
+        self.adb_run(goog.edge_sensor.toggle(False))
+        self.adb_run(common.system_navigation_keys_enabled.toggle(False))
+        self.adb_run(common.camera_lift_trigger_enabled.toggle(False))
+        self.adb_run(common.doze_wake_screen_gesture.toggle(False))
+        self.adb_run(goog.edge_sensor_wakeup.toggle(False))
+        self.adb_run(common.doze_always_on.toggle(False))
+        self.adb_run(common.location_mode.toggle(False))
+        self.adb_run(common.single_tap_gesture.toggle(False))
+        self.adb_run(common.camera_double_twist_to_flip_enabled.toggle(False))
+        self.adb_run(common.silence_gesture.toggle(False))
+        self.adb_run(common.location_gps.toggle(False))
+        self.adb_run(common.location_network.toggle(False))
+        self.adb_run(goog.edge_sensor_alerts.toggle(False))
+
+        self.adb_run(common.aware_enabled.toggle(False))
+        self.adb_run(
+            common.camera_double_tap_power_gesture_disabled.toggle(True))
+        self.adb_run(common.doze_mode.toggle(False))
+        self.adb_run(common.wake_gesture.toggle(False))
+        self.adb_run(common.double_tap_gesture.toggle(False))
+        self.adb_run(common.battery_saver_trigger.set_value(0))
+        self.adb_run(common.auto_time.toggle(False))
+        self.adb_run(common.wifi_global.toggle(False))
+        self.adb_run(common.auto_timezone.toggle(False))
+        self.adb_run(common.battery_saver_mode.toggle(False))
+
+        self.adb_run(goog.magic_tether.toggle(False))
+        self.adb_run(goog.location_collection.toggle(False))
+        self.adb_run(goog.compact_location_log.toggle(True))
+        self.adb_run(goog.cast_broadcast.toggle(False))
+        self.adb_run(goog.ocr.toggle(False))
+        if self._test_options.get('set_gms_phenotype_flag', default=True):
+            self.adb_run(goog.phenotype.toggle(True))
+        self.adb_run(goog.icing.toggle(False))
+
+        self.adb_run('echo 1 > /d/clk/debug_suspend')
+        self.adb_run(common.wifi_state.toggle(False))
+        self.adb_run(common.bluetooth.toggle(False))
+        self.adb_run(common.nfc.toggle(False))
+        self.adb_run(common.enable_full_batterystats_history)
+        self.adb_run(common.disable_doze)
+        self.adb_run(goog.disable_playstore)
+        self.adb_run(goog.disable_musiciq)
+        self.adb_run(goog.enable_musiciq)
+        self.adb_run(common.home_button)
+        self.adb_run(common.disable_live_captions)
+        self.adb_run(common.disable_super_packs)
+        self.adb_run(common.disable_pixellogger)
+        self.adb_run(goog.hotword.toggle(False))
+        self.adb_run(goog.disable_volta)
+        self.adb_run(common.crashed_activities)
+
+        try:
+            self.ad_dut.reboot(timeout=180)
+        except (AndroidDeviceError, TimeoutError):
+            raise signals.TestFailure('Device did not reboot successfully.')
+        self.log.debug('Giving device extra minute after booting before '
+                       'starting instrumentation test.')
+        time.sleep(60)
+
+        self.adb_run(goog.location_off_warning_dialog.toggle(False))
+        self.adb_run(common.hidden_api_exemption)
+        if self.file_exists(common.MOISTURE_DETECTION_SETTING_FILE):
+            self.adb_run(common.disable_moisture_detection)
+        self.adb_run(common.stop_moisture_detection)
+        self.adb_run(common.ambient_eq.toggle(False))
 
         # Test harness flag
         harness_prop = 'getprop ro.test_harness'
         # command would fail if properties were previously set, therefore it
         # needs to be verified first
         if self.adb_run(harness_prop)[harness_prop] != '1':
+            self.adb_run('echo ro.test_harness=1 >> /data/local.prop')
+            self.adb_run('chmod 644 /data/local.prop')
             self.adb_run(common.test_harness.toggle(True))
 
         # Calling
@@ -152,96 +268,16 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         # command would fail if property was previously set, therefore it needs
         # to be verified first.
         if self.adb_run(disable_dialing_prop)[disable_dialing_prop] != 'true':
+            self.adb_run(
+                'echo ro.telephony.disable-call=true >> /data/local.prop')
+            self.adb_run('chmod 644 /data/local.prop')
             self.adb_run(common.disable_dialing.toggle(True))
-
-        # Screen
-        self.adb_run(common.screen_always_on.toggle(True))
-        self.adb_run(common.screen_adaptive_brightness.toggle(False))
-        self.set_screen_brightness_level()
-        self.adb_run(common.screen_timeout_ms.set_value(1800000))
-        self.adb_run(common.notification_led.toggle(False))
-        self.adb_run(common.screensaver.toggle(False))
-        self.adb_run(common.wake_gesture.toggle(False))
-        self.adb_run(common.doze_mode.toggle(False))
-        self.adb_run(common.doze_always_on.toggle(False))
-        self.adb_run(common.single_tap_gesture.toggle(False))
-
-        # Sensors
-        self.adb_run(common.auto_rotate.toggle(False))
-        self.adb_run(common.disable_sensors)
-        self.adb_run(common.ambient_eq.toggle(False))
-
-        if self.file_exists(common.MOISTURE_DETECTION_SETTING_FILE):
-            self.adb_run(common.disable_moisture_detection)
-        self.adb_run(common.stop_moisture_detection)
-
-        # Time
-        self.adb_run(common.auto_time.toggle(False))
-        self.adb_run(common.auto_timezone.toggle(False))
-        self.adb_run(common.timezone.set_value(str(tzlocal.get_localzone())))
-
-        # Location
-        self.adb_run(common.location_gps.toggle(False))
-        self.adb_run(common.location_network.toggle(False))
-        self.adb_run(common.location_mode.toggle(False))
-
-        # Power
-        self.adb_run(common.battery_saver_mode.toggle(False))
-        self.adb_run(common.battery_saver_trigger.set_value(0))
-        self.adb_run(common.enable_full_batterystats_history)
-        self.adb_run(common.disable_doze)
-
-        # Camera
-        self.adb_run(goog.camera_hdr_mode.toggle(True))
-
-        # Gestures
-        self.adb_run(common.doze_pulse_on_pick_up.toggle(False))
-        self.adb_run(common.double_tap_gesture.toggle(False))
-        self.adb_run(
-            common.camera_double_tap_power_gesture_disabled.toggle(True))
-        self.adb_run(common.camera_double_twist_to_flip_enabled.toggle(False))
-        self.adb_run(goog.edge_sensor.toggle(False))
-        self.adb_run(common.system_navigation_keys_enabled.toggle(False))
-        self.adb_run(common.camera_lift_trigger_enabled.toggle(False))
-        self.adb_run(common.aware_enabled.toggle(False))
-        self.adb_run(common.doze_wake_screen_gesture.toggle(False))
-        self.adb_run(common.skip_gesture.toggle(False))
-        self.adb_run(common.silence_gesture.toggle(False))
-
-        # GServices
-        self.adb_run(goog.location_collection.toggle(False))
-        self.adb_run(goog.cast_broadcast.toggle(False))
-        self.adb_run(goog.compact_location_log.toggle(True))
-        self.adb_run(goog.magic_tether.toggle(False))
-        self.adb_run(goog.ocr.toggle(False))
-        if self._instrumentation_config.get('set_gms_phenotype_flag',
-                                            default=True):
-            self.adb_run(goog.phenotype.toggle(True))
-        self.adb_run(goog.icing.toggle(False))
-        self.adb_run(common.disable_pixellogger)
-
-        # Comms
-        self.adb_run(common.wifi.toggle(False))
-        self.adb_run(common.bluetooth.toggle(False))
-        self.adb_run(common.airplane_mode.toggle(True))
-        self.adb_run(common.disable_modem)
-        self.adb_run(common.nfc.toggle(False))
-
-        # Misc. Google features
-        self.adb_run(goog.disable_playstore)
-        self.adb_run(goog.disable_volta)
-        self.adb_run(goog.disable_chre)
-        self.adb_run(goog.disable_musiciq)
-        self.adb_run(goog.hotword.toggle(False))
-
-        # Enable clock dump info
-        self.adb_run('echo 1 > /d/clk/debug_suspend')
 
     def set_screen_brightness_level(self):
         """set screen brightness level"""
         brightness_level = None
-        if 'brightness_level' in self._instrumentation_config:
-            brightness_level = self._instrumentation_config['brightness_level']
+        if 'brightness_level' in self._test_options:
+            brightness_level = self._test_options['brightness_level']
 
         if brightness_level is None:
             raise ValueError('no brightness level defined (or left as None) '
@@ -251,7 +287,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
 
     def _setup_power_monitor(self, **kwargs):
         """Set up the Monsoon controller for this testclass/testcase."""
-        monsoon_config = self._get_merged_config('Monsoon')
+        monsoon_config = self._test_options.get_config('Monsoon')
         self.power_monitor.setup(monsoon_config=monsoon_config)
 
     def _uninstall_sl4a(self):
@@ -298,7 +334,8 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         self.ad_dut.log.info('Pulling test generated files to %s.' % dest)
         for file_name in [DEFAULT_INSTRUMENTATION_LOG_OUTPUT, SCREENSHOTS_DIR]:
             src = os.path.join(self.ad_dut.external_storage_path, file_name)
-            self.ad_dut.pull_files(src, dest)
+            if self.ad_dut.adb.shell('ls %s || true' % src):
+                self.ad_dut.pull_files(src, dest)
 
     def _cleanup_test_files(self):
         """Remove test-generated files from the device."""
@@ -307,7 +344,8 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
                           DEFAULT_INSTRUMENTATION_LOG_OUTPUT, AUTOTESTER_LOG,
                           SCREENSHOTS_DIR]:
             src = os.path.join(self.ad_dut.external_storage_path, file_name)
-            self.adb_run('rm -rf %s' % src)
+            if self.ad_dut.adb.shell('ls %s || true' % src):
+                self.adb_run('rm -rf %s' % src)
 
     def trigger_scan_on_external_storage(self):
         cmd = 'am broadcast -a android.intent.action.MEDIA_MOUNTED '
@@ -376,6 +414,17 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             time.sleep(POLLING_INTERVAL)
         raise InstrumentationTestError('Timeout while waiting for USB '
                                        'disconnect signal.')
+    def _connect_tigertail(self):
+        """Usb live connection is on mux A and the additional periferal is on mux B"""
+        self.tigertail.turn_off()
+        time.sleep(RESET_SLEEP_TIME)
+        self.tigertail.turn_on_mux_A()
+
+    def _disconnect_tigertail(self):
+        """Usb live connection is on mux A and the additional periferal is on mux B"""
+        self.tigertail.turn_off()
+        time.sleep(RESET_SLEEP_TIME)
+        self.tigertail.turn_on_mux_B()
 
     def measure_power(self, count=None, attempt_number=None):
         """Measures power consumption with a power_monitor. See power_monitor's
@@ -384,7 +433,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         Returns:
             A list of power_metrics.Metric.
         """
-        monsoon_config = self._get_merged_config('Monsoon')
+        monsoon_config = self._test_options.get_config('Monsoon')
         disconnect_usb_timeout = monsoon_config.get_numeric(
             'usb_disconnection_timeout', 240)
         measurement_args = dict(
@@ -410,7 +459,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
             context.get_current_context().get_full_output_path(),
             'monsoon.txt' if count is None else 'monsoon_%s.txt' % count)
 
-        if attempt_number != None:
+        if attempt_number is not None:
             power_data_path = os.path.join(
                 context.get_current_context().get_full_output_path(),
                 'monsoon_attempt_%s.txt' %
@@ -426,10 +475,17 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
                        host_time)
         device_to_host_offset = float(device_time) - host_time
 
+        if self.use_tigertail_if_available and self.tigertail:
+            self._disconnect_tigertail()
+
         self.power_monitor.disconnect_usb()
         self.power_monitor.measure(
             measurement_args=measurement_args, output_path=power_data_path,
             start_time=device_to_host_offset)
+
+        if self.use_tigertail_if_available and self.tigertail:
+            self._connect_tigertail()
+
         self.power_monitor.connect_usb()
         self._reinstall_sl4a()
         # Gather relevant metrics from measurements
@@ -443,7 +499,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
 
         self.power_monitor.release_resources()
         if self.generate_chart:
-          self.generate_power_chart(power_data_path)
+            self.generate_power_chart(power_data_path)
         return power_metrics
 
     def run_and_measure(self, instr_class, instr_method=None, req_params=None,
@@ -469,7 +525,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         else:
             self._instr_cmd_builder.add_test_class(instr_class)
         params = {}
-        instr_call_config = self._get_merged_config('instrumentation_call')
+        instr_call_config = self._test_options.get_config('instrumentation_call')
         # Add required parameters
         for param_name in req_params or []:
             params[param_name] = instr_call_config.get(
@@ -487,17 +543,19 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         instr_cmd = self._instr_cmd_builder.build()
         self._uninstall_sl4a()
 
-        # Allow device to stabilize for 5 minutes
-        self.ad_dut.log.debug('Waiting 5 minutes for device to stabilize')
-        time.sleep(self._instrumentation_config.get_int(
-            'device_stabilization_time', DEFAULT_DEVICE_STABILIZATION_TIME))
+        # Allow device to stabilize
+        stabilization_time = self._test_options.get_int(
+            'device_stabilization_time', DEFAULT_DEVICE_STABILIZATION_TIME)
+        self.ad_dut.log.debug('Waiting %s seconds for device to stabilize',
+                              stabilization_time)
+        time.sleep(stabilization_time)
 
         self.log.info('Running instrumentation call: %s' % instr_cmd)
         self.adb_run_async(instr_cmd)
         return self.measure_power(count=count, attempt_number=attempt_number)
 
     def get_absolute_thresholds_for_metric(self, instr_test_name, metric_name):
-        all_thresholds = self._get_merged_config(ACCEPTANCE_THRESHOLD)
+        all_thresholds = self._test_options.get_config(ACCEPTANCE_THRESHOLD)
         test_thresholds = all_thresholds.get_config(instr_test_name)
         if metric_name not in test_thresholds:
             return None
@@ -552,7 +610,7 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
         """
         summaries = {}
         failure = False
-        all_thresholds = self._get_merged_config(ACCEPTANCE_THRESHOLD)
+        all_thresholds = self._test_options.get_config(ACCEPTANCE_THRESHOLD)
 
         if not instr_test_names:
             instr_test_names = all_thresholds.keys()
@@ -567,6 +625,16 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
                     'Check instrumentation call results in '
                     'instrumentation_proto.txt.'
                     % instr_test_name)
+
+            metric_list = []
+            for metric in power_metrics[instr_test_name]:
+                metric_dic = {
+                    'name' : metric.name,
+                    'value' : metric.value,
+                    'unit': metric.unit,
+                    '_unit_type' : metric._unit_type
+                }
+                metric_list.append(metric_dic)
 
             summaries[instr_test_name] = {}
             test_thresholds_configs = all_thresholds.get_config(instr_test_name)
@@ -589,10 +657,13 @@ class InstrumentationPowerTest(InstrumentationBaseTest):
                     self.log.error('Error detail: %s', str(e))
                     continue
 
+                power_metrics_json_string = json.dumps(metric_list)
+
                 summary_entry = {
                     'expected': '[%s, %s]' % (
                         thresholds.lower, thresholds.upper),
-                    'actual': str(actual_result.to_unit(thresholds.unit))
+                    'actual': str(actual_result.to_unit(thresholds.unit)),
+                    'power_metric': power_metrics_json_string
                 }
                 summaries[instr_test_name][metric_name] = summary_entry
                 if not thresholds.lower <= actual_result <= thresholds.upper:
