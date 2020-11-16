@@ -22,9 +22,9 @@ import traceback
 from acts import asserts
 from acts import utils
 from acts.test_decorators import test_tracker_info
-from acts.test_utils.wifi import wifi_constants
-from acts.test_utils.wifi import wifi_test_utils as wutils
-from acts.test_utils.wifi.WifiBaseTest import WifiBaseTest
+from acts_contrib.test_utils.wifi import wifi_constants
+from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
+from acts_contrib.test_utils.wifi.WifiBaseTest import WifiBaseTest
 
 SCANTIME = 10000  #framework support only 10s as minimum scan interval
 NUMBSSIDPERSCAN = 8
@@ -81,6 +81,10 @@ class WifiScannerScanTest(WifiBaseTest):
 
         if "AccessPoint" in self.user_params:
             self.legacy_configure_ap_and_start(ap_count=2, mirror_ap=False)
+        elif "OpenWrtAP" in self.user_params:
+            self.configure_openwrt_ap_and_start(open_network=True,
+                                                wpa_network=True,
+                                                ap_count=2)
 
         self.leeway = 10
         self.stime_channel = SCAN_TIME_PASSIVE
