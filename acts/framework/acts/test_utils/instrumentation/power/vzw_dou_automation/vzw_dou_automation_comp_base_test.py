@@ -46,7 +46,10 @@ class VzWDoUAutomationCompBaseTest(
   def __init__(self, configs):
     super().__init__(configs)
     self._companion_test_apk = None
+    self._companion_wifi_util = None
+    self._companion_google_account_util = None
     self._companion_instr_cmd_builder = None
+    self._companion_permissions_util = None
 
   def setup_class(self):
     """Class setup"""
@@ -77,6 +80,28 @@ class VzWDoUAutomationCompBaseTest(
       raise InstrumentationTestError(
           'Failed to install test APK on companion device.')
 
+  def _install_companion_wifi_util_apk(self):
+    """Installs google account util apk on the device."""
+    _wifi_util_file = self.get_file_from_config(
+        'wifi_util_apk')
+    self._companion_wifi_util = AppInstaller(self.ad_cp,
+                                     _wifi_util_file)
+    self._companion_wifi_util.install('-g')
+    if not self._companion_wifi_util.is_installed():
+      raise InstrumentationTestError(
+          'Failed to install wif util APK on companion.')
+
+  def _install_companion_google_account_util_apk(self):
+    """Installs google account util apk on the device."""
+    _google_account_util_file = self.get_file_from_config(
+        'google_account_util_apk')
+    self._companion_google_account_util = AppInstaller(self.ad_cp,
+                                             _google_account_util_file)
+    self._companion_google_account_util.install('-g')
+    if not self._companion_google_account_util.is_installed():
+      raise InstrumentationTestError(
+          'Failed to install google account util APK on companion.')
+
   def _pull_companion_test_files(self):
     """Pull test-generated files from the companion device onto the log directory."""
     dest = self.ad_cp.device_log_path
@@ -84,7 +109,8 @@ class VzWDoUAutomationCompBaseTest(
         'Pulling test generated files from companion device to %s.' % dest)
     for file_name in [DEFAULT_INSTRUMENTATION_LOG_OUTPUT, SCREENSHOTS_DIR]:
       src = os.path.join(self.ad_cp.external_storage_path, file_name)
-      self.ad_cp.pull_files(src, dest)
+      if self.ad_cp.adb.shell('ls %s || true' % src):
+        self.ad_cp.pull_files(src, dest)
 
   def _cleanup_companion_test_files(self):
     """Remove test-generated files from the companion device."""
@@ -94,13 +120,19 @@ class VzWDoUAutomationCompBaseTest(
         AUTOTESTER_LOG, SCREENSHOTS_DIR
     ]:
       src = os.path.join(self.ad_cp.external_storage_path, file_name)
-      self.adb_run('rm -rf %s' % src, self.ad_cp)
+      if self.ad_cp.adb.shell('ls %s || true' % src):
+        self.adb_run('rm -rf %s' % src, self.ad_cp)
 
   def _cleanup_companion_device(self):
     """Clean up device after power testing."""
     if self._companion_test_apk:
       self._companion_test_apk.uninstall()
-    self._companion_permissions_util.close()
+    if self._companion_wifi_util:
+      self._companion_wifi_util.uninstall()
+    if self._companion_google_account_util:
+      self._companion_google_account_util.uninstall()
+    if self._companion_permissions_util:
+      self._companion_permissions_util.close()
     self._pull_companion_test_files()
     self._cleanup_companion_test_files()
 
@@ -114,15 +146,22 @@ class VzWDoUAutomationCompBaseTest(
 
     self.log.info('Running base adb setup commands on companion.')
     self.ad_cp.adb.ensure_root()
-    self.ad_cp.reboot()
-    self.ad_cp.wait_for_boot_completion()
-    time.sleep(vzw_dou_automation_base_test.DEFAULT_WAIT_FOR_REBOOT)
+    self.ad_cp.reboot(wait_after_reboot_complete=vzw_dou_automation_base_test
+                      .DEFAULT_WAIT_FOR_REBOOT)
     self.ad_cp.adb.ensure_root()
-    self.adb_run(common.test_harness.toggle(True), ad=self.ad_cp)
+    # Test harness flag
+    harness_prop = 'getprop ro.test_harness'
+    # command would fail if properties were previously set, therefore it
+    # needs to be verified first
+    if self.adb_run(harness_prop, ad=self.ad_cp)[harness_prop] != '1':
+      self.log.info('Enable test harness at companion.')
+      self.adb_run('echo ro.test_harness=1 >> /data/local.prop', ad=self.ad_cp)
+      self.adb_run('chmod 644 /data/local.prop', ad=self.ad_cp)
+      self.adb_run(common.test_harness.toggle(True), ad=self.ad_cp)
     self.adb_run(goog.force_stop_nexuslauncher, ad=self.ad_cp)
     self.adb_run(goog.disable_playstore, ad=self.ad_cp)
     self.adb_run(goog.disable_chrome, ad=self.ad_cp)
-    self.adb_run(common.power_stayon, ad=self.ad_cp)
+    self.adb_run(common.wifi_state.toggle(True), ad=self.ad_cp)
     self.adb_run(common.mobile_data.toggle(True), ad=self.ad_cp)
     self.adb_run('input keyevent 82', ad=self.ad_cp)
     self.adb_run('input keyevent 3', ad=self.ad_cp)
@@ -158,7 +197,7 @@ class VzWDoUAutomationCompBaseTest(
     else:
       self._companion_instr_cmd_builder.add_test_class(instr_class)
     params = {}
-    companion_instr_call_config = self._get_merged_config(
+    companion_instr_call_config = self._instrumentation_config.get_config(
         'companion_instrumentation_call')
     # Add required parameters
     for param_name in req_params or []:
@@ -200,6 +239,35 @@ class VzWDoUAutomationCompBaseTest(
     self.log.info('Base bt config path %s' % bt_config_path)
     self.ad_dut.adb.push(bt_config_path + '/' + self.ad_dut.serial + '/' +
                          bt_config_file + ' %s' % bt_conf_path_dut)
-    self.ad_dut.reboot()
-    self.ad_dut.wait_for_boot_completion()
-    time.sleep(vzw_dou_automation_base_test.DEFAULT_WAIT_FOR_REBOOT)
+    self.ad_dut.reboot(wait_after_reboot_complete=vzw_dou_automation_base_test
+                       .DEFAULT_WAIT_FOR_REBOOT)
+
+  def log_in_companion_gmail_account(self, sync='false', wait_for_checkin='false'):
+    # Log in to gmail account
+    self._install_companion_google_account_util_apk()
+    time.sleep(vzw_dou_automation_base_test.DEFAULT_DEVICE_COOL_DOWN_TIME)
+    self.adb_run(goog.remove_gmail_account, ad=self.ad_cp)
+    additional_setting = self._instrumentation_config.get_config('additional_setting')
+    gmail_phrase = additional_setting.get('gmail_phrase')
+    log_in_cmd = (
+        'am instrument -w -e account {} -e '
+        'password {} -e sync {} -e wait-for-checkin {} '
+        'com.google.android.tradefed.account/.AddAccount'
+    ).format(vzw_dou_automation_base_test.GMAIL_ACCOUNT,
+             gmail_phrase, sync, wait_for_checkin)
+    self.log.info('gmail log in commands %s' % log_in_cmd)
+    self.adb_run(log_in_cmd, timeout=300, ad=self.ad_cp)
+    time.sleep(vzw_dou_automation_base_test.DEFAULT_DEVICE_COOL_DOWN_TIME)
+
+  def connect_companion_to_wifi(self):
+    # Log in to gmail account
+    self._install_companion_wifi_util_apk()
+    additional_setting = self._instrumentation_config.get_config('additional_setting')
+    wifi_phrase = additional_setting.get('wifi_phrase')
+    wifi_connection_cmd = (
+        'am instrument -e method "connectToNetwork" -e ssid {} -e '
+        'psk "Google123" -w com.android.tradefed.utils.wifi/.WifiUtil'
+    ).format(vzw_dou_automation_base_test.WIFI_SSID, wifi_phrase)
+    self.log.info('wifi_connection_cmd %s' % wifi_connection_cmd)
+    self.adb_run(wifi_connection_cmd, timeout=300, ad=self.ad_cp)
+    time.sleep(vzw_dou_automation_base_test.DEFAULT_DEVICE_COOL_DOWN_TIME)

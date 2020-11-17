@@ -22,7 +22,7 @@ from acts.test_utils.instrumentation.power.vzw_dou_automation import \
   vzw_dou_automation_comp_base_test
 from acts.test_utils.instrumentation.power.vzw_dou_automation import \
   vzw_dou_automation_base_test
-
+from acts.test_utils.instrumentation.device.command.adb_commands import common
 
 class VzWDoUAutomationPhoneCallTest(
     vzw_dou_automation_comp_base_test.VzWDoUAutomationCompBaseTest):
@@ -34,6 +34,8 @@ class VzWDoUAutomationPhoneCallTest(
       result_selector=vzw_dou_automation_base_test.get_median_current)
   def test_voice_call_over_lte(self, attempt_number):
     """Measures power when the device is on call with mute on and off."""
+    self.ad_dut.adb.ensure_root()
+    self.adb_run(goog.disable_playstore)
     companion_phone_number = self.get_phone_number(self.ad_cp)
     self.log.debug(
         'The companion phone number is {}'.format(companion_phone_number))
@@ -68,6 +70,47 @@ class VzWDoUAutomationPhoneCallTest(
       num_passes=3,
       acceptable_failures=2,
       result_selector=vzw_dou_automation_base_test.get_median_current)
+  def test_voice_call_over_lte_wifi(self, attempt_number):
+    """Measures power when the device is on call with mute on and off
+    with wifi connected."""
+    self.adb_run(common.wifi_state.toggle(True))
+    companion_phone_number = self.get_phone_number(self.ad_cp)
+    self.log.debug(
+        'The companion phone number is {}'.format(companion_phone_number))
+    dut_phone_number = self.get_phone_number(self.ad_dut)
+    self.log.debug('The dut phone number is {}'.format(dut_phone_number))
+    # In this test case three calls are made
+    PHONE_CALL_COUNT = 3
+    metrics_list = []
+    for i in range(PHONE_CALL_COUNT):
+      # The companion phone mutes on 1st and 3rd calls
+      is_companion_muted = 'TRUE' if i % PHONE_CALL_COUNT != 1 else 'FALSE'
+      self.run_instrumentation_on_companion(
+          'com.google.android.platform.dou.CompanionPhoneVoiceCallTests',
+          'testReceiveVoiceCall',
+          extra_params=[('recipient_number', dut_phone_number),
+                        ('recipient_number_companion', companion_phone_number),
+                        ('enable_mute', is_companion_muted)])
+      # The dut mutes on 2nd and 3rd calls
+      is_dut_muted = 'TRUE' if i % PHONE_CALL_COUNT != 0 else 'FALSE'
+      metrics = self.run_and_measure(
+          'com.google.android.platform.dou.PhoneVoiceCallWithMuteTests',
+          'testVoiceCall',
+          extra_params=[('wifi_ssid', vzw_dou_automation_base_test.WIFI_SSID),
+                        ('recipient_number', dut_phone_number),
+                        ('recipient_number_companion', companion_phone_number),
+                        ('enable_mute', is_dut_muted)],
+          count=i,
+          attempt_number=attempt_number)
+      metrics_list.append(metrics)
+    final_metrics = self._generate_final_metrics(metrics_list)
+    self.record_metrics(final_metrics)
+    self.validate_metrics(final_metrics)
+
+  @repeated_test(
+      num_passes=3,
+      acceptable_failures=2,
+      result_selector=vzw_dou_automation_base_test.get_median_current)
   def test_voice_call_bluetooth(self, attempt_number):
     """Measures power when the device is on call with bluetooth paired."""
     self.ad_cp.adb.ensure_root()
@@ -87,7 +130,8 @@ class VzWDoUAutomationPhoneCallTest(
     self.run_instrumentation_on_companion(
         'com.google.android.platform.dou.CompanionSimulateVoiceTests',
         'testPlayYoutube',
-        extra_params=[('recipient_number', dut_phone_number),
+        extra_params=[('wifi_ssid', vzw_dou_automation_base_test.WIFI_SSID),
+                      ('recipient_number', dut_phone_number),
                       ('recipient_number_companion', companion_phone_number)])
 
     metrics = self.run_and_measure(
@@ -107,6 +151,8 @@ class VzWDoUAutomationPhoneCallTest(
       result_selector=vzw_dou_automation_base_test.get_median_current)
   def test_voice_call(self, attempt_number):
     """Measures power when the device is on call."""
+    self.connect_companion_to_wifi()
+    self.log_in_companion_gmail_account()
     companion_phone_number = self.get_phone_number(self.ad_cp)
     self.log.debug(
         'The companion phone number is {}'.format(companion_phone_number))
@@ -116,7 +162,8 @@ class VzWDoUAutomationPhoneCallTest(
     self.run_instrumentation_on_companion(
         'com.google.android.platform.dou.CompanionSimulateVoiceTests',
         'testPlayYoutube',
-        extra_params=[('recipient_number', dut_phone_number),
+        extra_params=[('wifi_ssid', vzw_dou_automation_base_test.WIFI_SSID),
+                      ('recipient_number', dut_phone_number),
                       ('recipient_number_companion', companion_phone_number)])
 
     metrics = self.run_and_measure(
@@ -136,6 +183,8 @@ class VzWDoUAutomationPhoneCallTest(
   def test_mobile_hotspot(self, attempt_number):
     """Measures power for companion connect to the dut mobile hotspot."""
 
+    self.connect_companion_to_wifi()
+    self.log_in_companion_gmail_account()
     companion_phone_number = self.get_phone_number(self.ad_cp)
     self.log.debug(
         'The companion phone number is {}'.format(companion_phone_number))
@@ -193,7 +242,7 @@ class VzWDoUAutomationPhoneCallTest(
               self.log.info('The result metrix index is %s and value is %s',
                             index, result_metrics.value)
             final_list[i].value += result_metrics.value * 0.4
-        if '0' in key:
+        if combined_seg_name == '':
           combined_seg_name = key
 
     final_metrics[combined_seg_name] = final_list

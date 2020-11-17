@@ -50,7 +50,9 @@ def setup_ap_and_associate(access_point,
                            n_capabilities=None,
                            ac_capabilities=None,
                            vht_bandwidth=None,
-                           setup_bridge=False):
+                           setup_bridge=False,
+                           target_security=None,
+                           association_mechanism=None):
     """Sets up the AP and associates a client.
 
     Args:
@@ -69,6 +71,10 @@ def setup_ap_and_associate(access_point,
         additional_ap_parameters: Additional parameters to send the AP.
         password: Password to connect to WLAN if necessary.
         check_connectivity: Whether to check for internet connectivity.
+        target_security: The security to try to associate to if using policy
+                         to associate.
+        association_mechanism: The way we will connect, through the core or
+                               policy layer of WLAN on the device.
     """
     setup_ap(access_point, profile_name, channel, ssid, mode, preamble,
              beacon_interval, dtim_period, frag_threshold, rts_threshold,
@@ -76,19 +82,26 @@ def setup_ap_and_associate(access_point,
              check_connectivity, n_capabilities, ac_capabilities,
              vht_bandwidth, setup_bridge)
 
+    if not security:
+        target_security = "none"
+
     if security and security.wpa3:
         return associate(client,
                          ssid,
                          password,
+                         target_security=target_security,
                          key_mgmt='SAE',
                          check_connectivity=check_connectivity,
-                         hidden=hidden)
+                         hidden=hidden,
+                         association_mechanism=association_mechanism)
     else:
         return associate(client,
                          ssid,
                          password=password,
+                         target_security=target_security,
                          check_connectivity=check_connectivity,
-                         hidden=hidden)
+                         hidden=hidden,
+                         association_mechanism=association_mechanism)
 
 
 def setup_ap(access_point,
@@ -157,7 +170,10 @@ def associate(client,
               password=None,
               key_mgmt=None,
               check_connectivity=True,
-              hidden=False):
+              hidden=False,
+              security=None,
+              association_mechanism=None,
+              target_security=None):
     """Associates a client to a WLAN network.
 
     Args:
@@ -172,7 +188,9 @@ def associate(client,
                             password,
                             key_mgmt=key_mgmt,
                             check_connectivity=check_connectivity,
-                            hidden=hidden)
+                            hidden=hidden,
+                            association_mechanism=association_mechanism,
+                            target_security=target_security)
 
 
 def status(client):

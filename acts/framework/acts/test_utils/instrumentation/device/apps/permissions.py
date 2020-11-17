@@ -31,6 +31,8 @@ class PermissionsUtil(object):
 
     def grant_all(self):
         """Grant all runtime permissions with PermissionUtils."""
+        if not self._permissions_apk.is_installed():
+            self._permissions_apk.install('-g')
         self._dut.log.info('Granting all revoked runtime permissions.')
         cmd_builder = InstrumentationCommandBuilder()
         cmd_builder.set_manifest_package(self._permissions_apk.pkg_name)

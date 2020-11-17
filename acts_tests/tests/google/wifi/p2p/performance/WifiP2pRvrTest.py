@@ -109,7 +109,8 @@ class WifiP2pRvrTest(WifiRvrTest):
         wutils.reset_wifi(ad)
         utils.sync_device_time(ad)
         ad.droid.telephonyToggleDataConnection(False)
-        wutils.set_wifi_country_code(ad, wutils.WifiEnums.CountryCode.US)
+        country_code = self.testclass_params.get('country_code', 'US')
+        wutils.set_wifi_country_code(ad, country_code)
         ad.droid.wifiP2pInitialize()
         time.sleep(p2pconsts.DEFAULT_FUNCTION_SWITCH_TIME)
         asserts.assert_true(
@@ -305,7 +306,8 @@ class WifiP2pRvrTest(WifiRvrTest):
         self.setup_p2p_connection(testcase_params)
         # Set DUT to monitor RSSI and LLStats on
         self.monitored_dut = self.gc_dut
-        self.monitored_interface = 'p2p-p2p0-0'
+        self.monitored_interface = wp2putils.p2p_get_current_group(
+            self.gc_dut)['Interface']
 
     def cleanup_p2p_rvr_test(self, testcase_params):
         # clean-up

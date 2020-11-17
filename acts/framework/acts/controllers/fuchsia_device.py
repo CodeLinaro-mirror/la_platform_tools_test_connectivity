@@ -38,7 +38,7 @@ from acts.controllers.fuchsia_lib.bt.avdtp_lib import FuchsiaAvdtpLib
 from acts.controllers.fuchsia_lib.light_lib import FuchsiaLightLib
 
 from acts.controllers.fuchsia_lib.bt.ble_lib import FuchsiaBleLib
-from acts.controllers.fuchsia_lib.bt.btc_lib import FuchsiaBtcLib
+from acts.controllers.fuchsia_lib.bt.bts_lib import FuchsiaBtsLib
 from acts.controllers.fuchsia_lib.bt.gattc_lib import FuchsiaGattcLib
 from acts.controllers.fuchsia_lib.bt.gatts_lib import FuchsiaGattsLib
 from acts.controllers.fuchsia_lib.bt.sdp_lib import FuchsiaProfileServerLib
@@ -104,6 +104,9 @@ FUCHSIA_GET_VERSION_CMD = 'cat /config/build-info/version'
 
 FUCHSIA_REBOOT_TYPE_SOFT = 'soft'
 FUCHSIA_REBOOT_TYPE_HARD = 'hard'
+
+FUCHSIA_DEFAULT_CONNECT_TIMEOUT = 30
+FUCHSIA_DEFAULT_COMMAND_TIMEOUT = 3600
 
 
 class FuchsiaDeviceError(signals.ControllerError):
@@ -238,8 +241,8 @@ class FuchsiaDevice:
         # Grab commands from FuchsiaBleLib
         self.ble_lib = FuchsiaBleLib(self.address, self.test_counter,
                                      self.client_id)
-        # Grab commands from FuchsiaBtcLib
-        self.btc_lib = FuchsiaBtcLib(self.address, self.test_counter,
+        # Grab commands from FuchsiaBtsLib
+        self.bts_lib = FuchsiaBtsLib(self.address, self.test_counter,
                                      self.client_id)
         # Grab commands from FuchsiaGattcLib
         self.gattc_lib = FuchsiaGattcLib(self.address, self.test_counter,
@@ -320,6 +323,16 @@ class FuchsiaDevice:
         # Init server
         self.init_server_connection()
 
+        self.setup_commands = fd_conf_data.get('setup_commands', [])
+        self.teardown_commands = fd_conf_data.get('teardown_commands', [])
+
+        try:
+            self.run_commands_from_config(self.setup_commands)
+        except FuchsiaDeviceError:
+            # Prevent a threading error, since controller isn't fully up yet.
+            self.clean_up()
+            raise FuchsiaDeviceError('Failed to run setup commands.')
+
     @backoff.on_exception(
         backoff.constant,
         (ConnectionRefusedError, requests.exceptions.ConnectionError),
@@ -327,7 +340,7 @@ class FuchsiaDevice:
         max_tries=4)
     def init_server_connection(self):
         """Initializes HTTP connection with SL4F server."""
-        self.log.debug("Initialziing server connection")
+        self.log.debug("Initializing server connection")
         init_data = json.dumps({
             "jsonrpc": "2.0",
             "id": self.build_id(self.test_counter),
@@ -340,6 +353,42 @@ class FuchsiaDevice:
         requests.get(url=self.init_address, data=init_data)
         self.test_counter += 1
 
+    def run_commands_from_config(self, cmd_dicts):
+        """Runs commands on the Fuchsia device from the config file. Useful for
+        device and/or Fuchsia specific configuration.
+
+        Args:
+            cmd_dicts: list of dictionaries containing the following
+                'cmd': string, command to run on device
+                'timeout': int, seconds to wait for command to run (optional)
+                'skip_status_code_check': bool, disregard errors if true
+        """
+        for cmd_dict in cmd_dicts:
+            try:
+                cmd = cmd_dict['cmd']
+            except KeyError:
+                raise FuchsiaDeviceError(
+                    'To run a command via config, you must provide key "cmd" '
+                    'containing the command string.')
+
+            timeout = cmd_dict.get('timeout', FUCHSIA_DEFAULT_COMMAND_TIMEOUT)
+            # Catch both boolean and string values from JSON
+            skip_status_code_check = 'true' == str(
+                cmd_dict.get('skip_status_code_check', False)).lower()
+
+            self.log.info(
+                'Running command "%s".%s' %
+                (cmd, ' Ignoring result.' if skip_status_code_check else ''))
+            result = self.send_command_ssh(
+                cmd,
+                timeout=timeout,
+                skip_status_code_check=skip_status_code_check)
+
+            if not skip_status_code_check and result.stderr:
+                raise FuchsiaDeviceError(
+                    'Error when running command "%s": %s' %
+                    (cmd, result.stderr))
+
     def build_id(self, test_id):
         """Concatenates client_id and test_id to form a command_id
 
@@ -350,9 +399,9 @@ class FuchsiaDevice:
 
     def reboot(self,
                use_ssh=False,
-               unreachable_timeout=30,
-               ping_timeout=30,
-               ssh_timeout=30,
+               unreachable_timeout=FUCHSIA_DEFAULT_CONNECT_TIMEOUT,
+               ping_timeout=FUCHSIA_DEFAULT_CONNECT_TIMEOUT,
+               ssh_timeout=FUCHSIA_DEFAULT_CONNECT_TIMEOUT,
                reboot_type=FUCHSIA_REBOOT_TYPE_SOFT,
                testbed_pdus=None):
         """Reboot a FuchsiaDevice.
@@ -477,13 +526,23 @@ class FuchsiaDevice:
         except Exception as err:
             raise ConnectionError(
                 'Failed to connect and run command via SL4F. Err: %s' % err)
+
+        try:
+            self.run_commands_from_config(self.setup_commands)
+
+        except FuchsiaDeviceError:
+            # Prevent a threading error, since controller isn't fully up yet.
+            self.clean_up()
+            raise FuchsiaDeviceError(
+                'Failed to run setup commands after reboot.')
+
         self.log.info(
             'Device has rebooted, SL4F is reconnected and functional.')
 
     def send_command_ssh(self,
                          test_cmd,
-                         connect_timeout=30,
-                         timeout=3600,
+                         connect_timeout=FUCHSIA_DEFAULT_CONNECT_TIMEOUT,
+                         timeout=FUCHSIA_DEFAULT_COMMAND_TIMEOUT,
                          skip_status_code_check=False):
         """Sends an SSH command to a Fuchsia device
 
@@ -621,6 +680,11 @@ class FuchsiaDevice:
         """Cleans up the FuchsiaDevice object and releases any resources it
         claimed.
         """
+        try:
+            self.run_commands_from_config(self.teardown_commands)
+        except FuchsiaDeviceError:
+            self.log.warning('Failed to run teardown_commands.')
+
         cleanup_id = self.build_id(self.test_counter)
         cleanup_args = {}
         cleanup_method = "sl4f.sl4f_cleanup"
@@ -773,6 +837,216 @@ class FuchsiaDevice:
                            disconnect_response.get("error"))
             return False
 
+    def policy_save_and_connect(self, ssid, security, password=None):
+        """ Saves and connects to the network. This is the policy version of
+            connect and check_connect_response because the policy layer
+            requires a saved network and the policy connect does not return
+            success or failure
+        Args:
+            ssid: The network name
+            security: The security of the network as a string
+            password: the credential of the network if it has one
+        """
+        # Save network and check response
+        result_save = self.wlan_policy_lib.wlanSaveNetwork(ssid,
+                                                           security,
+                                                           target_pwd=password)
+        if result_save.get("error") != None:
+            self.log.info("Failed to save network (%s) for connection: %s" %
+                          (ssid, result_save.get("error")))
+            return False
+        # Make connect call and check response
+        result_connect = self.wlan_policy_lib.wlanConnect(ssid, security)
+        if result_connect.get("error") != None:
+            self.log.info("Failed to initiate connect with error: %s" %
+                          result_connect.get("error"))
+            return False
+        return self.wait_for_connect(ssid, security)
+
+    def wait_for_connect(self, ssid, security_type, timeout=30):
+        """ Wait until the device has connected to the specified network, or raise
+            a test failure if we time out
+        Args:
+            ssid: The network name to wait for a connection to.
+            security_type: The security of the network we are trying connect to
+            timeout: The seconds we will wait to see an update indicating a
+                     connect to this network.
+        Returns:
+            True if we see a connect to the network, False otherwise.
+        """
+        # Wait until we've connected.
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            time_left = end_time - time.time()
+            if time_left <= 0:
+                return False
+
+            # if still connectin loop. If failed to connect, fail test
+            try:
+                update = self.wlan_policy_lib.wlanGetUpdate(timeout=time_left)
+            except requests.exceptions.Timeout:
+                self.log.info("Timed out waiting for response from device "
+                              "while waiting for network with SSID \"%s\" to "
+                              "connect. Device took too long to connect or "
+                              "the request timed out for another reason." %
+                              ssid)
+                return False
+            if update.get("error") != None:
+                self.log.info("Error occurred getting status update: %s" %
+                              update["error"])
+                return False
+
+            for network in update["result"]["networks"]:
+                net_id = network['id']
+                if not net_id["ssid"] == ssid or not net_id["type_"].upper(
+                ) == security_type.upper():
+                    continue
+                if 'state' not in network:
+                    self.log.info(
+                        "Client state summary's network is missing field 'state'"
+                    )
+                    return False
+                elif network["state"].upper() == "Connected".upper():
+                    return True
+            # Wait a bit before requesting another status update
+            time.sleep(1)
+        # Stopped getting updates because out timeout
+        self.log.info("Timed out waiting for network with SSID \"%s\" to "
+                      "connect" % ssid)
+        return False
+
+    def wait_for_disconnect(self,
+                            ssid,
+                            security_type,
+                            state,
+                            status,
+                            timeout=30):
+        """ Wait for a disconnect of the specified network on the given device. This
+            will check that the correct connection state and disconnect status are
+            given in update. If we do not see a disconnect after some time, this will
+            return false.
+        Args:
+            ssid: The name of the network we are connecting to.
+            security_type: The security as a string, ie "none", "wep", "wpa",
+                        "wpa2", or "wpa3"
+            state: The connection state we are expecting, ie "Disconnected" or
+                "Failed"
+            status: The disconnect status we expect, it "ConnectionStopped" or
+                "ConnectionFailed"
+            timeout: The seconds we will watch for a disconnect before giving up
+        Returns: True if we saw a disconnect as specified, or False otherwise.
+        """
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            # Time out on waiting for update if past the time we allow for
+            # waiting for disconnect
+            time_left = end_time - time.time()
+            if time_left <= 0:
+                return False
+
+            try:
+                update = self.wlan_policy_lib.wlanGetUpdate(timeout=time_left)
+            except requests.exceptions.Timeout:
+                self.log.info("Timed out waiting for response from device "
+                              "while waiting for network with SSID \"%s\" to "
+                              "disconnect. Device took too long to disconnect "
+                              "or the request timed out for another reason." %
+                              ssid)
+                return False
+
+            if update.get("error") != None:
+                self.log.info("Error occurred getting status update: %s" %
+                              update["error"])
+                return False
+            # Update should include network, either connected to or recently disconnected.
+            if len(update["result"]["networks"]) == 0:
+                self.log.info("Status update is missing network")
+                return False
+
+            for network in update["result"]["networks"]:
+                net_id = network['id']
+                if not net_id["ssid"] == ssid or not net_id["type_"].upper(
+                ) == security_type.upper():
+                    continue
+                if 'state' not in network or "status" not in network:
+                    self.log.info(
+                        "Client state summary's network is missing fields")
+                    return False
+                # If still connected, we will wait for another update and check again
+                elif network["state"].upper() == "Connected".upper():
+                    continue
+                elif network["state"].upper() == "Connecting".upper():
+                    self.log.info(
+                        "Update is 'Connecting', but device should already be "
+                        "connected; expected disconnect")
+                    return False
+                # Check that the network state and disconnect status are expected, ie
+                # that it isn't ConnectionFailed when we expect ConnectionStopped
+                elif network["state"].upper() != state.upper(
+                ) or network["status"].upper() != status.upper():
+                    self.log.info(
+                        "Connection failed: a network failure occurred that is unrelated"
+                        "to remove network or incorrect status update. \nExpected state: "
+                        % (state, status, network))
+                    return False
+                else:
+                    return True
+            # Wait a bit before requesting another status update
+            time.sleep(1)
+        # Stopped getting updates because out timeout
+        self.log.info("Timed out waiting for network with SSID \"%s\" to "
+                      "connect" % ssid)
+        return False
+
+    def remove_all_and_disconnect(self):
+        """ The policy level's version of disconnect. It removes all saved
+            networks and watches to see that we are not connected to anything.
+        Returns:
+            True if we successfully remove all networks and disconnect
+            False if there is an error or we timeout on the disconnect
+        """
+        self.wlan_policy_lib.wlanSetNewListener()
+        result_remove = self.wlan_policy_lib.wlanRemoveAllNetworks()
+        if result_remove.get('error') != None:
+            self.log.info("Error occurred removing all networks: %s" %
+                          result_remove.get('error'))
+            return False
+        return self.wait_for_no_connections()
+
+    def wait_for_no_connections(self, timeout=30):
+        """ Waits to see that there are no existing connections the device. This is
+            to ensure a good starting point for tests that look for a connection.
+        Returns:
+            True if we successfully see no connections
+            False if we timeout or get an error
+        """
+        start_time = time.time()
+        while True:
+            time_left = timeout - (time.time() - start_time)
+            if time_left <= 0:
+                self.log.info("Timed out waiting for disconnect")
+                return False
+            try:
+                update = self.wlan_policy_lib.wlanGetUpdate(timeout=time_left)
+            except requests.exceptions.Timeout:
+                self.log.info(
+                    "Timed out getting status update while waiting for all"
+                    " connections to end.")
+            if update["error"] != None:
+                self.log.info("Failed to get status update")
+                return False
+            # If any network is connected or being connected to, wait for them
+            # to disconnect.
+            has_connection = False
+            for network in update["result"]["networks"]:
+                if network['state'].upper() in [
+                        "Connected".upper(), "Connecting".upper()
+                ]:
+                    has_connection = True
+                    break
+            if not has_connection:
+                return True
+
     @backoff.on_exception(backoff.constant,
                           (FuchsiaSyslogError, socket.timeout),
                           interval=1.5,
@@ -858,28 +1132,27 @@ class FuchsiaDevice:
         for additional_log_object in additional_log_objects:
             if additional_log_object not in matching_log_items:
                 matching_log_items.append(additional_log_object)
-        br_path = context.get_current_context().get_full_output_path()
-        os.makedirs(br_path, exist_ok=True)
+        sn_path = context.get_current_context().get_full_output_path()
+        os.makedirs(sn_path, exist_ok=True)
         time_stamp = acts_logger.normalize_log_line_timestamp(
             acts_logger.epoch_to_log_line_timestamp(begin_time))
         out_name = "FuchsiaDevice%s_%s" % (
             self.serial, time_stamp.replace(" ", "_").replace(":", "-"))
-        bugreport_out_name = f"{out_name}.zip"
+        snapshot_out_name = f"{out_name}.zip"
         out_name = "%s.txt" % out_name
-        full_out_path = os.path.join(br_path, out_name)
-        full_br_out_path = os.path.join(br_path, bugreport_out_name)
-        self.log.info("Taking bugreport for %s on FuchsiaDevice%s." %
+        full_out_path = os.path.join(sn_path, out_name)
+        full_sn_out_path = os.path.join(sn_path, snapshot_out_name)
+        self.log.info("Taking snapshot for %s on FuchsiaDevice%s." %
                       (test_name, self.serial))
         if self.ssh_config is not None:
             try:
                 subprocess.run([
-                    f"ssh -F {self.ssh_config} {self.ip} bugreport > {full_br_out_path}"
+                    f"ssh -F {self.ssh_config} {self.ip} snapshot > {full_sn_out_path}"
                 ],
                                shell=True)
-                self.log.info(
-                    "Bugreport saved at: {}".format(full_br_out_path))
+                self.log.info("Snapshot saved at: {}".format(full_sn_out_path))
             except Exception as err:
-                self.log.error("Failed to take bugreport with: {}".format(err))
+                self.log.error("Failed to take snapshot with: {}".format(err))
 
         system_objects = self.send_command_ssh('iquery --find /hub').stdout
         system_objects = system_objects.split()
