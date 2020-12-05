@@ -39,11 +39,13 @@ install_requires = [
     'numpy',
     'pyserial',
     'pyyaml>=5.1',
-    'protobuf>=3.11.3',
+    'protobuf>=3.14.0',
     'requests',
     'scapy',
     'xlsxwriter',
     'mobly>=1.10.0',
+    # Used by the power framework. Remove after migration to acts_power
+    'tzlocal'
 ]
 
 if sys.version_info < (3, ):

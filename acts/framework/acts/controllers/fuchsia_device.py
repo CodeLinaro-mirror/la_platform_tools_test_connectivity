@@ -109,6 +109,11 @@ FUCHSIA_REBOOT_TYPE_HARD = 'hard'
 FUCHSIA_DEFAULT_CONNECT_TIMEOUT = 30
 FUCHSIA_DEFAULT_COMMAND_TIMEOUT = 3600
 
+FUCHSIA_COUNTRY_CODE_TIMEOUT = 15
+FUCHSIA_DEFAULT_COUNTRY_CODE_US = 'US'
+
+MDNS_LOOKUP_RETRY_MAX = 3
+
 
 class FuchsiaDeviceError(signals.ControllerError):
     pass
@@ -197,18 +202,27 @@ class FuchsiaDevice:
         self.hard_reboot_on_fail = fd_conf_data.get("hard_reboot_on_fail",
                                                     False)
         self.device_pdu_config = fd_conf_data.get("PduDevice", None)
+        self.config_country_code = fd_conf_data.get(
+            'country_code', FUCHSIA_DEFAULT_COUNTRY_CODE_US)
         self._persistent_ssh_conn = None
 
         if utils.is_valid_ipv4_address(self.ip):
             self.address = "http://{}:{}".format(self.ip, self.port)
         elif utils.is_valid_ipv6_address(self.ip):
             self.address = "http://[{}]:{}".format(self.ip, self.port)
-        elif utils.is_valid_ipv6_address(get_fuchsia_mdns_ipv6_address(
-                self.ip)):
-            self.ip = get_fuchsia_mdns_ipv6_address(self.ip)
-            self.address = "http://[{}]:{}".format(self.ip, self.port)
         else:
-            raise ValueError('Invalid IP: %s' % self.ip)
+            mdns_ip = None
+            for retry_counter in range(MDNS_LOOKUP_RETRY_MAX):
+                mdns_ip = get_fuchsia_mdns_ipv6_address(self.ip)
+                if mdns_ip:
+                    break
+                else:
+                    time.sleep(1)
+            if mdns_ip and utils.is_valid_ipv6_address(mdns_ip):
+                self.ip = mdns_ip
+                self.address = "http://[{}]:{}".format(self.ip, self.port)
+            else:
+                raise ValueError('Invalid IP: %s' % self.ip)
 
         self.log = acts_logger.create_tagged_trace_logger(
             "FuchsiaDevice | %s" % self.ip)
@@ -327,6 +341,8 @@ class FuchsiaDevice:
         self.start_services(skip_sl4f=self.skip_sl4f)
         # Init server
         self.init_server_connection()
+
+        self.configure_regulatory_domain(self.config_country_code)
 
         self.setup_commands = fd_conf_data.get('setup_commands', [])
         self.teardown_commands = fd_conf_data.get('teardown_commands', [])
@@ -532,6 +548,8 @@ class FuchsiaDevice:
             raise ConnectionError(
                 'Failed to connect and run command via SL4F. Err: %s' % err)
 
+        # Reconfigure country code, as it does not persist after reboots
+        self.configure_regulatory_domain(self.config_country_code)
         try:
             self.run_commands_from_config(self.setup_commands)
 
@@ -1052,6 +1070,37 @@ class FuchsiaDevice:
             if not has_connection:
                 return True
 
+    # TODO(fxb/64657): Determine more stable solution to country code config on
+    # device bring up.
+    def configure_regulatory_domain(self, desired_country_code):
+        """Allows the user to set the device country code via ACTS config
+
+        Usage:
+            In FuchsiaDevice config, add "country_code": "<CC>"
+        """
+        if self.ssh_config:
+            # Country code can be None, from ACTS config.
+            if desired_country_code:
+                response = self.regulatory_region_lib.setRegion(
+                    desired_country_code)
+                if response.get('error'):
+                    raise FuchsiaDeviceError(
+                        'Failed to set regulatory domain. Err: %s' %
+                        response['error'])
+                end_time = time.time() + FUCHSIA_COUNTRY_CODE_TIMEOUT
+                while time.time() < end_time:
+                    ascii_cc = self.wlan_lib.wlanGetCountry(0).get('result')
+                    str_cc = ''.join(chr(c) for c in ascii_cc)
+                    if str_cc == desired_country_code:
+                        self.log.debug('Country code successfully set to %s.' %
+                                       desired_country_code)
+                        return
+                    self.log.debug(
+                        'Country code is still set to %s. Retrying.' % str_cc)
+                    time.sleep(1)
+                raise FuchsiaDeviceError('Country code never updated to %s' %
+                                         desired_country_code)
+
     @backoff.on_exception(backoff.constant,
                           (FuchsiaSyslogError, socket.timeout),
                           interval=1.5,
@@ -1107,12 +1156,6 @@ class FuchsiaDevice:
             if self.log_process:
                 if ENABLE_LOG_LISTENER:
                     self.log_process.stop()
-
-    def reinitialize_services(self):
-        """Reinitialize long running services and establish connection to
-        SL4F."""
-        self.start_services()
-        self.init_server_connection()
 
     def load_config(self, config):
         pass
