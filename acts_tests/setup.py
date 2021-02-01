@@ -36,14 +36,17 @@ install_requires = [
     # Latest version of mock (4.0.0b) causes a number of compatibility issues
     # with ACTS unit tests (b/148695846, b/148814743)
     'mock==3.0.5',
-    'numpy',
+    # b/157117302: python3.5 is not supported by NumPy 1.19+
+    'numpy<=1.18.1',
     'pyserial',
     'pyyaml>=5.1',
-    'protobuf>=3.11.3',
+    'protobuf>=3.14.0',
     'requests',
     'scapy',
     'xlsxwriter',
     'mobly>=1.10.0',
+    # Used by the power framework. Remove after migration to acts_power
+    'tzlocal'
 ]
 
 if sys.version_info < (3, ):
