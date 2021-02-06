@@ -14,9 +14,10 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-import bokeh, bokeh.plotting
+import bokeh, bokeh.plotting, bokeh.io
 import collections
 import hashlib
+import ipaddress
 import itertools
 import json
 import logging
@@ -27,6 +28,7 @@ import statistics
 import time
 from acts.controllers.android_device import AndroidDevice
 from acts.controllers.utils_lib import ssh
+from acts import asserts
 from acts import utils
 from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
 from concurrent.futures import ThreadPoolExecutor
@@ -109,29 +111,31 @@ def validate_network(dut, ssid):
 def get_server_address(ssh_connection, dut_ip, subnet_mask):
     """Get server address on a specific subnet,
 
-    This function retrieves the LAN IP of a remote machine used in testing,
-    i.e., it returns the server's IP belonging to the same LAN as the DUT.
+    This function retrieves the LAN or WAN IP of a remote machine used in
+    testing. If subnet_mask is set to 'public' it returns a machines global ip,
+    else it returns the ip belonging to the dut local network given the dut's
+    ip and subnet mask.
 
     Args:
         ssh_connection: object representing server for which we want an ip
-        dut_ip: string in ip address format, i.e., xxx.xxx.xxx.xxx, specifying
-        the DUT LAN IP we wish to connect to
-        subnet_mask: string representing subnet mask
+        dut_ip: string in ip address format, i.e., xxx.xxx.xxx.xxx
+        subnet_mask: string representing subnet mask (public for global ip)
     """
-    subnet_mask = subnet_mask.split('.')
-    dut_subnet = [
-        int(dut) & int(subnet)
-        for dut, subnet in zip(dut_ip.split('.'), subnet_mask)
-    ]
     ifconfig_out = ssh_connection.run('ifconfig').stdout
     ip_list = re.findall('inet (?:addr:)?(\d+.\d+.\d+.\d+)', ifconfig_out)
-    for current_ip in ip_list:
-        current_subnet = [
-            int(ip) & int(subnet)
-            for ip, subnet in zip(current_ip.split('.'), subnet_mask)
-        ]
-        if current_subnet == dut_subnet:
-            return current_ip
+    ip_list = [ipaddress.ip_address(ip) for ip in ip_list]
+
+    if subnet_mask == 'public':
+        for ip in ip_list:
+            # is_global is not used to allow for CGNAT ips in 100.x.y.z range
+            if not ip.is_private:
+                return str(ip)
+    else:
+        dut_network = ipaddress.ip_network('{}/{}'.format(dut_ip, subnet_mask),
+                                           strict=False)
+        for ip in ip_list:
+            if ip in dut_network:
+                return str(ip)
     logging.error('No IP address found in requested subnet')
 
 
@@ -426,10 +430,10 @@ class BokehFigure():
             output_file: string specifying output file path
             save_json: flag controlling json outputs
         """
-        bokeh.plotting.output_file(output_file)
-        bokeh.plotting.save(self.plot)
         if save_json:
             self._save_figure_json(output_file)
+        bokeh.io.output_file(output_file)
+        bokeh.io.save(self.plot)
 
     @staticmethod
     def save_figures(figure_array, output_file_path, save_json=True):
@@ -756,7 +760,10 @@ def get_atten_for_target_rssi(target_rssi, attenuators, dut, ping_server):
     return target_atten
 
 
-def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
+def get_current_atten_dut_chain_map(attenuators,
+                                    dut,
+                                    ping_server,
+                                    ping_from_dut=False):
     """Function to detect mapping between attenuator ports and DUT chains.
 
     This function detects the mapping between attenuator ports and DUT chains
@@ -770,6 +777,7 @@ def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
         attenuators: list of attenuator ports
         dut: android device object assumed connected to a wifi network.
         ping_server: ssh connection object to ping server
+        ping_from_dut: boolean controlling whether to ping from or to dut
     Returns:
         chain_map: list of dut chains, one entry per attenuator port
     """
@@ -778,7 +786,11 @@ def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
         atten.set_atten(0, strict=False)
     # Start ping traffic
     dut_ip = dut.droid.connectivityGetIPv4Addresses('wlan0')[0]
-    ping_future = get_ping_stats_nb(ping_server, dut_ip, 11, 0.02, 64)
+    if ping_from_dut:
+        ping_future = get_ping_stats_nb(dut, ping_server._settings.hostname,
+                                        11, 0.02, 64)
+    else:
+        ping_future = get_ping_stats_nb(ping_server, dut_ip, 11, 0.02, 64)
     # Measure starting RSSI
     base_rssi = get_connected_rssi(dut, 4, 0.25, 1)
     chain0_base_rssi = base_rssi['chain_0_rssi']['mean']
@@ -809,7 +821,11 @@ def get_current_atten_dut_chain_map(attenuators, dut, ping_server):
     return chain_map
 
 
-def get_full_rf_connection_map(attenuators, dut, ping_server, networks):
+def get_full_rf_connection_map(attenuators,
+                               dut,
+                               ping_server,
+                               networks,
+                               ping_from_dut=False):
     """Function to detect per-network connections between attenuator and DUT.
 
     This function detects the mapping between attenuator ports and DUT chains
@@ -841,7 +857,7 @@ def get_full_rf_connection_map(attenuators, dut, ping_server, networks):
                             assert_on_fail=False,
                             check_connectivity=False)
         rf_map_by_network[net_id] = get_current_atten_dut_chain_map(
-            attenuators, dut, ping_server)
+            attenuators, dut, ping_server, ping_from_dut)
         for idx, chain in enumerate(rf_map_by_network[net_id]):
             if chain:
                 rf_map_by_atten[idx].append({
@@ -867,13 +883,15 @@ def get_dut_temperature(dut):
         temperature: device temperature. 0 if temperature could not be read
     """
     candidate_zones = [
-        'skin-therm', 'sdm-therm-monitor', 'sdm-therm-adc', 'back_therm'
+        '/sys/devices/virtual/thermal/tz-by-name/skin-therm/temp',
+        '/sys/devices/virtual/thermal/tz-by-name/sdm-therm-monitor/temp',
+        '/sys/devices/virtual/thermal/tz-by-name/sdm-therm-adc/temp',
+        '/sys/devices/virtual/thermal/tz-by-name/back_therm/temp',
+        '/dev/thermal/tz-by-name/quiet_therm/temp'
     ]
     for zone in candidate_zones:
         try:
-            temperature = int(
-                dut.adb.shell(
-                    'cat /sys/class/thermal/tz-by-name/{}/temp'.format(zone)))
+            temperature = int(dut.adb.shell('cat {}'.format(zone)))
             break
         except:
             temperature = 0
@@ -1408,6 +1426,48 @@ def push_firmware(dut, firmware_files):
     for file in firmware_files:
         dut.push_system_file(file, '/vendor/firmware/')
     dut.reboot()
+
+
+@detect_wifi_decorator
+def start_wifi_logging(dut):
+    """Function to start collecting wifi-related logs"""
+    pass
+
+
+def start_wifi_logging_qcom(dut):
+    dut.droid.wifiEnableVerboseLogging(1)
+    msg = "Failed to enable WiFi verbose logging."
+    asserts.assert_equal(dut.droid.wifiGetVerboseLoggingLevel(), 1, msg)
+    logging.info('Starting CNSS logs')
+    dut.adb.shell("find /data/vendor/wifi/wlan_logs/ -type f -delete",
+                  ignore_status=True)
+    dut.adb.shell_nb('cnss_diag -f -s')
+
+
+def start_wifi_logging_brcm(dut):
+    pass
+
+
+@detect_wifi_decorator
+def stop_wifi_logging(dut):
+    """Function to start collecting wifi-related logs"""
+    pass
+
+
+def stop_wifi_logging_qcom(dut):
+    logging.info('Stopping CNSS logs')
+    dut.adb.shell('killall cnss_diag')
+    logs = dut.get_file_names("/data/vendor/wifi/wlan_logs/")
+    if logs:
+        dut.log.info("Pulling cnss_diag logs %s", logs)
+        log_path = os.path.join(dut.device_log_path,
+                                "CNSS_DIAG_%s" % dut.serial)
+        os.makedirs(log_path, exist_ok=True)
+        dut.pull_files(logs, log_path)
+
+
+def stop_wifi_logging_brcm(dut):
+    pass
 
 
 def _set_ini_fields(ini_file_path, ini_field_dict):
