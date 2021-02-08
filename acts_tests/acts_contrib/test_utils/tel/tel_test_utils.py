@@ -14,6 +14,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+from datetime import datetime
 from future import standard_library
 standard_library.install_aliases()
 
@@ -1417,6 +1418,7 @@ def hangup_call(log, ad, is_emergency=False):
     """
     # short circuit in case no calls are active
     if not ad.droid.telecomIsInCall():
+        ad.log.warning("No active call exists.")
         return True
     ad.ed.clear_events(EventCallStateChanged)
     ad.droid.telephonyStartTrackingCallState()
@@ -3939,7 +3941,7 @@ def iperf_test_with_options(log,
                             rate_dict=None,
                             blocking=True,
                             log_file_path=None):
-    """Iperf adb run helper.
+    """iperf adb run helper.
 
     Args:
         log: log object
@@ -3951,13 +3953,13 @@ def iperf_test_with_options(log,
         blocking: run iperf in blocking mode if True
         log_file_path: location to save logs
     Returns:
-        True if IPerf runs without throwing an exception
+        True if iperf runs without throwing an exception
     """
     try:
         if log_file_path:
             ad.adb.shell("rm %s" % log_file_path, ignore_status=True)
         ad.log.info("Running adb iperf test with server %s", iperf_server)
-        ad.log.info("IPerf options are %s", iperf_option)
+        ad.log.info("iperf options are %s", iperf_option)
         if not blocking:
             ad.run_iperf_client_nb(
                 iperf_server,
@@ -3967,28 +3969,28 @@ def iperf_test_with_options(log,
             return True
         result, data = ad.run_iperf_client(
             iperf_server, iperf_option, timeout=timeout + 60)
-        ad.log.info("IPerf test result with server %s is %s", iperf_server,
+        ad.log.info("iperf test result with server %s is %s", iperf_server,
                     result)
         if result:
             iperf_str = ''.join(data)
-            iperf_result = ipf.IPerfResult(iperf_str)
+            iperf_result = ipf.IPerfResult(iperf_str, 'None')
             if "-u" in iperf_option:
                 udp_rate = iperf_result.avg_rate
                 if udp_rate is None:
                     ad.log.warning(
                         "UDP rate is none, IPerf server returned error: %s",
                         iperf_result.error)
-                ad.log.info("IPerf3 udp speed is %sbps", udp_rate)
+                ad.log.info("iperf3 UDP DL speed is %.6s Mbps", (udp_rate/1000000))
             else:
                 tx_rate = iperf_result.avg_send_rate
                 rx_rate = iperf_result.avg_receive_rate
                 if (tx_rate or rx_rate) is None:
                     ad.log.warning(
-                        "A TCP rate is none, IPerf server returned error: %s",
+                        "A TCP rate is none, iperf server returned error: %s",
                         iperf_result.error)
                 ad.log.info(
-                    "IPerf3 upload speed is %sbps, download speed is %sbps",
-                    tx_rate, rx_rate)
+                    "iperf3 TCP - UL speed is %.6s Mbps, DL speed is %.6s Mbps",
+                    (tx_rate/1000000), (rx_rate/1000000))
             if rate_dict is not None:
                 rate_dict["Uplink"] = tx_rate
                 rate_dict["Downlink"] = rx_rate
@@ -4005,6 +4007,7 @@ def iperf_udp_test_by_adb(log,
                           reverse=False,
                           timeout=180,
                           limit_rate=None,
+                          pacing_timer=None,
                           omit=10,
                           ipv6=False,
                           rate_dict=None,
@@ -4029,6 +4032,8 @@ def iperf_udp_test_by_adb(log,
     iperf_option = "-u -i 1 -t %s -O %s -J" % (timeout, omit)
     if limit_rate:
         iperf_option += " -b %s" % limit_rate
+    if pacing_timer:
+        iperf_option += " --pacing-timer %s" % pacing_timer
     if port_num:
         iperf_option += " -p %s" % port_num
     if ipv6:
@@ -7985,6 +7990,9 @@ def start_sdm_logger(ad):
         ad.adb.shell(
             "find %s -type f -iname sbuff_[0-9]*.sdm* -not -mtime -%ss -delete" %
             (ad.sdm_log_path, seconds))
+    # Disable any modem logging already running
+    ad.adb.shell("setprop persist.vendor.sys.modem.logging.enable false")
+    ad.adb.shell('echo "modem_logging_control START -n 10 -s 100 -i 1" > /data/vendor/radio/logs/always-on.conf')
     # start logging
     cmd = "setprop vendor.sys.modem.logging.enable true"
     ad.log.debug("start sdm logging")
@@ -11088,3 +11096,35 @@ def wait_for_network_service(
         else:
             return False
     return False
+
+def wait_for_log(ad, pattern, begin_time=None, end_time=None, max_wait_time=120):
+    """Wait for logcat logs matching given pattern. This function searches in
+    logcat for strings matching given pattern by using search_logcat per second
+    until max_wait_time reaches.
+
+    Args:
+        ad: android device object
+        pattern: pattern to be searched in grep format
+        begin_time: only the lines in logcat with time stamps later than
+            begin_time will be searched.
+        end_time: only the lines in logcat with time stamps earlier than
+            end_time will be searched.
+        max_wait_time: timeout of this function
+
+    Returns:
+        All matched lines will be returned. If no line matches the given pattern
+        None will be returned.
+    """
+    start_time = datetime.now()
+    while True:
+        ad.log.info(
+            '====== Searching logcat for "%s" ====== ', pattern)
+        res = ad.search_logcat(
+            pattern, begin_time=begin_time, end_time=end_time)
+        if res:
+            return res
+        time.sleep(1)
+        stop_time = datetime.now()
+        passed_time = (stop_time - start_time).total_seconds()
+        if passed_time > max_wait_time:
+            return
