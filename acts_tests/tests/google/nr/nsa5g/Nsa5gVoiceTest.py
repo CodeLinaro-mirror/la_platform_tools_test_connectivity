@@ -30,6 +30,7 @@ from acts_contrib.test_utils.tel.tel_defines import DIRECTION_MOBILE_ORIGINATED
 from acts_contrib.test_utils.tel.tel_defines import DIRECTION_MOBILE_TERMINATED
 from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_ANDROID_STATE_SETTLING
 from acts_contrib.test_utils.tel.tel_defines import WFC_MODE_WIFI_PREFERRED
+from acts_contrib.test_utils.tel.tel_defines import GEN_5G
 from acts_contrib.test_utils.tel.tel_test_utils import ensure_phones_idle
 from acts_contrib.test_utils.tel.tel_test_utils import call_setup_teardown
 from acts_contrib.test_utils.tel.tel_test_utils import hangup_call
@@ -125,6 +126,7 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
 
     def _test_call_setup_in_active_data_transfer_5g_nsa(
             self,
+            new_gen=None,
             call_direction=DIRECTION_MOBILE_ORIGINATED,
             allow_data_transfer_interruption=False):
         """Test call can be established during active data connection in 5G NSA.
@@ -161,10 +163,11 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
             ads[0].log.error("Phone not attached on 5G NSA before call.")
             return False
 
-        ads[0].droid.telephonyToggleDataConnection(True)
-        if not wait_for_cell_data_connection(self.log, ads[0], True):
-            ads[0].log.error("Data connection is not on cell")
-            return False
+        if new_gen:
+            ads[0].droid.telephonyToggleDataConnection(True)
+            if not wait_for_cell_data_connection(self.log, ads[0], True):
+                ads[0].log.error("Data connection is not on cell")
+                return False
 
         if not verify_internet_connection(self.log, ads[0]):
             ads[0].log.error("Internet connection is not available")
@@ -194,7 +197,6 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
             return False
         if results[0]:
             ad_download.log.info("Data transfer succeeded.")
-            return True
         elif not allow_data_transfer_interruption:
             ad_download.log.error(
                 "Data transfer failed with parallel phone call.")
@@ -204,10 +206,78 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
             if not verify_internet_connection(self.log, ad_download):
                 ad_download.log.error("Internet connection is not available")
                 return False
-            else:
-                return True
+        if not is_current_network_5g_nsa(ads[0]):
+            ads[0].log.error("Phone not attached on 5G NSA after call.")
+            return False
+        return True
 
-    def _call_epdg_to_epdg_wfc_5g_nsa(self,
+    def _test_call_setup_in_active_youtube_video_5g_nsa(
+            self,
+            new_gen=None,
+            call_direction=DIRECTION_MOBILE_ORIGINATED,
+            allow_data_transfer_interruption=False):
+        """Test call can be established during active data connection on 5G NSA.
+
+        Setup phoneA on 5G NSA.
+        Make sure phoneA on 5G NSA
+        Starting playing youtube video.
+        Initiate a voice call. Verify call can be established.
+        Make sure phoneA on 5G NSA
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        ads = self.android_devices
+        # Mode Pref
+        set_preferred_mode_for_5g(ads[0])
+
+        # Attach 5g
+        if not is_current_network_5g_nsa(ads[0]):
+            ads[0].log.error("Phone not attached on 5G NSA before call.")
+            return False
+
+        if new_gen:
+            ads[0].droid.telephonyToggleDataConnection(True)
+            if not wait_for_cell_data_connection(self.log, ads[0], True):
+                ads[0].log.error("Data connection is not on cell")
+                return False
+
+        if not verify_internet_connection(self.log, ads[0]):
+            ads[0].log.error("Internet connection is not available")
+            return False
+
+        if call_direction == DIRECTION_MOBILE_ORIGINATED:
+            ad_caller = ads[0]
+            ad_callee = ads[1]
+        else:
+            ad_caller = ads[1]
+            ad_callee = ads[0]
+        ad_download = ads[0]
+
+        if not start_youtube_video(ad_download):
+            ad_download.log.warning("Fail to bring up youtube video")
+
+        if not call_setup_teardown(self.log, ad_caller, ad_callee, ad_caller,
+                                   None, None, 30):
+            ad_download.log.error("Call setup failed in active youtube video")
+            result = False
+        else:
+            ad_download.log.info("Call setup succeed in active youtube video")
+            result = True
+
+        if wait_for_state(ad_download.droid.audioIsMusicActive, True, 15, 1):
+            ad_download.log.info("After call hangup, audio is back to music")
+        else:
+            ad_download.log.warning(
+                "After call hang up, audio is not back to music")
+        ad_download.force_stop_apk("com.google.android.youtube")
+        if not is_current_network_5g_nsa(ads[0]):
+            ads[0].log.error("Phone not attached on 5G NSA after call.")
+            result = False
+        return result
+
+    def _test_call_epdg_to_epdg_wfc_5g_nsa(self,
                                       ads,
                                       apm_mode,
                                       wfc_mode,
@@ -290,6 +360,59 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
         else:
             self.log.error("ICMP transfer failed with parallel phone call.")
         return all(results)
+
+    def _test_call_setup_hold_unhold(self,
+                                     ads,
+                                     call_direction=DIRECTION_MOBILE_ORIGINATED,
+                                     caller_func=None,
+                                     callee_func=None):
+        """Test hold and unhold in voice call.
+
+        1. Clear call list.
+        2. Set up MO/MT call.
+        3. Test hold and unhold in call.
+        4. hangup call.
+
+        Args:
+            ads: list of android objects, this list should have two ad.
+            call_direction: MO or MT call.
+            caller_func: function to verify caller is in correct state while in-call.
+            callee_func: function to verify callee is in correct state while in-call.
+
+        Returns:
+            True if pass; False if fail.
+        """
+
+        ads[0].droid.telecomCallClearCallList()
+        if num_active_calls(self.log, ads[0]) != 0:
+            ads[0].log.error("call list is not empty")
+            return False
+        self.log.info("begin hold/unhold test")
+
+        ad_caller = ads[0]
+        ad_callee = ads[1]
+
+        if call_direction != DIRECTION_MOBILE_ORIGINATED:
+            ad_caller = ads[1]
+            ad_callee = ads[0]
+
+        if not call_setup_teardown(
+                    self.log,
+                    ad_caller,
+                    ad_callee,
+                    ad_hangup=None,
+                    verify_caller_func=caller_func,
+                    verify_callee_func=callee_func):
+            return False
+
+        if not self._hold_unhold_test(ads):
+            self.log.error("hold/unhold test fail.")
+            return False
+
+        if not hangup_call(self.log, ads[0]):
+            self.log.error("call hangup failed")
+            return False
+        return True
 
     """ Tests Begin """
 
@@ -400,27 +523,9 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
         if not provision_both_devices_for_5g(self.log, ads):
             return False
 
-        ads[0].droid.telecomCallClearCallList()
-        if num_active_calls(self.log, ads[0]) != 0:
-            ads[0].log.error("call list is not empty")
-            return False
-
-        self.log.info("begin hold/unhold test")
-        if not call_setup_teardown(
-                self.log,
-                ads[0],
-                ads[1],
-                ad_hangup=None,
-                verify_caller_func=is_phone_in_call_volte,
-                verify_callee_func=None):
-            return False
-
-        if not self._hold_unhold_test(ads):
-            self.log.error("hold/unhold test fail.")
-            return False
-
-        if not hangup_call(self.log, ads[0]):
-            self.log.error("call hangup failed")
+        if not self._test_call_setup_hold_unhold(ads,
+                                                 DIRECTION_MOBILE_ORIGINATED,
+                                                 caller_func=is_phone_in_call_volte):
             return False
 
         if not verify_5g_attach_for_both_devices(self.log, ads):
@@ -449,27 +554,9 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
         if not provision_both_devices_for_5g(self.log, ads):
             return False
 
-        ads[0].droid.telecomCallClearCallList()
-        if num_active_calls(self.log, ads[0]) != 0:
-            ads[0].log.error("call list is not empty.")
-            return False
-
-        self.log.info("begin mt call hold/unhold Test.")
-        if not call_setup_teardown(
-                self.log,
-                ads[1],
-                ads[0],
-                ad_hangup=None,
-                verify_caller_func=None,
-                verify_callee_func=is_phone_in_call_volte):
-            return False
-
-        if not self._hold_unhold_test(ads):
-            self.log.error("hold/unhold test fail.")
-            return False
-
-        if not hangup_call(self.log, ads[0]):
-            self.log.error("call hangup failed")
+        if not self._test_call_setup_hold_unhold(ads,
+                                                 DIRECTION_MOBILE_TERMINATED,
+                                                 callee_func=is_phone_in_call_volte):
             return False
 
         if not verify_5g_attach_for_both_devices(self.log, ads):
@@ -500,6 +587,7 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
             ads[0].log.error("failed to setup volte")
             return False
         return self._test_call_setup_in_active_data_transfer_5g_nsa(
+            GEN_5G,
             DIRECTION_MOBILE_ORIGINATED)
 
 
@@ -526,6 +614,7 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
             ads[0].log.error("failed to setup volte")
             return False
         return self._test_call_setup_in_active_data_transfer_5g_nsa(
+            GEN_5G,
             DIRECTION_MOBILE_TERMINATED)
 
 
@@ -606,8 +695,197 @@ class Nsa5gVoiceTest(TelephonyBaseTest):
         Returns:
             True if pass; False if fail.
         """
-        return self._call_epdg_to_epdg_wfc_5g_nsa(
+        return self._test_call_epdg_to_epdg_wfc_5g_nsa(
             self.android_devices, False, WFC_MODE_WIFI_PREFERRED,
             self.wifi_network_ssid, self.wifi_network_pass)
+
+
+    @test_tracker_info(uuid="29fa7f44-8d6a-4948-8178-33c9a9aab334")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_call_mo_volte_in_active_youtube(self):
+        """Test call can be established during active youtube video on 5G NSA.
+
+        1. Enable VoLTE on PhoneA.
+        2. Set up PhoneA on 5G NSA.
+        3. Make sure phoneA is on 5G NSA.
+        4. Starting an youtube video.
+        5. Initiate a MO voice call. Verify call can be established.
+        6. Make sure phoneA is on 5G NSA.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_volte(self.log, self.android_devices[0]):
+            self.android_devices[0].log.error("Failed to setup VoLTE")
+            return False
+        return self._test_call_setup_in_active_youtube_video_5g_nsa(
+            GEN_5G,
+            DIRECTION_MOBILE_ORIGINATED)
+
+    @test_tracker_info(uuid="4e138477-3536-48bd-ab8a-7fb7c228b3e6")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_call_mt_volte_in_active_youtube(self):
+        """Test call can be established during active youtube video on 5G NSA.
+
+        1. Enable VoLTE on PhoneA.
+        2. Set up PhoneA on 5G NSA.
+        3. Make sure phoneA is on 5G NSA.
+        4. Starting an youtube video.
+        5. Initiate a MT voice call. Verify call can be established.
+        6. Make sure phoneA is on 5G NSA.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_volte(self.log, self.android_devices[0]):
+            self.android_devices[0].log.error("Failed to setup VoLTE")
+            return False
+        return self._test_call_setup_in_active_youtube_video_5g_nsa(
+            GEN_5G,
+            DIRECTION_MOBILE_TERMINATED)
+
+
+    @test_tracker_info(uuid="0d477f6f-3464-4b32-a5e5-0fd134f2753d")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_call_mo_vowifi_in_active_data_transfer(self):
+        """Test MO voice wifi call can be established during active data connection on 5G NSA.
+
+        1. Turn off airplane mode, turn on wfc and wifi on phoneA.
+        2. Set PhoneA on 5G NSA
+        3. Make sure PhoneA on 5G NSA before testing
+        4. Starting downloading file from Internet.
+        5. Initiate a MO voice call. Verify call can be established.
+        6. Hangup Voice Call, verify file is downloaded successfully.
+        7. Make sure PhoneA on 5G NSA after testing
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_iwlan(self.log, self.android_devices[0], False,
+                                 WFC_MODE_WIFI_PREFERRED,
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM off and WIFI and WFC on")
+            return False
+
+        return self._test_call_setup_in_active_data_transfer_5g_nsa(
+            call_direction=DIRECTION_MOBILE_ORIGINATED)
+
+
+    @test_tracker_info(uuid="4d1d7dd9-b373-4361-8301-8517ef77b57b")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_call_mt_vowifi_in_active_data_transfer(self):
+        """Test MT voice wifi call can be established during active data connection on 5G NSA.
+
+        1. Turn off airplane mode, turn on wfc and wifi on phoneA.
+        2. Set PhoneA on 5G NSA
+        3. Make sure PhoneA on 5G NSA before testing
+        4. Starting downloading file from Internet.
+        5. Initiate a MT voice call. Verify call can be established.
+        6. Hangup Voice Call, verify file is downloaded successfully.
+        7. Make sure PhoneA on 5G NSA after testing
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not phone_setup_iwlan(self.log, self.android_devices[0], False,
+                                 WFC_MODE_WIFI_PREFERRED,
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM off and WIFI and WFC on")
+            return False
+
+        return self._test_call_setup_in_active_data_transfer_5g_nsa(
+            call_direction=DIRECTION_MOBILE_TERMINATED)
+
+
+    @test_tracker_info(uuid="e360bc3a-96b3-4fdf-9bf3-fe3aa08b1af5")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_call_epdg_mo_hold_unhold_wfc_wifi_preferred(self):
+        """ WiFi Preferred, WiFi calling MO call hold/unhold test on 5G NSA
+
+        1. Setup PhoneA WFC mode: WIFI_PREFERRED.
+        2. Set preferred network of phoneA on 5G NSA
+        3. Verify phoneA is on 5G NSA.
+        4. Call from PhoneA to PhoneB, accept on PhoneB.
+        5. Hold and unhold on PhoneA.
+        6. Verify phoneA is on 5G NSA.
+
+        Returns:
+            True if pass; False if fail.
+        """
+        ads = self.android_devices
+        if not phone_setup_iwlan(self.log, self.android_devices[0], False,
+                                 WFC_MODE_WIFI_PREFERRED,
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM off and WIFI and WFC on")
+            return False
+        # Mode Pref
+        set_preferred_mode_for_5g(ads[0])
+
+        # Attach nsa5g
+        if not is_current_network_5g_nsa(ads[0]):
+            ads[0].log.error("Phone not attached on 5G NSA before call.")
+            return False
+
+        if not self._test_call_setup_hold_unhold(ads,
+                                                 DIRECTION_MOBILE_ORIGINATED,
+                                                 caller_func=is_phone_in_call_iwlan):
+            return False
+
+        if not is_current_network_5g_nsa(ads[0]):
+            ads[0].log.error("Phone not attached on 5G NSA after call.")
+            return False
+        return True
+
+
+    @test_tracker_info(uuid="d2335c83-87ec-4a0e-97a8-b53f769b0d21")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_call_epdg_mt_hold_unhold_wfc_wifi_preferred(self):
+        """ WiFi Preferred, WiFi calling MT call hold/unhold test on 5G NSA
+
+        1. Setup PhoneA WFC mode: WIFI_PREFERRED.
+        2. Set preferred network of phoneA on 5G NSA
+        3. Verify if phoneA is on 5G NSA.
+        4. Call from PhoneB to PhoneA, accept on PhoneA.
+        5. Hold and unhold on PhoneA.
+        6. Verify if phoneA is on 5G NSA.
+
+        Returns:
+            True if pass; False if fail.
+        """
+        ads = self.android_devices
+        if not phone_setup_iwlan(self.log, self.android_devices[0], False,
+                                 WFC_MODE_WIFI_PREFERRED,
+                                 self.wifi_network_ssid,
+                                 self.wifi_network_pass):
+            self.android_devices[0].log.error(
+                "Failed to setup iwlan with APM off and WIFI and WFC on")
+            return False
+        # Mode Pref
+        set_preferred_mode_for_5g(ads[0])
+
+        # Attach nsa5g
+        if not is_current_network_5g_nsa(ads[0]):
+            ads[0].log.error("Phone not attached on 5G NSA before call.")
+            return False
+
+        if not self._test_call_setup_hold_unhold(ads,
+                                                 DIRECTION_MOBILE_TERMINATED,
+                                                 callee_func=is_phone_in_call_iwlan):
+            return False
+
+        if not is_current_network_5g_nsa(ads[0]):
+            ads[0].log.error("Phone not attached on 5G NSA after call.")
+            return False
+        return True
 
     """ Tests End """
