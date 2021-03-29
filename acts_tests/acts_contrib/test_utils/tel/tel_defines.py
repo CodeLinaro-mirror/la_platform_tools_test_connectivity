@@ -141,6 +141,9 @@ WAIT_TIME_IN_CALL_LONG = 60
 # that the call is actually successful
 WAIT_TIME_IN_CALL_FOR_IMS = 30
 
+# Default total duration for a long call is 1 hour
+TOTAL_LONG_CALL_DURATION = 1 * 60 * 60
+
 # Time to wait after phone receive incoming call before phone reject this call.
 WAIT_TIME_REJECT_CALL = 2
 
@@ -384,6 +387,14 @@ CALL_TEARDOWN_REMOTE = "REMOTE"
 
 WIFI_VERBOSE_LOGGING_ENABLED = 1
 WIFI_VERBOSE_LOGGING_DISABLED = 0
+
+# Constant Carrier ID
+GOOGLE_CBRS_CARRIER_ID = 2340
+GOOGLE_FI_CARRIER_ID = 1989
+
+# List of Chipset models
+CHIPSET_MODELS_LIST = ["sdm", "msm", "kon", "lit"]
+
 """
 Begin shared constant define for both Python and Java
 """
