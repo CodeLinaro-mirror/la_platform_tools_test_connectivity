@@ -21,6 +21,8 @@ from queue import Empty
 
 from acts.utils import adb_shell_ping
 from acts.utils import rand_ascii_str
+from acts.utils import disable_doze
+from acts.utils import enable_doze
 from acts_contrib.test_utils.bt.bt_test_utils import bluetooth_enabled_check
 from acts_contrib.test_utils.bt.bt_test_utils import disable_bluetooth
 from acts_contrib.test_utils.bt.bt_test_utils import pair_pri_to_sec
@@ -50,6 +52,7 @@ from acts_contrib.test_utils.tel.tel_defines import \
     WAIT_TIME_DATA_STATUS_CHANGE_DURING_WIFI_TETHERING
 from acts_contrib.test_utils.tel.tel_defines import TETHERING_MODE_WIFI
 from acts_contrib.test_utils.tel.tel_defines import MAX_WAIT_TIME_TETHERING_ENTITLEMENT_CHECK
+from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_TETHERING_AFTER_REBOOT
 from acts_contrib.test_utils.tel.tel_test_utils import call_setup_teardown
 from acts_contrib.test_utils.tel.tel_test_utils import check_is_wifi_connected
 from acts_contrib.test_utils.tel.tel_test_utils import ensure_network_generation
@@ -89,6 +92,7 @@ from acts_contrib.test_utils.tel.tel_test_utils import active_file_download_task
 from acts_contrib.test_utils.tel.tel_test_utils import run_multithread_func
 from acts_contrib.test_utils.tel.tel_test_utils import ensure_phones_default_state
 from acts_contrib.test_utils.tel.tel_test_utils import WIFI_SSID_KEY
+from acts_contrib.test_utils.tel.tel_test_utils import is_phone_in_call_active
 from acts_contrib.test_utils.tel.tel_5g_utils import is_current_network_5g_nsa
 from acts_contrib.test_utils.tel.tel_5g_utils import provision_both_devices_for_5g
 from acts_contrib.test_utils.tel.tel_5g_utils import provision_device_for_5g
@@ -117,7 +121,8 @@ def wifi_tethering_cleanup(log, provider, client_list):
     for client in client_list:
         client.droid.telephonyToggleDataConnection(True)
         set_wifi_to_default(log, client)
-    if not stop_wifi_tethering(log, provider):
+    # If wifi tethering is enabled, disable it.
+    if provider.droid.wifiIsApEnabled() and not stop_wifi_tethering(log, provider):
         provider.log.error("Provider stop WiFi tethering failed.")
         return False
     if provider.droid.wifiIsApEnabled():
@@ -1380,6 +1385,7 @@ def test_call_setup_in_active_data_transfer(
         if not provision_device_for_5g(log, ads[0]):
             ads[0].log.error("Phone not attached on 5G NSA before call.")
             return False
+
     elif nw_gen:
         if not ensure_network_generation(log, ads[0], nw_gen,
                                          MAX_WAIT_TIME_NW_SELECTION,
@@ -1422,7 +1428,6 @@ def test_call_setup_in_active_data_transfer(
         log.error("Call setup failed in active data transfer.")
     if results[0]:
         ad_download.log.info("Data transfer succeeded.")
-        return True
     elif not allow_data_transfer_interruption:
         ad_download.log.error(
             "Data transfer failed with parallel phone call.")
@@ -1432,6 +1437,8 @@ def test_call_setup_in_active_data_transfer(
         if not verify_internet_connection(log, ad_download):
             ad_download.log.error("Internet connection is not available")
             return False
+    # Disable airplane mode if test under apm on.
+    toggle_airplane_mode(log, ads[0], False)
     if nw_gen == GEN_5G and not is_current_network_5g_nsa(ads[0]):
         ads[0].log.error("Phone not attached on 5G NSA after call.")
         return False
@@ -1465,6 +1472,7 @@ def test_call_setup_in_active_youtube_video(
         if not provision_device_for_5g(log, ads[0]):
             ads[0].log.error("Phone not attached on 5G NSA before call.")
             return False
+
     elif nw_gen:
         if not ensure_network_generation(log, ads[0], nw_gen,
                                          MAX_WAIT_TIME_NW_SELECTION,
@@ -1472,12 +1480,12 @@ def test_call_setup_in_active_youtube_video(
             ads[0].log.error("Device failed to reselect in %s.",
                              MAX_WAIT_TIME_NW_SELECTION)
             return False
+        ads[0].droid.telephonyToggleDataConnection(True)
+        if not wait_for_cell_data_connection(log, ads[0], True):
+            ads[0].log.error("Data connection is not on cell")
+            return False
     else:
         ensure_phones_default_state(log, ads)
-    ads[0].droid.telephonyToggleDataConnection(True)
-    if not wait_for_cell_data_connection(log, ads[0], True):
-        ads[0].log.error("Data connection is not on cell")
-        return False
 
     if not verify_internet_connection(log, ads[0]):
         ads[0].log.error("Internet connection is not available")
@@ -1508,6 +1516,8 @@ def test_call_setup_in_active_youtube_video(
         ad_download.log.warning(
                 "After call hang up, audio is not back to music")
     ad_download.force_stop_apk("com.google.android.youtube")
+    # Disable airplane mode if test under apm on.
+    toggle_airplane_mode(log, ads[0], False)
     if nw_gen == GEN_5G and not is_current_network_5g_nsa(ads[0]):
         ads[0].log.error("Phone not attached on 5G NSA after call.")
         result = False
@@ -1677,7 +1687,8 @@ def test_wifi_tethering(log, provider,
                         check_iteration=4,
                         do_cleanup=True,
                         ssid=None,
-                        password=None):
+                        password=None,
+                        pre_teardown_func=None):
     """WiFi Tethering test
     Args:
         log: log object.
@@ -1699,11 +1710,15 @@ def test_wifi_tethering(log, provider,
         password: use this string as WiFi password to setup tethered WiFi network.
             This is optional. Default value is None.
             If it's None, a random string will be generated.
+        pre_teardown_func: execute custom actions between tethering setup adn teardown.
 
     """
     if not test_setup_tethering(log, provider, clients, nw_gen):
         log.error("Verify %s Internet access failed.", nw_gen)
         return False
+
+    if pre_teardown_func:
+        pre_teardown_func()
 
     return wifi_tethering_setup_teardown(
         log,
@@ -1719,8 +1734,8 @@ def test_wifi_tethering(log, provider,
 
 def run_stress_test(log,
                     stress_test_number,
-                    precondition_func,
-                    test_case_func):
+                    precondition_func=None,
+                    test_case_func=None):
     """Run stress test of a test case.
 
     Args:
@@ -1738,9 +1753,10 @@ def run_stress_test(log,
     success_count = 0
     fail_count = 0
     for i in range(1, stress_test_number + 1):
-
-        precondition_func()
-        result = test_case_func()
+        if precondition_func:
+            precondition_func()
+        if test_case_func:
+            result = test_case_func()
         if result:
             success_count += 1
             result_str = "Succeeded"
@@ -1779,7 +1795,7 @@ def test_start_wifi_tethering_connect_teardown(log,
         password: WiFi tethering password
 
     Returns:
-        True if no error happen, otherwise False.
+        True if pass, otherwise False.
     """
     result = True
     # Turn off active SoftAP if any.
@@ -1804,3 +1820,190 @@ def test_start_wifi_tethering_connect_teardown(log,
         result = False
     return result
 
+
+def verify_wifi_tethering_when_reboot(log,
+                                      provider,
+                                      post_reboot_func=None):
+    """ Verify wifi tethering when reboot.
+
+    Verify wifi tethering is enabled before reboot and disabled
+    after reboot, and execute additional custom actions verification
+    of wifi tethering.
+
+    Args:
+        log: log object.
+        provider: android object provide WiFi tethering.
+        post_reboot_func: execute custom actions after reboot.
+    Returns:
+        True if pass, otherwise False.
+
+    """
+    if not provider.droid.wifiIsApEnabled():
+        log.error("Provider WiFi tethering stopped.")
+        return False
+
+    provider.log.info("Reboot provider")
+    provider.reboot()
+    time.sleep(
+        WAIT_TIME_AFTER_REBOOT + WAIT_TIME_TETHERING_AFTER_REBOOT)
+
+    log.info("After reboot check if tethering stopped.")
+    if provider.droid.wifiIsApEnabled():
+        log.error("Provider WiFi tethering did NOT stopped.")
+        return False
+    if post_reboot_func:
+        post_reboot_func()
+    return True
+
+
+def setup_device_internet_connection(log,
+                                     device,
+                                     network_ssid,
+                                     network_password):
+    """Setup wifi network for device and verify internet connection.
+    Args:
+        log: log object.
+        device: android device object.
+        network_ssid: wifi network ssid.
+        network_password: wifi network password.
+    Returns:
+        True if pass, otherwise False.
+
+    """
+    log.info("Make sure DUT can connect to live network by WIFI")
+    if ((not ensure_wifi_connected(log,
+                                   device,
+                                   network_ssid,
+                                   network_password))
+            or (not verify_internet_connection(log, device))):
+        log.error("WiFi connect fail.")
+        return False
+    return True
+
+
+def wait_and_verify_device_internet_connection(log,
+                                               device):
+    """Wait for device connecting to wifi network and verify internet connection.
+    Args:
+        log: log object.
+        device: Android device object.
+    Returns:
+        True if pass, otherwise False.
+
+    """
+    log.info("Make sure WiFi can connect automatically.")
+    if (not wait_for_wifi_data_connection(log, device, True) or
+            not verify_internet_connection(log, device)):
+        log.error("Data did not return to WiFi")
+        return False
+    return True
+
+
+def setup_device_internet_connection_then_reboot(log,
+                                                 device,
+                                                 network_ssid,
+                                                 network_password):
+    """Setup wifi network for device and verify internet connection, then reboot.
+    Args:
+        log: log object.
+        device: android device object.
+        network_ssid: wifi network ssid.
+        network_password: wifi network password.
+    Returns:
+        True if pass, otherwise False.
+
+    """
+    if not setup_device_internet_connection(log,
+                                            device,
+                                            network_ssid,
+                                            network_password):
+        return False
+
+    device.log.info("Reboot!")
+    device.reboot()
+    time.sleep(WAIT_TIME_AFTER_REBOOT)
+    time.sleep(WAIT_TIME_TETHERING_AFTER_REBOOT)
+    return True
+
+
+def verify_internet_connection_in_doze_mode(log,
+                                            provider,
+                                            client):
+    """Set provider in doze mode and verify client's internet connection.
+    Args:
+        log: log object.
+        provider: android device object for provider.
+        client: android device object for client.
+    Returns:
+        True if pass, otherwise False.
+
+    """
+    try:
+        if not provider.droid.wifiIsApEnabled():
+            provider.log.error("Provider WiFi tethering stopped.")
+            return False
+        provider.log.info("Turn off screen on provider")
+        provider.droid.goToSleepNow()
+        time.sleep(60)
+        if not verify_internet_connection(log, client):
+            client.log.error("Client have no Internet access.")
+            return False
+
+        provider.log.info("Enable doze mode on provider")
+        if not enable_doze(provider):
+            provider.log.error("Failed to enable doze mode.")
+            return False
+        time.sleep(60)
+        if not verify_internet_connection(log, client):
+            client.log.error("Client have no Internet access.")
+            return False
+    finally:
+        log.info("Disable doze mode.")
+        if not disable_doze(provider):
+            log.error("Failed to disable doze mode.")
+            return False
+    return True
+
+
+def test_wifi_cell_switching_in_call(log,
+                                     ads,
+                                     network_ssid,
+                                     network_password,
+                                     new_gen=None):
+    """Test data connection network switching during voice call when phone on <nw_gen>
+    Args:
+        log: log object.
+        ads: android device objects.
+        network_ssid: wifi network ssid.
+        network_password: wifi network password.
+        new_gen: network generation.
+    Returns:
+        True if pass, otherwise False.
+
+    """
+    result = True
+    if not call_setup_teardown(log, ads[0], ads[1], None, None, None,
+                               5):
+        log.error("Call setup failed")
+        return False
+    else:
+        log.info("Call setup succeed")
+
+    if not wifi_cell_switching(log,
+                               ads[0],
+                               new_gen,
+                               network_ssid,
+                               network_password):
+        ads[0].log.error("Failed to do WIFI and Cell switch in call")
+        result = False
+
+    if not is_phone_in_call_active(ads[0]):
+        return False
+    else:
+        if not ads[0].droid.telecomCallGetAudioState():
+            ads[0].log.error("Audio is not on call")
+            result = False
+        else:
+            ads[0].log.info("Audio is on call")
+        hangup_call(log, ads[0])
+        return result
