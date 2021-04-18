@@ -52,6 +52,7 @@ from acts_contrib.test_utils.tel.tel_defines import NETWORK_MODE_GSM_UMTS
 from acts_contrib.test_utils.tel.tel_defines import NETWORK_MODE_LTE_CDMA_EVDO
 from acts_contrib.test_utils.tel.tel_defines import NETWORK_MODE_LTE_GSM_WCDMA
 from acts_contrib.test_utils.tel.tel_defines import INVALID_SUB_ID
+from acts_contrib.test_utils.tel.tel_defines import DIRECTION_MOBILE_ORIGINATED
 from acts_contrib.test_utils.tel.tel_subscription_utils import get_outgoing_message_sub_id
 from acts_contrib.test_utils.tel.tel_subscription_utils import get_outgoing_voice_sub_id
 from acts_contrib.test_utils.tel.tel_subscription_utils import set_subid_for_outgoing_call
@@ -103,6 +104,9 @@ from acts_contrib.test_utils.tel.tel_test_utils import \
 from acts_contrib.test_utils.tel.tel_test_utils import wait_for_wfc_enabled
 from acts_contrib.test_utils.tel.tel_test_utils import wait_for_wfc_disabled
 from acts_contrib.test_utils.tel.tel_test_utils import get_capability_for_subscription
+from acts_contrib.test_utils.tel.tel_test_utils import num_active_calls
+from acts_contrib.test_utils.tel.tel_test_utils import hangup_call
+from acts_contrib.test_utils.tel.tel_test_utils import is_current_network_5g_nsa
 
 CallResult = TelephonyVoiceTestResult.CallResult.Value
 
@@ -1051,7 +1055,7 @@ def phone_setup_2g_for_subscription(log, ad, sub_id):
     return phone_setup_data_for_subscription(log, ad, sub_id, GEN_2G)
 
 
-def phone_setup_csfb(log, ad):
+def phone_setup_csfb(log, ad, nw_gen=GEN_4G):
     """Setup phone for CSFB call test.
 
     Setup Phone to be in 4G mode.
@@ -1060,16 +1064,17 @@ def phone_setup_csfb(log, ad):
     Args:
         log: log object
         ad: Android device object.
+        nw_gen: GEN_4G or GEN_5G
 
     Returns:
         True if setup successfully.
         False for errors.
     """
     return phone_setup_csfb_for_subscription(log, ad,
-                                             get_outgoing_voice_sub_id(ad))
+                                        get_outgoing_voice_sub_id(ad), nw_gen)
 
 
-def phone_setup_csfb_for_subscription(log, ad, sub_id):
+def phone_setup_csfb_for_subscription(log, ad, sub_id, nw_gen=GEN_4G):
     """Setup phone for CSFB call test for subscription id.
 
     Setup Phone to be in 4G mode.
@@ -1079,6 +1084,7 @@ def phone_setup_csfb_for_subscription(log, ad, sub_id):
         log: log object
         ad: Android device object.
         sub_id: subscription id.
+        nw_gen: GEN_4G or GEN_5G
 
     Returns:
         True if setup successfully.
@@ -1091,29 +1097,35 @@ def phone_setup_csfb_for_subscription(log, ad, sub_id):
             if show_enhanced_4g_lte_mode in ["false", "False", False]:
                 ad.log.warning("'VoLTE' option is hidden. Test will be skipped.")
                 raise signals.TestSkip("'VoLTE' option is hidden. Test will be skipped.")
-    if not phone_setup_4g_for_subscription(log, ad, sub_id):
-        ad.log.error("Failed to set to 4G data.")
-        return False
+
+    if nw_gen == GEN_4G:
+        if not phone_setup_4g_for_subscription(log, ad, sub_id):
+            ad.log.error("Failed to set to 4G data.")
+            return False
+    elif nw_gen == GEN_5G:
+        if not phone_setup_5g_for_subscription(log, ad, sub_id):
+            ad.log.error("Failed to set to 5G data.")
+            return False
 
     toggle_volte_for_subscription(log, ad, sub_id, False)
 
     if not ensure_network_generation_for_subscription(
-            log, ad, sub_id, GEN_4G, voice_or_data=NETWORK_SERVICE_DATA):
+            log, ad, sub_id, nw_gen, voice_or_data=NETWORK_SERVICE_DATA):
         return False
 
     if not wait_for_voice_attach_for_subscription(log, ad, sub_id,
                                                   MAX_WAIT_TIME_NW_SELECTION):
         return False
 
-    return phone_idle_csfb_for_subscription(log, ad, sub_id)
+    return phone_idle_csfb_for_subscription(log, ad, sub_id, nw_gen)
 
-
-def phone_setup_volte(log, ad):
+def phone_setup_volte(log, ad, nw_gen=GEN_4G):
     """Setup VoLTE enable.
 
     Args:
         log: log object
         ad: android device object.
+        nw_gen: GEN_4G or GEN_5G
 
     Returns:
         True: if VoLTE is enabled successfully.
@@ -1124,15 +1136,16 @@ def phone_setup_volte(log, ad):
         ad.log.error("VoLTE is not supported, abort test.")
         raise signals.TestSkip("VoLTE is not supported, abort test.")
     return phone_setup_volte_for_subscription(log, ad,
-                                              get_outgoing_voice_sub_id(ad))
+                                        get_outgoing_voice_sub_id(ad), nw_gen)
 
-
-def phone_setup_volte_for_subscription(log, ad, sub_id):
+def phone_setup_volte_for_subscription(log, ad, sub_id, nw_gen=GEN_4G):
     """Setup VoLTE enable for subscription id.
     Args:
         log: log object
         ad: android device object.
         sub_id: subscription id.
+        nw_gen: GEN_4G or GEN_5G
+
     Returns:
         True: if VoLTE is enabled successfully.
         False: for errors
@@ -1141,9 +1154,15 @@ def phone_setup_volte_for_subscription(log, ad, sub_id):
         get_outgoing_voice_sub_id(ad)):
         ad.log.error("VoLTE is not supported, abort test.")
         raise signals.TestSkip("VoLTE is not supported, abort test.")
-    if not phone_setup_4g_for_subscription(log, ad, sub_id):
-        ad.log.error("Failed to set to 4G data.")
-        return False
+
+    if nw_gen == GEN_4G:
+        if not phone_setup_4g_for_subscription(log, ad, sub_id):
+            ad.log.error("Failed to set to 4G data.")
+            return False
+    elif nw_gen == GEN_5G:
+        if not phone_setup_5g_for_subscription(log, ad, sub_id):
+            ad.log.error("Failed to set to 5G data.")
+            return False
     operator_name = get_operator_name(log, ad, sub_id)
     if operator_name == CARRIER_TMO:
         return True
@@ -1152,7 +1171,7 @@ def phone_setup_volte_for_subscription(log, ad, sub_id):
             ad.log.error("Enhanced 4G LTE setting is not available")
             return False
         toggle_volte_for_subscription(log, ad, sub_id, True)
-    return phone_idle_volte_for_subscription(log, ad, sub_id)
+    return phone_idle_volte_for_subscription(log, ad, sub_id, nw_gen)
 
 
 def phone_setup_voice_3g(log, ad):
@@ -1383,17 +1402,23 @@ def phone_idle_volte(log, ad):
                                              get_outgoing_voice_sub_id(ad))
 
 
-def phone_idle_volte_for_subscription(log, ad, sub_id):
+def phone_idle_volte_for_subscription(log, ad, sub_id, nw_gen=GEN_4G):
     """Return if phone is idle for VoLTE call test for subscription id.
     Args:
         ad: Android device object.
         sub_id: subscription id.
+        nw_gen: GEN_4G or GEN_5G
     """
-    if not wait_for_network_rat_for_subscription(
-            log, ad, sub_id, RAT_FAMILY_LTE,
-            voice_or_data=NETWORK_SERVICE_VOICE):
-        ad.log.error("Voice rat not in LTE mode.")
-        return False
+    if nw_gen == GEN_5G:
+        if not is_current_network_5g_nsa(ad):
+            ad.log.error("Not in 5G NSA coverage.")
+            return False
+    else:
+        if not wait_for_network_rat_for_subscription(
+                log, ad, sub_id, RAT_FAMILY_LTE,
+                voice_or_data=NETWORK_SERVICE_VOICE):
+            ad.log.error("Voice rat not in LTE mode.")
+            return False
     if not wait_for_volte_enabled(log, ad, MAX_WAIT_TIME_VOLTE_ENABLED, sub_id):
         ad.log.error(
             "Failed to <report volte enabled true> within %s seconds.",
@@ -1461,18 +1486,24 @@ def phone_idle_csfb(log, ad):
                                             get_outgoing_voice_sub_id(ad))
 
 
-def phone_idle_csfb_for_subscription(log, ad, sub_id):
+def phone_idle_csfb_for_subscription(log, ad, sub_id, nw_gen=GEN_4G):
     """Return if phone is idle for CSFB call test for subscription id.
 
     Args:
         ad: Android device object.
         sub_id: subscription id.
+        nw_gen: GEN_4G or GEN_5G
     """
-    if not wait_for_network_rat_for_subscription(
-            log, ad, sub_id, RAT_FAMILY_LTE,
-            voice_or_data=NETWORK_SERVICE_DATA):
-        ad.log.error("Data rat not in lte mode.")
-        return False
+    if nw_gen == GEN_5G:
+        if not is_current_network_5g_nsa(ad):
+            ad.log.error("Not in 5G NSA coverage.")
+            return False
+    else:
+        if not wait_for_network_rat_for_subscription(
+                log, ad, sub_id, RAT_FAMILY_LTE,
+                voice_or_data=NETWORK_SERVICE_DATA):
+            ad.log.error("Data rat not in lte mode.")
+            return False
     return True
 
 
@@ -1935,7 +1966,19 @@ def phone_setup_on_rat(
         else:
             sub_id = get_outgoing_voice_sub_id(ad)
 
-    if rat.lower() == 'volte':
+    if rat.lower() == '5g_volte':
+        if only_return_fn:
+            return phone_setup_volte_for_subscription
+        else:
+            return phone_setup_volte_for_subscription(log, ad, sub_id, GEN_5G)
+
+    elif rat.lower() == '5g_csfb':
+        if only_return_fn:
+            return phone_setup_csfb_for_subscription
+        else:
+            return phone_setup_csfb_for_subscription(log, ad, sub_id, GEN_5G)
+
+    elif rat.lower() == 'volte':
         if only_return_fn:
             return phone_setup_volte_for_subscription
         else:
@@ -1972,13 +2015,13 @@ def phone_setup_on_rat(
             return phone_setup_voice_general_for_subscription(log, ad, sub_id)
 
 def is_phone_in_call_on_rat(log, ad, rat='volte', only_return_fn=None):
-    if rat.lower() == 'volte':
+    if rat.lower() == 'volte' or rat.lower() == '5g_volte':
         if only_return_fn:
             return is_phone_in_call_volte
         else:
             return is_phone_in_call_volte(log, ad)
 
-    elif rat.lower() == 'csfb':
+    elif rat.lower() == 'csfb' or rat.lower() == '5g_csfb':
         if only_return_fn:
             return is_phone_in_call_csfb
         else:
@@ -1997,3 +2040,138 @@ def is_phone_in_call_on_rat(log, ad, rat='volte', only_return_fn=None):
             return is_phone_in_call_iwlan(log, ad)
     else:
         return None
+
+
+def hold_unhold_test(log, ads):
+    """ Test hold/unhold functionality.
+
+    PhoneA is in call with PhoneB. The call on PhoneA is active.
+    Get call list on PhoneA.
+    Hold call_id on PhoneA.
+    Check call_id state.
+    Unhold call_id on PhoneA.
+    Check call_id state.
+
+    Args:
+        log: log object
+        ads: List of android objects.
+            This list should contain 2 android objects.
+            ads[0] is the ad to do hold/unhold operation.
+
+    Returns:
+        List of test result and call states.
+        The first element of the list is always the test result.
+        True if pass; False if fail.
+        The rest of the list contains call states.
+    """
+    call_list = ads[0].droid.telecomCallGetCallIds()
+    log.info("Calls in PhoneA %s", call_list)
+    if num_active_calls(ads[0].log, ads[0]) != 1:
+        log.error("No voice call or too many voice calls in PhoneA!")
+        call_state_list = [ads[0].droid.telecomCallGetCallState(call_id) for call_id in call_list]
+        return [False] + call_state_list
+    call_id = call_list[0]
+
+    call_state = ads[0].droid.telecomCallGetCallState(call_id)
+    if call_state != CALL_STATE_ACTIVE:
+        log.error("Call_id:%s, state:%s, expected: STATE_ACTIVE",
+                  call_id,
+                  ads[0].droid.telecomCallGetCallState(call_id))
+        return [False, call_state]
+    # TODO: b/26296375 add voice check.
+
+    log.info("Hold call_id %s on PhoneA", call_id)
+    ads[0].droid.telecomCallHold(call_id)
+    time.sleep(WAIT_TIME_IN_CALL)
+
+    call_state = ads[0].droid.telecomCallGetCallState(call_id)
+    if call_state != CALL_STATE_HOLDING:
+        ads[0].log.error("Call_id:%s, state:%s, expected: STATE_HOLDING",
+                         call_id,
+                         ads[0].droid.telecomCallGetCallState(call_id))
+        return [False, call_state]
+    # TODO: b/26296375 add voice check.
+
+    log.info("Unhold call_id %s on PhoneA", call_id)
+    ads[0].droid.telecomCallUnhold(call_id)
+    time.sleep(WAIT_TIME_IN_CALL)
+
+    call_state = ads[0].droid.telecomCallGetCallState(call_id)
+    if call_state != CALL_STATE_ACTIVE:
+        log.error("Call_id:%s, state:%s, expected: STATE_ACTIVE",
+                  call_id,
+                  call_state)
+        return [False, call_state]
+    # TODO: b/26296375 add voice check.
+
+    return [True, call_state]
+
+
+def phone_setup_call_hold_unhold_test(log,
+                                      ads,
+                                      call_direction=DIRECTION_MOBILE_ORIGINATED,
+                                      caller_func=None,
+                                      callee_func=None):
+    """Test hold and unhold in voice call.
+
+    1. Clear call list.
+    2. Set up MO/MT call.
+    3. Test hold and unhold in call.
+    4. hangup call.
+
+    Args:
+        log: log object
+        ads: list of android objects, this list should have two ad.
+        call_direction: MO(DIRECTION_MOBILE_ORIGINATED) or MT(DIRECTION_MOBILE_TERMINATED) call.
+        caller_func: function to verify caller is in correct state while in-call.
+        callee_func: function to verify callee is in correct state while in-call.
+
+    Returns:
+        True if pass; False if fail.
+    """
+
+    ads[0].droid.telecomCallClearCallList()
+    if num_active_calls(log, ads[0]) != 0:
+        ads[0].log.error("call list is not empty")
+        return False
+    log.info("begin hold/unhold test")
+
+    ad_caller = ads[0]
+    ad_callee = ads[1]
+
+    if call_direction != DIRECTION_MOBILE_ORIGINATED:
+        ad_caller = ads[1]
+        ad_callee = ads[0]
+
+    if not call_setup_teardown(
+                log,
+                ad_caller,
+                ad_callee,
+                ad_hangup=None,
+                verify_caller_func=caller_func,
+                verify_callee_func=callee_func):
+        return False
+
+    if not hold_unhold_test(ads[0].log, ads)[0]:
+        log.error("hold/unhold test fail.")
+        # hangup call in case voice call is still active.
+        hangup_call(log, ads[0])
+        return False
+
+    if not hangup_call(log, ads[0]):
+        log.error("call hangup failed")
+        return False
+    return True
+
+
+def _test_call_long_duration(log, ads, dut_incall_check_func, total_duration):
+
+    log.info("Long Duration Call Test. Total duration = %s",
+                  total_duration)
+    return call_setup_teardown(
+        log,
+        ads[0],
+        ads[1],
+        ads[0],
+        verify_caller_func=dut_incall_check_func,
+        wait_time_in_call=total_duration)

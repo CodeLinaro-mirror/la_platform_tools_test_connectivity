@@ -14,25 +14,24 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-import logging
-import queue
-import random
 import time
 
 from acts import asserts
 from acts import utils
 from acts.test_decorators import test_tracker_info
-from acts_contrib.test_utils.net import socket_test_utils as sutils
-from acts_contrib.test_utils.tel import tel_defines
 from acts_contrib.test_utils.tel import tel_test_utils as tel_utils
-from acts_contrib.test_utils.tel.tel_test_utils import WIFI_CONFIG_APBAND_2G
-from acts_contrib.test_utils.tel.tel_test_utils import WIFI_CONFIG_APBAND_5G
-from acts_contrib.test_utils.tel.tel_test_utils import WIFI_CONFIG_APBAND_AUTO
 from acts_contrib.test_utils.wifi import wifi_constants
 from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
 from acts_contrib.test_utils.wifi.WifiBaseTest import WifiBaseTest
 
 WifiEnums = wutils.WifiEnums
+WIFI_CONFIG_APBAND_2G = WifiEnums.WIFI_CONFIG_APBAND_2G
+WIFI_CONFIG_APBAND_5G = WifiEnums.WIFI_CONFIG_APBAND_5G
+WIFI_CONFIG_APBAND_AUTO = WifiEnums.WIFI_CONFIG_APBAND_AUTO
+WPA3_SAE_TRANSITION_SOFTAP = WifiEnums.SoftApSecurityType.WPA3_SAE_TRANSITION
+WPA3_SAE_SOFTAP = WifiEnums.SoftApSecurityType.WPA3_SAE
+WAIT_AFTER_REBOOT = 10
+
 
 class WifiSoftApTest(WifiBaseTest):
 
@@ -46,7 +45,7 @@ class WifiSoftApTest(WifiBaseTest):
         super().setup_class()
         self.dut = self.android_devices[0]
         self.dut_client = self.android_devices[1]
-        req_params = ["dbs_supported_models"]
+        req_params = ["dbs_supported_models", "sta_sta_supported_models"]
         opt_param = ["open_network"]
         self.unpack_userparams(
             req_param_names=req_params, opt_param_names=opt_param)
@@ -78,6 +77,8 @@ class WifiSoftApTest(WifiBaseTest):
         self.AP_IFACE = 'wlan0'
         if self.dut.model in self.dbs_supported_models:
             self.AP_IFACE = 'wlan1'
+        if self.dut.model in self.sta_sta_supported_models:
+            self.AP_IFACE = 'wlan2'
         if len(self.android_devices) > 2:
             utils.sync_device_time(self.android_devices[2])
             wutils.set_wifi_country_code(self.android_devices[2], wutils.WifiEnums.CountryCode.US)
@@ -99,6 +100,14 @@ class WifiSoftApTest(WifiBaseTest):
         super().setup_test()
         for ad in self.android_devices:
             wutils.wifi_toggle_state(ad, True)
+        if "chan_13" in self.test_name and "OpenWrtAP" in self.user_params:
+            self.access_points[0].close()
+            self.configure_openwrt_ap_and_start(open_network=True,
+                                                channel_2g=13)
+            self.open_network = self.open_network[0]["2g"]
+            for ad in self.android_devices:
+                wutils.set_wifi_country_code(
+                        ad, wutils.WifiEnums.CountryCode.AUSTRALIA)
 
     def teardown_test(self):
         super().teardown_test()
@@ -108,6 +117,13 @@ class WifiSoftApTest(WifiBaseTest):
         if self.dut.droid.wifiIsApEnabled():
             wutils.stop_wifi_tethering(self.dut)
         wutils.set_wifi_country_code(self.dut, wutils.WifiEnums.CountryCode.US)
+        if "chan_13" in self.test_name and "OpenWrtAP" in self.user_params:
+            self.access_points[0].close()
+            self.configure_openwrt_ap_and_start(open_network=True)
+            self.open_network = self.open_network[0]["2g"]
+            for ad in self.android_devices:
+                wutils.set_wifi_country_code(
+                        ad, wutils.WifiEnums.CountryCode.US)
 
     """ Helper Functions """
     def create_softap_config(self):
@@ -153,7 +169,8 @@ class WifiSoftApTest(WifiBaseTest):
                                 "Failed to enable cell data for softap dut.")
 
     def validate_full_tether_startup(self, band=None, hidden=None,
-                                     test_ping=False, test_clients=None):
+                                     test_ping=False, test_clients=None,
+                                     security=None):
         """Test full startup of wifi tethering
 
         1. Report current state.
@@ -171,7 +188,10 @@ class WifiSoftApTest(WifiBaseTest):
         config = self.create_softap_config()
         wutils.start_wifi_tethering(self.dut,
                                     config[wutils.WifiEnums.SSID_KEY],
-                                    config[wutils.WifiEnums.PWD_KEY], band, hidden)
+                                    config[wutils.WifiEnums.PWD_KEY],
+                                    band,
+                                    hidden,
+                                    security)
         if hidden:
             # First ensure it's not seen in scan results.
             self.confirm_softap_not_in_scan_results(
@@ -250,6 +270,21 @@ class WifiSoftApTest(WifiBaseTest):
         asserts.assert_true(
             utils.adb_shell_ping(ad2, count=10, dest_ip=ad1_ip, timeout=20),
             "%s ping %s failed" % (ad2.serial, ad1_ip))
+
+    def validate_softap_after_reboot(self, band, security, hidden=False):
+        config = self.create_softap_config()
+        softap_config = config.copy()
+        softap_config[WifiEnums.AP_BAND_KEY] = band
+        softap_config[WifiEnums.SECURITY] = security
+        if hidden:
+            softap_config[WifiEnums.HIDDEN_KEY] = hidden
+        asserts.assert_true(
+            self.dut.droid.wifiSetWifiApConfiguration(softap_config),
+            "Failed to update WifiAp Configuration")
+        self.dut.reboot()
+        time.sleep(WAIT_AFTER_REBOOT)
+        wutils.start_wifi_tethering_saved_config(self.dut)
+        wutils.connect_to_wifi_network(self.dut_client, config, hidden=hidden)
 
     """ Tests Begin """
 
@@ -354,6 +389,310 @@ class WifiSoftApTest(WifiBaseTest):
         5. verify back to previous mode.
         """
         self.validate_full_tether_startup(WIFI_CONFIG_APBAND_AUTO, True)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_wpa3(self):
+        """Test full startup of softap in default band and wpa3 security.
+
+        Steps:
+        1. Configure softap in default band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(security=WPA3_SAE_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_2G_wpa3(self):
+        """Test full startup of softap in 2G band and wpa3 security.
+
+        Steps:
+        1. Configure softap in 2G band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_2G, security=WPA3_SAE_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_5G_wpa3(self):
+        """Test full startup of softap in 5G band and wpa3 security.
+
+        Steps:
+        1. Configure softap in 5G band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_5G, security=WPA3_SAE_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_auto_wpa3(self):
+        """Test full startup of softap in auto band and wpa3 security.
+
+        Steps:
+        1. Configure softap in auto band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_AUTO, security=WPA3_SAE_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_hidden_wpa3(self):
+        """Test full startup of hidden softap in default band and wpa3 security.
+
+        Steps:
+        1. Configure hidden softap in default band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(security=WPA3_SAE_SOFTAP, hidden=True)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_2G_hidden_wpa3(self):
+        """Test full startup of hidden softap in 2G band and wpa3 security.
+
+        Steps:
+        1. Configure hidden softap in 2G band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_2G, True, security=WPA3_SAE_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_5G_hidden_wpa3(self):
+        """Test full startup of hidden softap in 5G band and wpa3 security.
+
+        Steps:
+        1. Configure hidden softap in 5G band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_5G, True, security=WPA3_SAE_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_auto_hidden_wpa3(self):
+        """Test full startup of hidden softap in auto band and wpa3 security.
+
+        Steps:
+        1. Configure hidden softap in auto band and wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_AUTO, True, security=WPA3_SAE_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_wpa2_wpa3(self):
+        """Test full startup of softap in default band and wpa2/wpa3 security.
+
+        Steps:
+        1. Configure softap in default band and wpa2/wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_full_tether_startup(security=WPA3_SAE_TRANSITION_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_2G_wpa2_wpa3(self):
+        """Test full startup of softap in 2G band and wpa2/wpa3 security.
+
+        Steps:
+        1. Configure softap in default band and wpa2/wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_2G, security=WPA3_SAE_TRANSITION_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_5G_wpa2_wpa3(self):
+        """Test full startup of softap in 5G band and wpa2/wpa3 security.
+
+        Steps:
+        1. Configure softap in default band and wpa2/wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_5G, security=WPA3_SAE_TRANSITION_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_auto_wpa2_wpa3(self):
+        """Test full startup of softap in auto band and wpa2/wpa3 security.
+
+        Steps:
+        1. Configure softap in default band and wpa2/wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_AUTO, security=WPA3_SAE_TRANSITION_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_2G_hidden_wpa2_wpa3(self):
+        """Test full startup of hidden softap in 2G band and wpa2/wpa3.
+
+        Steps:
+        1. Configure hidden softap in 2G band and wpa2/wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_2G, True, security=WPA3_SAE_TRANSITION_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_5G_hidden_wpa2_wpa3(self):
+        """Test full startup of hidden softap in 5G band and wpa2/wpa3 security.
+
+        Steps:
+        1. Configure hidden softap in 5G band and wpa2/wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_5G, True, security=WPA3_SAE_TRANSITION_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_full_tether_startup_auto_hidden_wpa2_wpa3(self):
+        """Test full startup of hidden softap in auto band and wpa2/wpa3.
+
+        Steps:
+        1. Configure hidden softap in auto band and wpa2/wpa3 security.
+        2. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_full_tether_startup(
+            WIFI_CONFIG_APBAND_AUTO, True, security=WPA3_SAE_TRANSITION_SOFTAP)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa3_2g_after_reboot(self):
+        """Test full startup of softap in 2G band, wpa3 security after reboot.
+
+        Steps:
+        1. Save softap in 2G band and wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_2G, WPA3_SAE_SOFTAP, False)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa3_5g_after_reboot(self):
+        """Test full startup of softap in 5G band, wpa3 security after reboot.
+
+        Steps:
+        1. Save softap in 5G band and wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_5G, WPA3_SAE_SOFTAP, False)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa2_wpa3_2g_after_reboot(self):
+        """Test softap in 2G band, wpa2/wpa3 security after reboot.
+
+        Steps:
+        1. Save softap in 2G band and wpa2/wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_2G, WPA3_SAE_TRANSITION_SOFTAP, False)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa2_wpa3_5g_after_reboot(self):
+        """Test softap in 5G band, wpa2/wpa3 security after reboot.
+
+        Steps:
+        1. Save softap in 5G band and wpa2/wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_5G, WPA3_SAE_TRANSITION_SOFTAP, False)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa3_2g_hidden_after_reboot(self):
+        """Test hidden softap in 2G band, wpa3 security after reboot.
+
+        Steps:
+        1. Save hidden softap in 2G band and wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_2G, WPA3_SAE_SOFTAP, True)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa3_5g_hidden_after_reboot(self):
+        """Test hidden softap in 5G band, wpa3 security after reboot.
+
+        Steps:
+        1. Save hidden softap in 5G band and wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_5G, WPA3_SAE_SOFTAP, True)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa2_wpa3_2g_hidden_after_reboot(self):
+        """Test hidden softap in 2G band, wpa2/wpa3 security after reboot.
+
+        Steps:
+        1. Save hidden softap in 2G band and wpa2/wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_2G, WPA3_SAE_TRANSITION_SOFTAP, True)
+
+    @test_tracker_info(uuid="")
+    def test_softap_wpa2_wpa3_5g_hidden_after_reboot(self):
+        """Test hidden softap in 5G band, wpa2/wpa3 security after reboot.
+
+        Steps:
+        1. Save hidden softap in 5G band and wpa2/wpa3 security.
+        2. Reboot device and start softap.
+        3. Verify dut client connects to the softap.
+        """
+        asserts.skip_if(self.dut.model not in self.sta_sta_supported_models,
+                        "DUT does not support WPA2/WPA3 softAp")
+        self.validate_softap_after_reboot(
+            WIFI_CONFIG_APBAND_5G, WPA3_SAE_TRANSITION_SOFTAP, True)
 
     @test_tracker_info(uuid="b2f75330-bf33-4cdd-851a-de390f891ef7")
     def test_tether_startup_while_connected_to_a_network(self):
@@ -869,6 +1208,36 @@ class WifiSoftApTest(WifiBaseTest):
             sap_band == WifiEnums.WIFI_CONFIG_SOFTAP_BAND_2G_5G,
             "Soft AP didn't start in 5G preferred band")
         wutils.connect_to_wifi_network(self.dut_client, wifi_network)
+
+    @test_tracker_info(uuid="")
+    def test_softp_2g_channel_when_connected_to_chan_13(self):
+        """Verify softAp 2G channel when connected to network on channel 13.
+
+        Steps:
+            1. Configure AP in channel 13 on 2G band and connect DUT to it.
+            2. Start softAp on DUT on 2G band.
+            3. Verify softAp is started on channel 13.
+        """
+        asserts.skip_if("OpenWrtAP" not in self.user_params,
+                        "Need openwrt AP to configure channel 13.")
+        wutils.connect_to_wifi_network(self.dut, self.open_network)
+        sap_config = self.create_softap_config()
+        sap_config[WifiEnums.AP_BAND_KEY] = WifiEnums.WIFI_CONFIG_SOFTAP_BAND_2G
+        asserts.assert_true(
+            self.dut.droid.wifiSetWifiApConfiguration(sap_config),
+            "Failed to set WifiAp Configuration")
+        wutils.start_wifi_tethering_saved_config(self.dut)
+        softap_conf = self.dut.droid.wifiGetApConfiguration()
+        self.log.info("softap conf: %s" % softap_conf)
+        wutils.connect_to_wifi_network(self.dut_client, sap_config)
+        softap_channel = self.dut_client.droid.wifiGetConnectionInfo(
+                )
+        conn_info = self.dut_client.droid.wifiGetConnectionInfo()
+        self.log.info("Wifi connection info on dut_client: %s" % conn_info)
+        softap_channel = wutils.WifiEnums.freq_to_channel[conn_info["frequency"]]
+        asserts.assert_true(softap_channel == 13,
+                            "Dut client did not connect to softAp on channel 13")
+
     """ Tests End """
 
 

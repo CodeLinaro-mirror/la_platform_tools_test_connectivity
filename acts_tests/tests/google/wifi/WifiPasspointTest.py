@@ -32,7 +32,7 @@ from acts.utils import force_airplane_mode
 
 WifiEnums = wutils.WifiEnums
 
-DEFAULT_TIMEOUT = 10
+DEFAULT_TIMEOUT = 15
 OSU_TEST_TIMEOUT = 300
 
 # Constants for providers.
@@ -82,6 +82,7 @@ class WifiPasspointTest(WifiBaseTest):
         self.dut.droid.wakeLockAcquireBright()
         self.dut.droid.wakeUpNow()
         self.dut.unlock_screen()
+        self.dut.adb.shell("input keyevent KEYCODE_HOME")
 
 
     def teardown_test(self):
@@ -156,18 +157,21 @@ class WifiPasspointTest(WifiBaseTest):
         for _ in range(3):
             self.dut.adb.shell("input swipe 300 900 300 300")
 
-        # Enter username
-        uutils.wait_and_input_text(self.dut,
-                                   input_text=self.boingo_username,
-                                   text="",
-                                   class_name=EDIT_TEXT_CLASS_NAME)
-        self.dut.adb.shell("input keyevent 111")  # collapse keyboard
-        self.dut.adb.shell("input swipe 300 900 300 750")  # swipe up to show text
-
-        # Enter password
-        uutils.wait_and_input_text(self.dut,
-                                   input_text=self.boingo_password,
-                                   text=PASSWORD_TEXT)
+        # Enter username & password
+        screen_dump = uutils.get_screen_dump_xml(self.dut)
+        nodes = screen_dump.getElementsByTagName("node")
+        index = 0
+        for node in nodes:
+            if uutils.match_node(node, class_name="android.widget.EditText"):
+                x, y = eval(node.attributes["bounds"].value.split("][")[0][1:])
+                self.dut.adb.shell("input tap %s %s" % (x, y))
+                if index == 0:
+                    self.dut.adb.shell("input text %s" % self.boingo_username)
+                    index += 1
+                else:
+                    self.dut.adb.shell("input text %s" % self.boingo_password)
+                    break
+                self.dut.adb.shell("input keyevent 111")
         self.dut.adb.shell("input keyevent 111")  # collapse keyboard
         self.dut.adb.shell("input swipe 300 900 300 750")  # swipe up to show text
 
@@ -227,7 +231,7 @@ class WifiPasspointTest(WifiBaseTest):
                                           "expected_ssids"])
         # Delete the Passpoint profile.
         self.get_configured_passpoint_and_delete()
-        wutils.wait_for_disconnect(self.dut)
+        wutils.wait_for_disconnect(self.dut, timeout=15)
 
 
     """Tests"""
@@ -322,6 +326,23 @@ class WifiPasspointTest(WifiBaseTest):
                                       " was successfully deleted.")
 
 
+    @test_tracker_info(uuid="")
+    def test_global_reach_passpoint(self):
+        """Test connection to global reach passpoint.
+
+        Steps:
+          1. Install global reach passpoint profile.
+          2. Verify connection to the global reach wifi network.
+          3. Delete passpoint and verify device disconnects.
+        """
+        passpoint_config = self.passpoint_networks[GLOBAL_RE]
+        self.install_passpoint_profile(passpoint_config)
+        ssid = passpoint_config[WifiEnums.SSID_KEY]
+        self.check_passpoint_connection(ssid)
+        self.get_configured_passpoint_and_delete()
+        wutils.wait_for_disconnect(self.dut)
+
+
     @test_tracker_info(uuid="bf03c03a-e649-4e2b-a557-1f791bd98951")
     def test_passpoint_failover(self):
         """Add a pair of passpoint networks and test failover when one of the"
@@ -403,8 +424,8 @@ class WifiPasspointTest(WifiBaseTest):
         """
         carriers = ["att"]
         operator = get_operator_name(self.log, self.dut)
-        asserts.skip_if(operator not in carriers,
-                        "Device %s does not have a ATT sim" % self.dut.model)
+        if operator not in carriers:
+            self.log.warn("Device %s does not have a ATT sim" % self.dut.model)
 
         passpoint_config = self.passpoint_networks[ATT]
         self.install_passpoint_profile(passpoint_config)

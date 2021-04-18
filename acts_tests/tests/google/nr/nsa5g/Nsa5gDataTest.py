@@ -18,36 +18,44 @@
 """
 
 import time
-from queue import Empty
 
 from acts.test_decorators import test_tracker_info
 from acts_contrib.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
-from acts_contrib.test_utils.tel.tel_defines import NetworkCallbackCapabilitiesChanged
-from acts_contrib.test_utils.tel.tel_defines import NetworkCallbackLost
-from acts_contrib.test_utils.tel.tel_defines import EventNetworkCallback
-from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_BETWEEN_STATE_CHECK
-from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_ANDROID_STATE_SETTLING
+from acts_contrib.test_utils.tel.tel_defines import GEN_5G
 from acts_contrib.test_utils.tel.tel_defines import MAX_WAIT_TIME_USER_PLANE_DATA
 from acts_contrib.test_utils.tel.tel_defines import NETWORK_MODE_NR_LTE_GSM_WCDMA
-from acts_contrib.test_utils.tel.tel_data_utils import browsing_test
-from acts_contrib.test_utils.tel.tel_test_utils import get_current_override_network_type
-from acts_contrib.test_utils.tel.tel_test_utils import toggle_airplane_mode
-from acts_contrib.test_utils.tel.tel_test_utils import get_device_epoch_time
-from acts_contrib.test_utils.tel.tel_test_utils import check_data_stall_detection
-from acts_contrib.test_utils.tel.tel_test_utils import check_network_validation_fail
+from acts_contrib.test_utils.tel.tel_defines import NetworkCallbackCapabilitiesChanged
+from acts_contrib.test_utils.tel.tel_defines import NetworkCallbackLost
+from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_ANDROID_STATE_SETTLING
+from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_BETWEEN_STATE_CHECK
 from acts_contrib.test_utils.tel.tel_test_utils import break_internet_except_sl4a_port
-from acts_contrib.test_utils.tel.tel_test_utils import resume_internet_with_sl4a_port
+from acts_contrib.test_utils.tel.tel_test_utils import check_data_stall_detection
 from acts_contrib.test_utils.tel.tel_test_utils import check_data_stall_recovery
-from acts_contrib.test_utils.tel.tel_test_utils import test_data_browsing_success_using_sl4a
-from acts_contrib.test_utils.tel.tel_test_utils import test_data_browsing_failure_using_sl4a
+from acts_contrib.test_utils.tel.tel_test_utils import check_network_validation_fail
 from acts_contrib.test_utils.tel.tel_test_utils import ensure_wifi_connected
-from acts_contrib.test_utils.tel.tel_test_utils import wifi_toggle_state
-from acts_contrib.test_utils.tel.tel_test_utils import set_preferred_network_mode_pref
-from acts_contrib.test_utils.tel.tel_test_utils import verify_internet_connection
+from acts_contrib.test_utils.tel.tel_test_utils import get_current_override_network_type
+from acts_contrib.test_utils.tel.tel_test_utils import get_device_epoch_time
 from acts_contrib.test_utils.tel.tel_test_utils import iperf_test_by_adb
 from acts_contrib.test_utils.tel.tel_test_utils import iperf_udp_test_by_adb
+from acts_contrib.test_utils.tel.tel_test_utils import resume_internet_with_sl4a_port
+from acts_contrib.test_utils.tel.tel_test_utils import set_preferred_network_mode_pref
+from acts_contrib.test_utils.tel.tel_test_utils import test_data_browsing_failure_using_sl4a
+from acts_contrib.test_utils.tel.tel_test_utils import test_data_browsing_success_using_sl4a
+from acts_contrib.test_utils.tel.tel_test_utils import toggle_airplane_mode
+from acts_contrib.test_utils.tel.tel_test_utils import verify_internet_connection
+from acts_contrib.test_utils.tel.tel_test_utils import wifi_reset
+from acts_contrib.test_utils.tel.tel_test_utils import wifi_toggle_state
+from acts_contrib.test_utils.tel.tel_data_utils import browsing_test
+from acts_contrib.test_utils.tel.tel_data_utils import data_connectivity_single_bearer
+from acts_contrib.test_utils.tel.tel_data_utils import test_data_connectivity_multi_bearer
+from acts_contrib.test_utils.tel.tel_data_utils import test_wifi_connect_disconnect
+from acts_contrib.test_utils.tel.tel_data_utils import verify_for_network_callback
+from acts_contrib.test_utils.tel.tel_data_utils import wifi_cell_switching
 from acts_contrib.test_utils.tel.tel_5g_utils import is_current_network_5g_nsa
+from acts_contrib.test_utils.tel.tel_5g_utils import provision_device_for_5g
 from acts_contrib.test_utils.tel.tel_5g_utils import set_preferred_mode_for_5g
+from acts_contrib.test_utils.tel.tel_voice_utils import phone_setup_volte
+
 
 
 class Nsa5gDataTest(TelephonyBaseTest):
@@ -60,52 +68,14 @@ class Nsa5gDataTest(TelephonyBaseTest):
 
     def setup_test(self):
         TelephonyBaseTest.setup_test(self)
-        self.number_of_devices = 1
+        self.provider = self.android_devices[0]
+        self.clients = self.android_devices[1:]
 
     def teardown_class(self):
         TelephonyBaseTest.teardown_class(self)
 
 
-    def _listen_for_network_callback(self, ad, event, apm_mode=False):
-        """Verify network callback for Meteredness
-
-        Args:
-            ad: DUT to get the network callback for
-            event: Network callback event
-
-        Returns:
-            True: if the expected network callback found, False if not
-        """
-        key = ad.droid.connectivityRegisterDefaultNetworkCallback()
-        ad.droid.connectivityNetworkCallbackStartListeningForEvent(key, event)
-        if apm_mode:
-            ad.log.info("Turn on Airplane Mode")
-            toggle_airplane_mode(ad.log, ad, True)
-        curr_time = time.time()
-        status = False
-        while time.time() < curr_time + MAX_WAIT_TIME_USER_PLANE_DATA:
-            try:
-                nc_event = ad.ed.pop_event(EventNetworkCallback)
-                ad.log.info("Received: %s" %
-                            nc_event["data"]["networkCallbackEvent"])
-                if nc_event["data"]["networkCallbackEvent"] == event:
-                    status = nc_event["data"]["metered"]
-                    ad.log.info("Current state of Meteredness is %s", status)
-                    break
-            except Empty:
-                pass
-
-        ad.droid.connectivityNetworkCallbackStopListeningForEvent(key, event)
-        ad.droid.connectivityUnregisterNetworkCallback(key)
-        if apm_mode:
-            ad.log.info("Turn off Airplane Mode")
-            toggle_airplane_mode(ad.log, ad, False)
-            time.sleep(WAIT_TIME_BETWEEN_STATE_CHECK)
-        return status
-
-
     """ Tests Begin """
-
 
     @test_tracker_info(uuid="a73b749f-746c-4089-a8ad-4e47aed180f6")
     @TelephonyBaseTest.tel_test_wrap
@@ -127,13 +97,13 @@ class Nsa5gDataTest(TelephonyBaseTest):
             ad.log.error("Failed to set network mode to NSA")
             return False
         ad.log.info("Set network mode to NSA successfully")
-        ad.log.info("Waiting for nsa5g NSA attach for 60 secs")
+        ad.log.info("Waiting for 5g NSA attach for 60 secs")
         if is_current_network_5g_nsa(ad, timeout=60):
-            ad.log.info("Success! attached on nsa5g NSA")
+            ad.log.info("Success! attached on 5g NSA")
         else:
             ad.log.error("Failure - expected NR_NSA, current %s",
                          get_current_override_network_type(ad))
-            # Can't attach nsa5g NSA, exit test!
+            # Can't attach 5g NSA, exit test!
             return False
         for iteration in range(3):
             connectivity = False
@@ -175,9 +145,7 @@ class Nsa5gDataTest(TelephonyBaseTest):
         wifi_toggle_state(ad.log, ad, False)
         toggle_airplane_mode(ad.log, ad, False)
 
-        set_preferred_mode_for_5g(ad)
-        if not is_current_network_5g_nsa(ad):
-            ad.log.error("Phone not attached on 5G NSA")
+        if not provision_device_for_5g(ad.log, ad):
             return False
 
         cmd = ('ss -l -p -n | grep "tcp.*droid_script" | tr -s " " '
@@ -234,12 +202,11 @@ class Nsa5gDataTest(TelephonyBaseTest):
         try:
             wifi_toggle_state(ad.log, ad, False)
             toggle_airplane_mode(ad.log, ad, False)
-            set_preferred_mode_for_5g(ad)
-            if not is_current_network_5g_nsa(ad):
-                ad.log.error("Phone not attached on 5G NSA")
+            if not provision_device_for_5g(ad.log, ad):
                 return False
-            return self._listen_for_network_callback(ad,
-                NetworkCallbackCapabilitiesChanged)
+
+            return verify_for_network_callback(ad.log, ad,
+                NetworkCallbackCapabilitiesChanged, apm_mode=False)
         except Exception as e:
             ad.log.error(e)
             return False
@@ -261,13 +228,14 @@ class Nsa5gDataTest(TelephonyBaseTest):
         try:
             wifi_toggle_state(ad.log, ad, False)
             set_preferred_mode_for_5g(ad)
-            return self._listen_for_network_callback(ad,
+            return verify_for_network_callback(ad.log, ad,
                 NetworkCallbackLost, apm_mode=True)
         except Exception as e:
             ad.log.error(e)
             toggle_airplane_mode(ad.log, ad, False)
             time.sleep(WAIT_TIME_BETWEEN_STATE_CHECK)
             return False
+
 
     @test_tracker_info(uuid="192a605c-d7a9-4c34-800a-96a7d3177d7b")
     @TelephonyBaseTest.tel_test_wrap
@@ -284,16 +252,15 @@ class Nsa5gDataTest(TelephonyBaseTest):
         ad = self.android_devices[0]
         try:
             toggle_airplane_mode(ad.log, ad, False)
-            set_preferred_mode_for_5g(ad)
-            if not is_current_network_5g_nsa(ad):
-                ad.log.error("Phone not attached on 5G NSA")
+            if not provision_device_for_5g(ad.log, ad):
+                return False
             wifi_toggle_state(ad.log, ad, True)
             if not ensure_wifi_connected(ad.log, ad,
                                          self.wifi_network_ssid,
                                          self.wifi_network_pass):
                 ad.log.error("WiFi connect fail.")
                 return False
-            return self._listen_for_network_callback(ad,
+            return verify_for_network_callback(ad.log, ad,
                  NetworkCallbackCapabilitiesChanged)
         except Exception as e:
             ad.log.error(e)
@@ -317,9 +284,7 @@ class Nsa5gDataTest(TelephonyBaseTest):
         ad = self.android_devices[0]
         try:
             toggle_airplane_mode(ad.log, ad, False)
-            set_preferred_mode_for_5g(ad)
-            if not is_current_network_5g_nsa(ad):
-                ad.log.error("Phone not attached on 5G NSA")
+            if not provision_device_for_5g(ad.log, ad):
                 return False
             wifi_toggle_state(ad.log, ad, False)
             return iperf_udp_test_by_adb(ad.log,
@@ -348,9 +313,7 @@ class Nsa5gDataTest(TelephonyBaseTest):
         ad = self.android_devices[0]
         try:
             toggle_airplane_mode(ad.log, ad, False)
-            set_preferred_mode_for_5g(ad)
-            if not is_current_network_5g_nsa(ad):
-                ad.log.error("Phone not attached on 5G NSA")
+            if not provision_device_for_5g(ad.log, ad):
                 return False
             wifi_toggle_state(ad.log, ad, False)
             return iperf_test_by_adb(ad.log,
@@ -379,9 +342,7 @@ class Nsa5gDataTest(TelephonyBaseTest):
         ad = self.android_devices[0]
         try:
             toggle_airplane_mode(ad.log, ad, False)
-            set_preferred_mode_for_5g(ad)
-            if not is_current_network_5g_nsa(ad):
-                ad.log.error("Phone not attached on 5G NSA")
+            if not provision_device_for_5g(ad.log, ad):
                 return False
             wifi_toggle_state(ad.log, ad, False)
             return iperf_udp_test_by_adb(ad.log,
@@ -395,6 +356,130 @@ class Nsa5gDataTest(TelephonyBaseTest):
         except Exception as e:
             ad.log.error(e)
             return False
+
+
+    @test_tracker_info(uuid="cd1429e8-94d7-44de-ae48-68cf42f3246b")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_browsing(self):
+        ad = self.android_devices[0]
+        ad.log.info("Connect to NR and verify internet connection.")
+        if not provision_device_for_5g(ad.log, ad):
+            return False
+        if not verify_internet_connection(ad.log, ad):
+            return False
+
+        return browsing_test(ad.log, ad)
+
+
+    @test_tracker_info(uuid="7179f0f1-f0ca-4496-8f4a-7eebc616a41a")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_wifi_switching(self):
+        """Test data connection network switching when phone camped on nsa 5G.
+
+        Ensure phone is camped on nsa 5G
+        Ensure WiFi can connect to live network,
+        Airplane mode is off, data connection is on, WiFi is on.
+        Turn off WiFi, verify data is on cell and browse to google.com is OK.
+        Turn on WiFi, verify data is on WiFi and browse to google.com is OK.
+        Turn off WiFi, verify data is on cell and browse to google.com is OK.
+
+        Returns:
+            True if pass.
+        """
+        ad = self.android_devices[0]
+        return wifi_cell_switching(ad.log, ad, GEN_5G, self.wifi_network_ssid,
+                                   self.wifi_network_pass)
+
+
+    @test_tracker_info(uuid="75066e0a-0e2e-4346-a253-6ed11d1c4d23")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_multi_bearer(self):
+        """Test nsa5G data connection before call and in call. (VoLTE call)
+
+        Turn off airplane mode, disable WiFi, enable Cellular Data.
+        Make sure phone in nsa5G, verify Internet.
+        Initiate a voice call. verify Internet.
+        Disable Cellular Data, verify Internet is inaccessible.
+        Enable Cellular Data, verify Internet.
+        Hangup Voice Call, verify Internet.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        ads = self.android_devices
+        if not phone_setup_volte(ads[0].log, ads[0]):
+            ads[0].log.error("Failed to setup VoLTE")
+            return False
+        return test_data_connectivity_multi_bearer(self.log, ads, GEN_5G)
+
+
+    @test_tracker_info(uuid="e88b226e-3842-4c45-a33e-d4fee7d8f6f0")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa(self):
+        """Test data connection in nsa5g.
+
+        Turn off airplane mode, disable WiFi, enable Cellular Data.
+        Ensure phone data generation is nsa 5g.
+        Verify Internet.
+        Disable Cellular Data, verify Internet is inaccessible.
+        Enable Cellular Data, verify Internet.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        ad = self.android_devices[0]
+        wifi_reset(ad.log, ad)
+        wifi_toggle_state(ad.log, ad, False)
+        return data_connectivity_single_bearer(ad.log, ad, GEN_5G)
+
+
+    @test_tracker_info(uuid="4c70e09d-f215-4c5b-8c61-f9e9def43d30")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_wifi_not_associated(self):
+        """Test data connection in nsa 5g.
+
+        Turn off airplane mode, enable WiFi (but not connected), enable Cellular Data.
+        Ensure phone data generation is nsa 5g.
+        Verify Internet.
+        Disable Cellular Data, verify Internet is inaccessible.
+        Enable Cellular Data, verify Internet.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        ad = self.android_devices[0]
+        wifi_reset(ad.log, ad)
+        wifi_toggle_state(ad.log, ad, False)
+        wifi_toggle_state(ad.log, ad, True)
+        return data_connectivity_single_bearer(ad.log, ad, GEN_5G)
+
+
+    @test_tracker_info(uuid="8308bf40-7f1b-443f-bde6-19d9ff97e471")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_wifi_connect_disconnect(self):
+        """Perform multiple connects and disconnects from WiFi and verify that
+            data switches between WiFi and Cell.
+
+        Steps:
+        1. DUT Cellular Data is on nsa 5G. Reset Wifi on DUT
+        2. Connect DUT to a WiFi AP
+        3. Repeat steps 1-2, alternately disconnecting and disabling wifi
+
+        Expected Results:
+        1. Verify Data on Cell
+        2. Verify Data on Wifi
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+        if not provision_device_for_5g(self.log, self.provider):
+            return False
+
+        return test_wifi_connect_disconnect(self.log, self.provider, self.wifi_network_ssid, self.wifi_network_pass)
 
 
     """ Tests End """

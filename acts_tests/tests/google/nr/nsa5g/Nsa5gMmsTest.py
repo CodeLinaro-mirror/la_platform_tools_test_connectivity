@@ -22,28 +22,21 @@ import time
 from acts.test_decorators import test_tracker_info
 from acts_contrib.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_ANDROID_STATE_SETTLING
-from acts_contrib.test_utils.tel.tel_defines import WFC_MODE_CELLULAR_PREFERRED
-from acts_contrib.test_utils.tel.tel_defines import WFC_MODE_WIFI_PREFERRED
+from acts_contrib.test_utils.tel.tel_test_utils import call_setup_teardown
 from acts_contrib.test_utils.tel.tel_test_utils import ensure_phones_idle
 from acts_contrib.test_utils.tel.tel_test_utils import ensure_wifi_connected
-from acts_contrib.test_utils.tel.tel_test_utils import call_setup_teardown
-from acts_contrib.test_utils.tel.tel_test_utils import toggle_airplane_mode
-from acts_contrib.test_utils.tel.tel_test_utils import mms_send_receive_verify
-from acts_contrib.test_utils.tel.tel_test_utils import multithread_func
-from acts_contrib.test_utils.tel.tel_voice_utils import phone_setup_volte
-from acts_contrib.test_utils.tel.tel_voice_utils import is_phone_in_call_volte
-from acts_contrib.test_utils.tel.tel_voice_utils import phone_setup_iwlan
 from acts_contrib.test_utils.tel.tel_voice_utils import is_phone_in_call_iwlan
-from acts_contrib.test_utils.tel.tel_5g_utils import is_current_network_5g_nsa
+from acts_contrib.test_utils.tel.tel_voice_utils import is_phone_in_call_volte
 from acts_contrib.test_utils.tel.tel_5g_utils import connect_both_devices_to_wifi
+from acts_contrib.test_utils.tel.tel_5g_utils import disable_apm_mode_both_devices
 from acts_contrib.test_utils.tel.tel_5g_utils import provision_both_devices_for_5g
 from acts_contrib.test_utils.tel.tel_5g_utils import provision_both_devices_for_volte
 from acts_contrib.test_utils.tel.tel_5g_utils import provision_both_devices_for_wfc_cell_pref
 from acts_contrib.test_utils.tel.tel_5g_utils import provision_both_devices_for_wfc_wifi_pref
 from acts_contrib.test_utils.tel.tel_5g_utils import verify_5g_attach_for_both_devices
-from acts_contrib.test_utils.tel.tel_5g_utils import disable_apm_mode_both_devices
-
-from acts.utils import rand_ascii_str
+from acts_contrib.test_utils.tel.tel_mms_utils import _mms_test_mo
+from acts_contrib.test_utils.tel.tel_mms_utils import _mms_test_mt
+from acts_contrib.test_utils.tel.tel_mms_utils import _long_mms_test_mo
 
 class Nsa5gMmsTest(TelephonyBaseTest):
     def setup_class(self):
@@ -58,39 +51,8 @@ class Nsa5gMmsTest(TelephonyBaseTest):
         ensure_phones_idle(self.log, self.android_devices)
 
 
-    def _mms_test_mo(self, ads, expected_result=True):
-        return self._mms_test(
-            [ads[0], ads[1]], expected_result=expected_result)
-
-    def _mms_test_mt(self, ads, expected_result=True):
-        return self._mms_test(
-            [ads[1], ads[0]], expected_result=expected_result)
-
-    def _mms_test(self, ads, expected_result=True):
-        """Test MMS between two phones.
-
-        Returns:
-            True if success.
-            False if failed.
-        """
-        for length in self.message_lengths:
-            message_array = [("Test Message", rand_ascii_str(length), None)]
-            if not mms_send_receive_verify(
-                    self.log,
-                    ads[0],
-                    ads[1],
-                    message_array,
-                    expected_result=expected_result):
-                self.log.warning("MMS of body length %s test failed", length)
-                return False
-            else:
-                self.log.info("MMS of body length %s test succeeded", length)
-        self.log.info("MMS test of body lengths %s succeeded",
-                      self.message_lengths)
-        return True
-
-
     """ Tests Begin """
+
 
     @test_tracker_info(uuid="bc484c2c-8086-42db-94cd-a1e4a35f35cf")
     @TelephonyBaseTest.tel_test_wrap
@@ -109,7 +71,7 @@ class Nsa5gMmsTest(TelephonyBaseTest):
         if not provision_both_devices_for_5g(self.log, ads):
             return False
 
-        if not self._mms_test_mo(ads):
+        if not _mms_test_mo(self.log, ads):
             return False
 
         if not verify_5g_attach_for_both_devices(self.log, ads):
@@ -117,6 +79,7 @@ class Nsa5gMmsTest(TelephonyBaseTest):
 
         self.log.info("PASS - mms test over 5g nsa validated")
         return True
+
 
     @test_tracker_info(uuid="51d42104-cb87-4c9b-9a16-302e246a21dc")
     @TelephonyBaseTest.tel_test_wrap
@@ -140,7 +103,7 @@ class Nsa5gMmsTest(TelephonyBaseTest):
         if not provision_both_devices_for_5g(self.log, ads):
             return False
 
-        if not self._mms_test_mo(ads):
+        if not _mms_test_mo(self.log, ads):
             return False
 
         if not verify_5g_attach_for_both_devices(self.log, ads):
@@ -148,6 +111,7 @@ class Nsa5gMmsTest(TelephonyBaseTest):
 
         self.log.info("PASS - volte mms test over 5g nsa validated")
         return True
+
 
     @test_tracker_info(uuid="97d6b071-aef2-40c1-8245-7be6c31870a6")
     @TelephonyBaseTest.tel_test_wrap
@@ -180,7 +144,7 @@ class Nsa5gMmsTest(TelephonyBaseTest):
                 verify_callee_func=None):
             return False
 
-        if not self._mms_test_mo(ads):
+        if not _mms_test_mo(self.log, ads):
             return False
 
         if not verify_5g_attach_for_both_devices(self.log, ads):
@@ -219,7 +183,7 @@ class Nsa5gMmsTest(TelephonyBaseTest):
             return False
         time.sleep(WAIT_TIME_ANDROID_STATE_SETTLING)
 
-        if not self._mms_test_mo(ads):
+        if not _mms_test_mo(self.log, ads):
             return False
 
         self.log.info("PASS - iwlan mms test over 5g nsa validated")
@@ -256,7 +220,7 @@ class Nsa5gMmsTest(TelephonyBaseTest):
             return False
         time.sleep(WAIT_TIME_ANDROID_STATE_SETTLING)
 
-        if not self._mms_test_mo(ads):
+        if not _mms_test_mo(self.log, ads):
             self.log.error("Failed to send receive sms over 5g nsa")
             return False
         self.log.info("PASS - iwlan mms test over 5g nsa validated")
@@ -307,7 +271,8 @@ class Nsa5gMmsTest(TelephonyBaseTest):
                 verify_callee_func=None):
             return False
 
-        return self._mms_test_mo(ads)
+        return _mms_test_mo(self.log, ads)
+
 
     @test_tracker_info(uuid="68c8e0ca-bea4-45e4-92cf-19424ee47ca4")
     @TelephonyBaseTest.tel_test_wrap
@@ -346,11 +311,94 @@ class Nsa5gMmsTest(TelephonyBaseTest):
                 verify_callee_func=None):
             return False
 
-        if not self._mms_test_mo(ads):
+        if not _mms_test_mo(self.log, ads):
             return False
 
         if not verify_5g_attach_for_both_devices(self.log, ads):
             return False
         return True
+
+
+    @test_tracker_info(uuid="8c795c3a-59d4-408c-9b99-5287e79ba00b")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_mms_long_message_mo_mt(self):
+        """Test MMS basic function between two phone. Phones in nsa 5G network.
+
+        Airplane mode is off. Phone in nsa 5G.
+        Send MMS from PhoneA to PhoneB.
+        Verify received message on PhoneB is correct.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+
+        ads = self.android_devices
+
+        if not disable_apm_mode_both_devices(self.log, ads):
+            return False
+
+        if not provision_both_devices_for_5g(self.log, ads):
+            return False
+
+        return _long_mms_test_mo(self.log, ads)
+
+
+    @test_tracker_info(uuid="e09b82ab-69a9-4eae-8cbe-b6f2cff993ad")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_mms_mo_wifi(self):
+        """Test MMS basic function between two phone. Phones in nsa 5g network.
+
+        Airplane mode is off. Phone in nsa 5G.
+        Connect to Wifi.
+        Send MMS from PhoneA to PhoneB.
+        Verify received message on PhoneB is correct.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+
+        ads = self.android_devices
+
+        if not disable_apm_mode_both_devices(self.log, ads):
+            return False
+
+        if not provision_both_devices_for_5g(self.log, ads):
+            return False
+
+        ensure_wifi_connected(self.log, ads[0], self.wifi_network_ssid,
+                              self.wifi_network_pass)
+
+        return _mms_test_mo(self.log, ads)
+
+
+    @test_tracker_info(uuid="fedae24f-2577-4f84-9d76-53bbbe109d48")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_5g_nsa_mms_mt_wifi(self):
+        """Test MMS basic function between two phone. Phones in nsa 5g network.
+
+        Airplane mode is off. Phone in nsa 5G.
+        Connect to Wifi.
+        Send MMS from PhoneB to PhoneA.
+        Verify received message on PhoneA is correct.
+
+        Returns:
+            True if success.
+            False if failed.
+        """
+
+        ads = self.android_devices
+
+        if not disable_apm_mode_both_devices(self.log, ads):
+            return False
+
+        if not provision_both_devices_for_5g(self.log, ads):
+            return False
+
+        ensure_wifi_connected(self.log, ads[0], self.wifi_network_ssid,
+                              self.wifi_network_pass)
+
+        return _mms_test_mt(self.log, ads)
 
     """ Tests End """

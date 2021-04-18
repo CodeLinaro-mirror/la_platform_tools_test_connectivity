@@ -63,6 +63,7 @@ from acts_contrib.test_utils.tel.tel_defines import DATA_STATE_DISCONNECTED
 from acts_contrib.test_utils.tel.tel_defines import DATA_ROAMING_ENABLE
 from acts_contrib.test_utils.tel.tel_defines import DATA_ROAMING_DISABLE
 from acts_contrib.test_utils.tel.tel_defines import GEN_4G
+from acts_contrib.test_utils.tel.tel_defines import GEN_5G
 from acts_contrib.test_utils.tel.tel_defines import GEN_UNKNOWN
 from acts_contrib.test_utils.tel.tel_defines import INCALL_UI_DISPLAY_BACKGROUND
 from acts_contrib.test_utils.tel.tel_defines import INCALL_UI_DISPLAY_FOREGROUND
@@ -187,6 +188,7 @@ from acts_contrib.test_utils.tel.tel_subscription_utils import set_subid_for_mes
 from acts_contrib.test_utils.tel.tel_subscription_utils import get_subid_on_same_network_of_host_ad
 from acts_contrib.test_utils.wifi import wifi_test_utils
 from acts_contrib.test_utils.wifi import wifi_constants
+from acts_contrib.test_utils.gnss import gnss_test_utils as gutils
 from acts.utils import adb_shell_ping
 from acts.utils import load_config
 from acts.utils import start_standing_subprocess
@@ -1565,6 +1567,8 @@ def is_current_network_5g_nsa(ad, timeout=30):
         ad.droid.telephonyStopTrackingDisplayInfoChange()
     return None
 
+def is_current_network_5g_nsa_for_subscription(ad, timeout=30, sub_id=None):
+    return change_voice_subid_temporarily(ad, sub_id, is_current_network_5g_nsa, params=[ad, timeout])
 
 def disconnect_call_by_id(log, ad, call_id):
     """Disconnect call by call id.
@@ -5138,12 +5142,12 @@ def toggle_wfc_for_subscription(log, ad, new_state=None, sub_id=None):
             new_state = not current_state
         if new_state != current_state:
             ad.log.info(
-                "Toggle Enhanced 4G LTE Mode from %s to %s on sub_id %s",
+                "Toggle Wi-Fi calling from %s to %s on sub_id %s",
                 current_state, new_state, sub_id)
             ad.droid.imsMmTelSetVoWiFiSettingEnabled(sub_id, new_state)
         check_state = ad.droid.imsMmTelIsVoWiFiSettingEnabled(sub_id)
         if check_state != new_state:
-            ad.log.error("Failed to toggle Enhanced 4G LTE Mode to %s, \
+            ad.log.error("Failed to toggle Wi-Fi calling to %s, \
                 still set to %s on sub_id %s", new_state, check_state, sub_id)
             result = False
         return result
@@ -6816,6 +6820,11 @@ def ensure_network_generation_for_subscription(
         ad.log.info("MSIM - Non DDS, ignore data RAT")
         return True
 
+    if generation == GEN_5G:
+        if is_current_network_5g_nsa(ad):
+            ad.log.info("Current network type is 5G NSA.")
+            return True
+
     if is_droid_in_network_generation_for_subscription(
             log, ad, sub_id, generation, voice_or_data):
         return True
@@ -7927,7 +7936,7 @@ def find_qxdm_log_mask(ad, mask="default.cfg"):
         start_nexuslogger(ad)
         # Find the log mask path
         for path in (DEFAULT_QXDM_LOG_PATH, "/data/diag_logs",
-                     "/vendor/etc/mdlog/"):
+                     "/vendor/etc/mdlog/", "/vendor/etc/modem/"):
             out = ad.adb.shell(
                 "find %s -type f -iname %s" % (path, mask), ignore_status=True)
             if out and "No such" not in out and "Permission denied" not in out:
@@ -7936,9 +7945,10 @@ def find_qxdm_log_mask(ad, mask="default.cfg"):
                 else:
                     setattr(ad, "qxdm_log_path", path)
                 return out.split("\n")[0]
-        if mask in ad.adb.shell("ls /vendor/etc/mdlog/"):
-            setattr(ad, "qxdm_log_path", DEFAULT_QXDM_LOG_PATH)
-            return "%s/%s" % ("/vendor/etc/mdlog/", mask)
+        for mask_file in ("/vendor/etc/mdlog/", "/vendor/etc/modem/"):
+            if mask in ad.adb.shell("ls %s" % mask_file, ignore_status=True):
+                setattr(ad, "qxdm_log_path", DEFAULT_QXDM_LOG_PATH)
+                return "%s/%s" % (mask_file, mask)
     else:
         out = ad.adb.shell("ls %s" % mask, ignore_status=True)
         if out and "No such" not in out:
@@ -8246,6 +8256,11 @@ def start_adb_tcpdump(ad,
             else:
                 cmds.append("adb -s %s shell tcpdump -i %s -s0 -w %s" %
                             (ad.serial, intf, log_file_name))
+    if not gutils.check_chipset_vendor_by_qualcomm(ad):
+        log_file_name = ("/data/local/tmp/tcpdump/tcpdump_%s_any_%s_%s.pcap"
+                         % (ad.serial, test_name, begin_time))
+        cmds.append("adb -s %s shell nohup tcpdump -i any -s0 -w %s" %
+                    (ad.serial, log_file_name))
     for cmd in cmds:
         ad.log.info(cmd)
         try:
@@ -10981,7 +10996,7 @@ def voice_call_in_collision_with_mt_sms_msim(
 
     return tel_result_wrapper
 
-def change_voice_subid_temporarily(ad, sub_id, state_check_func):
+def change_voice_subid_temporarily(ad, sub_id, state_check_func, params=None):
     result = False
     voice_sub_id_changed = False
     current_sub_id = get_incoming_voice_sub_id(ad)
@@ -10989,8 +11004,12 @@ def change_voice_subid_temporarily(ad, sub_id, state_check_func):
         set_incoming_voice_sub_id(ad, sub_id)
         voice_sub_id_changed = True
 
-    if state_check_func():
-        result = True
+    if not params:
+        if state_check_func():
+            result = True
+    else:
+        if state_check_func(*params):
+            result = True
 
     if voice_sub_id_changed:
         set_incoming_voice_sub_id(ad, current_sub_id)
