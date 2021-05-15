@@ -106,7 +106,7 @@ from acts_contrib.test_utils.tel.tel_test_utils import wait_for_wfc_disabled
 from acts_contrib.test_utils.tel.tel_test_utils import get_capability_for_subscription
 from acts_contrib.test_utils.tel.tel_test_utils import num_active_calls
 from acts_contrib.test_utils.tel.tel_test_utils import hangup_call
-from acts_contrib.test_utils.tel.tel_test_utils import is_current_network_5g_nsa_for_subscription
+from acts_contrib.test_utils.tel.tel_5g_utils import is_current_network_5g_nsa_for_subscription
 
 CallResult = TelephonyVoiceTestResult.CallResult.Value
 
@@ -853,6 +853,10 @@ def phone_setup_iwlan_for_subscription(log,
             ad.log.error("Failed to set to %s data.", nw_gen)
             return False
     toggle_airplane_mode(log, ad, is_airplane_mode, strict_checking=False)
+
+    if not toggle_volte_for_subscription(log, ad, sub_id, new_state=True):
+        return False
+
     # check if WFC supported phones
     if wfc_mode != WFC_MODE_DISABLED and not ad.droid.imsIsWfcEnabledByPlatform(
     ):
