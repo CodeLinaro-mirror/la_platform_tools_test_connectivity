@@ -160,6 +160,7 @@ def p2p_connect(ad1,
         if go_ad is None:
             go_ad = ad1
         find_p2p_device(ad1, ad2)
+        # GO might be another peer, so ad2 needs to find it first.
         find_p2p_group_owner(ad2, go_ad)
     elif p2p_connect_type == p2pconsts.P2P_CONNECT_JOIN:
         find_p2p_group_owner(ad1, ad2)
@@ -286,6 +287,7 @@ def find_p2p_device(ad1, ad2):
     ad1.droid.wifiP2pDiscoverPeers()
     ad2.droid.wifiP2pDiscoverPeers()
     p2p_find_result = False
+    ad1.ed.clear_events(p2pconsts.PEER_AVAILABLE_EVENT)
     while not p2p_find_result:
         ad1_event = ad1.ed.pop_event(p2pconsts.PEER_AVAILABLE_EVENT,
                                      p2pconsts.P2P_FIND_TIMEOUT)
@@ -303,10 +305,10 @@ def find_p2p_group_owner(ad1, ad2):
         ad1: The android device
         ad2: The android device which is a group owner
     """
-    ad2.droid.wifiP2pStopPeerDiscovery()
-    time.sleep(p2pconsts.DEFAULT_FUNCTION_SWITCH_TIME)
+    ad2.droid.wifiP2pDiscoverPeers()
     ad1.droid.wifiP2pDiscoverPeers()
     p2p_find_result = False
+    ad1.ed.clear_events(p2pconsts.PEER_AVAILABLE_EVENT)
     while not p2p_find_result:
         ad1_event = ad1.ed.pop_event(p2pconsts.PEER_AVAILABLE_EVENT,
                                      p2pconsts.P2P_FIND_TIMEOUT)
