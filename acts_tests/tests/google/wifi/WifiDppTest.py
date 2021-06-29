@@ -97,6 +97,8 @@ class WifiDppTest(WifiBaseTest):
     # constrain).
     utils.require_sl4a((self.dut,))
     utils.sync_device_time(self.dut)
+    for ad in self.android_devices:
+      wutils.wifi_test_device_init(ad)
 
     req_params = ["dpp_r1_test_only"]
     opt_param = ["wifi_psk_network", "wifi_sae_network"]
@@ -259,7 +261,7 @@ class WifiDppTest(WifiBaseTest):
     self.del_uri(device, "'*'")
 
     self.log.info("Generating a URI for the Responder")
-    cmd = "wpa_cli -iwlan0 DPP_BOOTSTRAP_GEN type=qrcode info=%s" % info
+    cmd = "wpa_cli DPP_BOOTSTRAP_GEN type=qrcode info=%s" % info
 
     if mac:
       cmd += " mac=%s" % mac
@@ -272,6 +274,12 @@ class WifiDppTest(WifiBaseTest):
     if "FAIL" in result:
       asserts.fail("gen_uri: Failed to generate a URI. Command used: %s" % cmd)
 
+    if "\n" not in result:
+      asserts.fail(
+          "gen_uri: Helper device not responding correctly, "
+          "may need to restart it. Command used: %s" % cmd)
+
+    result = result[result.index("\n") + 1:]
     device.log.info("Generated URI, id = %s" % result)
 
     return result
@@ -288,12 +296,13 @@ class WifiDppTest(WifiBaseTest):
 
         """
     self.log.info("Reading the contents of the URI of the Responder")
-    cmd = "wpa_cli -iwlan0 DPP_BOOTSTRAP_GET_URI %s" % uri_id
+    cmd = "wpa_cli DPP_BOOTSTRAP_GET_URI %s" % uri_id
     result = device.adb.shell(cmd)
 
     if "FAIL" in result:
       asserts.fail("get_uri: Failed to read URI. Command used: %s" % cmd)
 
+    result = result[result.index("\n") + 1:]
     device.log.info("URI contents = %s" % result)
 
     return result
@@ -306,7 +315,7 @@ class WifiDppTest(WifiBaseTest):
           uri_id: URI ID returned by gen_uri method
     """
     self.log.info("Deleting the Responder URI")
-    cmd = "wpa_cli -iwlan0 DPP_BOOTSTRAP_REMOVE %s" % uri_id
+    cmd = "wpa_cli DPP_BOOTSTRAP_REMOVE %s" % uri_id
     result = device.adb.shell(cmd)
 
     # If URI was already flushed, ignore a failure here
@@ -394,14 +403,14 @@ class WifiDppTest(WifiBaseTest):
     # Stop responder first
     self.stop_responder(device)
 
-    cmd = "wpa_cli -iwlan0 set dpp_configurator_params guard=1 %s" % conf
+    cmd = "wpa_cli set dpp_configurator_params guard=1 %s" % conf
     device.log.debug("Command used: %s" % cmd)
     result = self.helper_dev.adb.shell(cmd)
     if "FAIL" in result:
       asserts.fail(
           "start_responder_configurator: Failure. Command used: %s" % cmd)
 
-    cmd = "wpa_cli -iwlan0 DPP_LISTEN %d role=configurator netrole=%s" % (freq,
+    cmd = "wpa_cli DPP_LISTEN %d role=configurator netrole=%s" % (freq,
                                                                   net_role)
     device.log.debug("Command used: %s" % cmd)
     result = self.helper_dev.adb.shell(cmd)
@@ -435,13 +444,13 @@ class WifiDppTest(WifiBaseTest):
     self.stop_responder(device)
     self.log.info("Starting Responder in Enrollee mode, frequency %sMHz" % freq)
 
-    cmd = "wpa_cli -iwlan0 DPP_LISTEN %d role=enrollee netrole=%s" % (freq, net_role)
+    cmd = "wpa_cli DPP_LISTEN %d role=enrollee netrole=%s" % (freq, net_role)
     result = device.adb.shell(cmd)
 
     if "FAIL" in result:
       asserts.fail("start_responder_enrollee: Failure. Command used: %s" % cmd)
 
-    device.adb.shell("wpa_cli -iwlan0 set dpp_config_processing 2")
+    device.adb.shell("wpa_cli set dpp_config_processing 2")
 
     device.log.info("Started responder in enrollee mode")
 
@@ -451,13 +460,13 @@ class WifiDppTest(WifiBaseTest):
        Args:
            device: Device object
     """
-    result = device.adb.shell("wpa_cli -iwlan0 DPP_STOP_LISTEN")
+    result = device.adb.shell("wpa_cli DPP_STOP_LISTEN")
     if "FAIL" in result:
       asserts.fail("stop_responder: Failed to stop responder")
-    device.adb.shell("wpa_cli -iwlan0 set dpp_configurator_params")
-    device.adb.shell("wpa_cli -iwlan0 set dpp_config_processing 0")
+    device.adb.shell("wpa_cli set dpp_configurator_params")
+    device.adb.shell("wpa_cli set dpp_config_processing 0")
     if flush:
-      device.adb.shell("wpa_cli -iwlan0 flush")
+      device.adb.shell("wpa_cli flush")
     device.log.info("Stopped responder")
 
   def start_dpp_as_initiator_configurator(self,
@@ -745,11 +754,11 @@ class WifiDppTest(WifiBaseTest):
        Args:
            device: Device object
     """
-    result = device.adb.shell("wpa_cli -iwlan0 DPP_STOP_LISTEN")
+    result = device.adb.shell("wpa_cli DPP_STOP_LISTEN")
     if "FAIL" in result:
       asserts.fail("stop_initiator: Failed to stop initiator")
     if flush:
-      device.adb.shell("wpa_cli -iwlan0 flush")
+      device.adb.shell("wpa_cli flush")
     device.log.info("Stopped initiator")
 
   def start_initiator_configurator(self,
@@ -816,17 +825,18 @@ class WifiDppTest(WifiBaseTest):
     else:  # PSK
       conf += " psk=%s" % psk_encoded
 
-    cmd = "wpa_cli -iwlan0 DPP_QR_CODE '%s'" % (uri)
+    cmd = "wpa_cli DPP_QR_CODE '%s'" % (uri)
     self.log.info ("Command used: %s" % cmd)
     result = self.helper_dev.adb.shell(cmd)
     if "FAIL" in result:
       asserts.fail(
           "start_initiator_configurator: Failure. Command used: %s" % cmd)
 
+    result = result[result.index("\n") + 1:]
     uri_id = result
     device.log.info("peer id = %s" % result)
 
-    cmd = "wpa_cli -iwlan0 DPP_AUTH_INIT peer=%s %s " % (result, conf)
+    cmd = "wpa_cli DPP_AUTH_INIT peer=%s %s " % (result, conf)
     self.log.info("Command used: %s" % cmd)
     result = self.helper_dev.adb.shell(cmd)
     if "FAIL" in result:

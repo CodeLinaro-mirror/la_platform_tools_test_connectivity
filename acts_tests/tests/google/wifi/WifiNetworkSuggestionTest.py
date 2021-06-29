@@ -68,10 +68,11 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
         super().setup_class()
 
         self.dut = self.android_devices[0]
+        wutils.wifi_test_device_init(self.dut)
         opt_param = [
             "open_network", "reference_networks", "hidden_networks", "radius_conf_2g",
             "radius_conf_5g", "ca_cert", "eap_identity", "eap_password", "passpoint_networks",
-            "domain_suffix_match", "wifi6_models"]
+            "domain_suffix_match"]
         self.unpack_userparams(opt_param_names=opt_param,)
 
         if "AccessPoint" in self.user_params:
@@ -240,16 +241,12 @@ class WifiNetworkSuggestionTest(WifiBaseTest):
 
         self.add_suggestions_and_ensure_connection(
             network_suggestions, wifi_network[WifiEnums.SSID_KEY], None)
-        wutils.verify_11ax_wifi_connection(
-            self.dut, self.wifi6_models, "wifi6_ap" in self.user_params)
 
         # Reboot and wait for connection back to the same suggestion.
         self.dut.reboot()
         time.sleep(DEFAULT_TIMEOUT)
 
         wutils.wait_for_connect(self.dut, wifi_network[WifiEnums.SSID_KEY])
-        wutils.verify_11ax_wifi_connection(
-            self.dut, self.wifi6_models, "wifi6_ap" in self.user_params)
 
         self.remove_suggestions_disconnect_and_ensure_no_connection_back(
             network_suggestions, wifi_network[WifiEnums.SSID_KEY])
