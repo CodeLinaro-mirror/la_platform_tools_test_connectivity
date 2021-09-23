@@ -29,6 +29,7 @@ from acts.controllers.utils_lib import ssh
 from acts.metrics.loggers.blackbox import BlackboxMappedMetricLogger
 from acts_contrib.test_utils.wifi import ota_chamber
 from acts_contrib.test_utils.wifi import wifi_performance_test_utils as wputils
+from acts_contrib.test_utils.wifi.wifi_performance_test_utils.bokeh_figure import BokehFigure
 from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
 from acts_contrib.test_utils.wifi import wifi_retail_ap as retail_ap
 from functools import partial
@@ -46,6 +47,7 @@ class WifiSensitivityTest(WifiRvrTest, WifiPingTest):
     example_connectivity_performance_ap_sta.json.
     """
 
+    MAX_CONSECUTIVE_ZEROS = 5
     RSSI_POLL_INTERVAL = 0.2
     VALID_TEST_CONFIGS = {
         1: ['legacy', 'VHT20'],
@@ -172,6 +174,7 @@ class WifiSensitivityTest(WifiRvrTest, WifiPingTest):
         # Turn WiFi OFF
         for dev in self.android_devices:
             wutils.wifi_toggle_state(dev, False)
+            dev.go_to_sleep()
         self.process_testclass_results()
 
     def setup_test(self):
@@ -246,7 +249,7 @@ class WifiSensitivityTest(WifiRvrTest, WifiPingTest):
                 metric_tag_dict['channel'], metric_tag_dict['mode'],
                 metric_tag_dict['num_streams'], metric_tag_dict['chain_mask'])
             metric_key = '{}.avg_sensitivity'.format(metric_tag)
-            metric_value = numpy.nanmean(metric_data)
+            metric_value = numpy.mean(metric_data)
             self.testclass_metric_logger.add_metric(metric_key, metric_value)
 
         # write csv
@@ -331,6 +334,7 @@ class WifiSensitivityTest(WifiRvrTest, WifiPingTest):
                 testcase_params['channel'])] - ping_result['range'])
 
     def setup_sensitivity_test(self, testcase_params):
+        # Setup test
         if testcase_params['traffic_type'].lower() == 'ping':
             self.setup_ping_test(testcase_params)
             self.run_sensitivity_test = self.run_ping_test
@@ -386,15 +390,21 @@ class WifiSensitivityTest(WifiRvrTest, WifiPingTest):
         Args:
             testcase_params: dict containing AP and other test params
         """
-        # Check battery level before test
-        if not wputils.health_check(self.dut, 10):
-            asserts.skip('Battery level too low. Skipping test.')
         # Turn screen off to preserve battery
-        self.dut.go_to_sleep()
+        if self.testbed_params.get('screen_on',
+                                   False) or self.testclass_params.get(
+                                       'screen_on', False):
+            self.dut.droid.wakeLockAcquireDim()
+        else:
+            self.dut.go_to_sleep()
         if wputils.validate_network(self.dut,
                                     testcase_params['test_network']['SSID']):
             self.log.info('Already connected to desired network')
         else:
+            wutils.wifi_toggle_state(self.dut, False)
+            wutils.set_wifi_country_code(self.dut,
+                                         self.testclass_params['country_code'])
+            wutils.wifi_toggle_state(self.dut, True)
             wutils.reset_wifi(self.dut)
             wutils.set_wifi_country_code(self.dut,
                                          self.testclass_params['country_code'])
@@ -478,6 +488,11 @@ class WifiSensitivityTest(WifiRvrTest, WifiPingTest):
 
     def compile_test_params(self, testcase_params):
         """Function that generates test params based on the test name."""
+        # Check if test should be skipped.
+        wputils.check_skip_conditions(testcase_params, self.dut,
+                                      self.access_point,
+                                      getattr(self, 'ota_chamber', None))
+
         band = self.access_point.band_lookup_by_channel(
             testcase_params['channel'])
         testcase_params['test_network'] = self.main_network[band]
@@ -680,15 +695,21 @@ class WifiOtaSensitivityTest(WifiSensitivityTest):
                     self.dut, int(testcase_params['chain_mask']))
             else:
                 wputils.set_ini_two_chain_mode(self.dut)
-        # Check battery level before test
-        if not wputils.health_check(self.dut, 10):
-            asserts.skip('Battery level too low. Skipping test.')
         # Turn screen off to preserve battery
-        self.dut.go_to_sleep()
+        if self.testbed_params.get('screen_on',
+                                   False) or self.testclass_params.get(
+                                       'screen_on', False):
+            self.dut.droid.wakeLockAcquireDim()
+        else:
+            self.dut.go_to_sleep()
         if wputils.validate_network(self.dut,
                                     testcase_params['test_network']['SSID']):
             self.log.info('Already connected to desired network')
         else:
+            wutils.wifi_toggle_state(self.dut, False)
+            wutils.set_wifi_country_code(self.dut,
+                                         self.testclass_params['country_code'])
+            wutils.wifi_toggle_state(self.dut, True)
             wutils.reset_wifi(self.dut)
             wutils.set_wifi_country_code(self.dut,
                                          self.testclass_params['country_code'])
@@ -697,7 +718,7 @@ class WifiOtaSensitivityTest(WifiSensitivityTest):
             wutils.wifi_connect(self.dut,
                                 testcase_params['test_network'],
                                 num_of_tries=5,
-                                check_connectivity=False)
+                                check_connectivity=True)
         self.dut_ip = self.dut.droid.connectivityGetIPv4Addresses('wlan0')[0]
 
     def process_testclass_results(self):
@@ -744,10 +765,9 @@ class WifiOtaSensitivityTest(WifiSensitivityTest):
                 test_id_str = 'Channel {} - {} MCS{}'.format(
                     test_id_dict['channel'], test_id_dict['mode'],
                     test_id_dict['rate'])
-            curr_plot = wputils.BokehFigure(
-                title=str(test_id_str),
-                x_label='Orientation (deg)',
-                primary_y_label='Sensitivity (dBm)')
+            curr_plot = BokehFigure(title=str(test_id_str),
+                                    x_label='Orientation (deg)',
+                                    primary_y_label='Sensitivity (dBm)')
             for line_id, line_results in test_data.items():
                 curr_plot.add_line(line_results['orientation'],
                                    line_results['sensitivity'],
@@ -776,7 +796,7 @@ class WifiOtaSensitivityTest(WifiSensitivityTest):
             curr_plot.generate_figure(output_file_path)
             plots.append(curr_plot)
         output_file_path = os.path.join(current_context, 'results.html')
-        wputils.BokehFigure.save_figures(plots, output_file_path)
+        BokehFigure.save_figures(plots, output_file_path)
 
     def get_start_atten(self, testcase_params):
         """Gets the starting attenuation for this sensitivity test.
@@ -876,8 +896,10 @@ class WifiOtaSensitivity_TenDegree_Test(WifiOtaSensitivityTest):
         requested_channels = [6, 36, 149]
         requested_rates = [
             self.RateTuple(8, 1, 86.7),
+            self.RateTuple(6, 1, 65),
             self.RateTuple(2, 1, 21.7),
             self.RateTuple(8, 2, 173.3),
+            self.RateTuple(6, 2, 130.3),
             self.RateTuple(2, 2, 43.3)
         ]
         self.tests = self.generate_test_cases(requested_channels,

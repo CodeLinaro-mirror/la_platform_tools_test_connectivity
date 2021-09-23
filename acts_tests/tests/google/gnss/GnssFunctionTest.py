@@ -29,7 +29,6 @@ from acts_contrib.test_utils.tel import tel_test_utils as tutils
 from acts_contrib.test_utils.gnss import gnss_test_utils as gutils
 from acts.utils import get_current_epoch_time
 from acts.utils import unzip_maintain_permissions
-from acts.utils import force_airplane_mode
 from acts_contrib.test_utils.wifi.wifi_test_utils import wifi_toggle_state
 from acts_contrib.test_utils.tel.tel_test_utils import flash_radio
 from acts_contrib.test_utils.tel.tel_test_utils import verify_internet_connection
@@ -73,6 +72,7 @@ from acts_contrib.test_utils.gnss.gnss_test_utils import parse_gtw_gpstool_log
 from acts_contrib.test_utils.gnss.gnss_test_utils import enable_supl_mode
 from acts_contrib.test_utils.gnss.gnss_test_utils import start_toggle_gnss_by_gtw_gpstool
 from acts_contrib.test_utils.gnss.gnss_test_utils import grant_location_permission
+from acts_contrib.test_utils.gnss.gnss_test_utils import is_mobile_data_on
 from acts_contrib.test_utils.tel.tel_test_utils import start_adb_tcpdump
 from acts_contrib.test_utils.tel.tel_test_utils import stop_adb_tcpdump
 from acts_contrib.test_utils.tel.tel_test_utils import get_tcpdump_log
@@ -98,7 +98,6 @@ class GnssFunctionTest(BaseTestClass):
                       "weak_gnss_signal_attenuation",
                       "no_gnss_signal_attenuation", "gnss_init_error_list",
                       "gnss_init_error_allowlist", "pixel_lab_location",
-                      "legacy_wifi_xtra_cs_criteria", "legacy_projects",
                       "qdsp6m_path", "supl_capabilities", "ttff_test_cycle",
                       "collect_logs", "dpo_threshold"]
         self.unpack_userparams(req_param_names=req_params)
@@ -110,10 +109,6 @@ class GnssFunctionTest(BaseTestClass):
         self.ttff_mode = {"cs": "Cold Start",
                           "ws": "Warm Start",
                           "hs": "Hot Start"}
-        if self.ad.model in self.legacy_projects:
-            self.wifi_xtra_cs_criteria = self.legacy_wifi_xtra_cs_criteria
-        else:
-            self.wifi_xtra_cs_criteria = self.xtra_cs_criteria
         if self.collect_logs and \
             gutils.check_chipset_vendor_by_qualcomm(self.ad):
             self.flash_new_radio_or_mbn()
@@ -138,12 +133,12 @@ class GnssFunctionTest(BaseTestClass):
                                        self.default_gnss_signal_attenuation)
         if check_call_state_connected_by_adb(self.ad):
             hangup_call(self.ad.log, self.ad)
-        if int(self.ad.adb.shell("settings get global airplane_mode_on")) != 0:
+        if self.ad.droid.connectivityCheckAirplaneMode():
             self.ad.log.info("Force airplane mode off")
-            force_airplane_mode(self.ad, False)
+            self.ad.droid.connectivityToggleAirplaneMode(False)
         if self.ad.droid.wifiCheckState():
             wifi_toggle_state(self.ad, False)
-        if int(self.ad.adb.shell("settings get global mobile_data")) != 1:
+        if not is_mobile_data_on(self.ad):
             set_mobile_data(self.ad, True)
         if int(self.ad.adb.shell(
             "settings get global wifi_scan_always_enabled")) != 1:
@@ -287,7 +282,7 @@ class GnssFunctionTest(BaseTestClass):
         """
         self.start_qxdm_and_tcpdump_log()
         self.ad.log.info("Turn airplane mode on")
-        force_airplane_mode(self.ad, True)
+        self.ad.droid.connectivityToggleAirplaneMode(True)
         self.run_ttff_via_gtw_gpstool(mode, criteria)
 
     def supl_ttff_weak_gnss_signal(self, mode, criteria):
@@ -337,7 +332,7 @@ class GnssFunctionTest(BaseTestClass):
         disable_supl_mode(self.ad)
         self.start_qxdm_and_tcpdump_log()
         self.ad.log.info("Turn airplane mode on")
-        force_airplane_mode(self.ad, True)
+        self.ad.droid.connectivityToggleAirplaneMode(True)
         wifi_toggle_state(self.ad, True)
         connect_to_wifi_network(
             self.ad, self.ssid_map[self.pixel_lab_network[0]["SSID"]])
@@ -383,26 +378,12 @@ class GnssFunctionTest(BaseTestClass):
                                       type="gnss",
                                       testtime=tracking_minutes,
                                       meas_flag=True)
-        dpo_results = self.ad.search_logcat("HardwareClockDiscontinuityCount",
-                                            dpo_begin_time)
-        if not dpo_results:
-            raise signals.TestError(
-                "No \"HardwareClockDiscontinuityCount\" is found in logs.")
-        self.ad.log.info(dpo_results[0]["log_message"])
-        self.ad.log.info(dpo_results[-1]["log_message"])
-        first_dpo_count = int(dpo_results[0]["log_message"].split()[-1])
-        final_dpo_count = int(dpo_results[-1]["log_message"].split()[-1])
-        dpo_rate = ((final_dpo_count - first_dpo_count)/(tracking_minutes * 60))
-        dpo_engage_rate = "{percent:.2%}".format(percent=dpo_rate)
-        self.ad.log.info("DPO is ON for %d seconds during %d minutes test." % (
-            final_dpo_count - first_dpo_count, tracking_minutes))
-        self.ad.log.info("TestResult DPO_Engage_Rate " + dpo_engage_rate)
-        threshold = "{percent:.0%}".format(percent=self.dpo_threshold / 100)
-        asserts.assert_true(dpo_rate * 100 > self.dpo_threshold,
-                            "DPO only engaged %s in %d minutes test with "
-                            "threshold %s." % (dpo_engage_rate,
-                                               tracking_minutes,
-                                               threshold))
+        if gutils.check_chipset_vendor_by_qualcomm(self.ad):
+            gutils.check_dpo_rate_via_gnss_meas(self.ad,
+                                                dpo_begin_time,
+                                                self.dpo_threshold)
+        else:
+            gutils.check_dpo_rate_via_brcm_log(self.ad, self.dpo_threshold)
 
     @test_tracker_info(uuid="499d2091-640a-4735-9c58-de67370e4421")
     def test_gnss_init_error(self):
@@ -1052,9 +1033,9 @@ class GnssFunctionTest(BaseTestClass):
 
         Expected Results:
             XTRA/LTO TTFF Cold Start results should be within
-            wifi_xtra_cs_criteria.
+            xtra_cs_criteria.
         """
-        self.xtra_ttff_wifi("cs", self.wifi_xtra_cs_criteria)
+        self.xtra_ttff_wifi("cs", self.xtra_cs_criteria)
 
     @test_tracker_info(uuid="f6e79b31-99d5-49ca-974f-4543957ea449")
     def test_xtra_ttff_ws_wifi(self):
@@ -1171,7 +1152,7 @@ class GnssFunctionTest(BaseTestClass):
         disable_supl_mode(self.ad)
         self.start_qxdm_and_tcpdump_log()
         self.ad.log.info("Turn airplane mode on")
-        force_airplane_mode(self.ad, True)
+        self.ad.droid.connectivityToggleAirplaneMode(True)
         wifi_toggle_state(self.ad, True)
         connect_to_wifi_network(
             self.ad, self.ssid_map[self.pixel_lab_network[0]["SSID"]])
@@ -1283,11 +1264,14 @@ class GnssFunctionTest(BaseTestClass):
         start_gnss_by_gtw_gpstool(self.ad, False)
         for test_loop in range(1, 11):
             reboot(self.ad)
+            self.start_qxdm_and_tcpdump_log()
             test_result = process_gnss_by_gtw_gpstool(
                 self.ad, self.supl_hs_criteria, clear_data=False)
             start_gnss_by_gtw_gpstool(self.ad, False)
             self.ad.log.info("Iteration %d => %s" % (test_loop, test_result))
             overall_test_result.append(test_result)
+            gutils.stop_pixel_logger(self.ad)
+            stop_adb_tcpdump(self.ad)
         pass_rate = overall_test_result.count(True)/len(overall_test_result)
         self.ad.log.info("TestResult Pass_rate %s" % format(pass_rate, ".0%"))
         asserts.assert_true(all(overall_test_result),

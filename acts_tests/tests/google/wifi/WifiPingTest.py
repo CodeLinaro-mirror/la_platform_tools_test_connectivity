@@ -29,6 +29,7 @@ from acts.metrics.loggers.blackbox import BlackboxMappedMetricLogger
 from acts_contrib.test_utils.wifi import ota_chamber
 from acts_contrib.test_utils.wifi import ota_sniffer
 from acts_contrib.test_utils.wifi import wifi_performance_test_utils as wputils
+from acts_contrib.test_utils.wifi.wifi_performance_test_utils.bokeh_figure import BokehFigure
 from acts_contrib.test_utils.wifi import wifi_retail_ap as retail_ap
 from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
 from functools import partial
@@ -79,7 +80,11 @@ class WifiPingTest(base_test.BaseTestClass):
         self.access_point = retail_ap.create(self.RetailAccessPoints)[0]
         if hasattr(self,
                    'OTASniffer') and self.testbed_params['sniffer_enable']:
-            self.sniffer = ota_sniffer.create(self.OTASniffer)[0]
+            try:
+                self.sniffer = ota_sniffer.create(self.OTASniffer)[0]
+            except:
+                self.log.warning('Could not start sniffer. Disabling sniffs.')
+                self.testbed_params['sniffer_enable'] = 0
         self.log.info('Access Point Configuration: {}'.format(
             self.access_point.ap_settings))
         self.log_path = os.path.join(logging.log_path, 'results')
@@ -101,6 +106,7 @@ class WifiPingTest(base_test.BaseTestClass):
         # Turn WiFi OFF and reset AP
         for dev in self.android_devices:
             wutils.wifi_toggle_state(dev, False)
+            dev.go_to_sleep()
         self.process_testclass_results()
 
     def setup_test(self):
@@ -252,10 +258,9 @@ class WifiPingTest(base_test.BaseTestClass):
 
         # Plot results
         if 'range' not in self.current_test_name:
-            figure = wputils.BokehFigure(
-                self.current_test_name,
-                x_label='Timestamp (s)',
-                primary_y_label='Round Trip Time (ms)')
+            figure = BokehFigure(self.current_test_name,
+                                 x_label='Timestamp (s)',
+                                 primary_y_label='Round Trip Time (ms)')
             for idx, result in enumerate(ping_range_result['ping_results']):
                 if len(result['rtt']) > 1:
                     x_data = [
@@ -298,15 +303,16 @@ class WifiPingTest(base_test.BaseTestClass):
         if self.testbed_params['sniffer_enable']:
             self.sniffer.start_capture(
                 testcase_params['test_network'],
-                chan=int(testcase_params['channel']),
+                chan=testcase_params['channel'],
                 bw=testcase_params['bandwidth'],
                 duration=testcase_params['ping_duration'] *
                 len(testcase_params['atten_range']) + self.TEST_TIMEOUT)
         # Run ping and sweep attenuation as needed
         zero_counter = 0
+        pending_first_ping = 1
         for atten in testcase_params['atten_range']:
             for attenuator in self.attenuators:
-                attenuator.set_atten(atten, strict=False)
+                attenuator.set_atten(atten, strict=False, retry=True)
             rssi_future = wputils.get_connected_rssi_nb(
                 self.dut,
                 int(testcase_params['ping_duration'] / 2 /
@@ -324,24 +330,38 @@ class WifiPingTest(base_test.BaseTestClass):
             curr_llstats = llstats_obj.llstats_incremental.copy()
             test_result['llstats'].append(curr_llstats)
             if current_ping_stats['connected']:
+                llstats_str = 'TX MCS = {0} ({1:.1f}%). RX MCS = {2} ({3:.1f}%)'.format(
+                    curr_llstats['summary']['common_tx_mcs'],
+                    curr_llstats['summary']['common_tx_mcs_freq'] * 100,
+                    curr_llstats['summary']['common_rx_mcs'],
+                    curr_llstats['summary']['common_rx_mcs_freq'] * 100)
                 self.log.info(
-                    'Attenuation = {0}dB\tPacket Loss = {1}%\t'
-                    'Avg RTT = {2:.2f}ms\tRSSI = {3} [{4},{5}]\t'.format(
-                        atten, current_ping_stats['packet_loss_percentage'],
-                        statistics.mean(current_ping_stats['rtt']),
-                        current_rssi['signal_poll_rssi']['mean'],
-                        current_rssi['chain_0_rssi']['mean'],
-                        current_rssi['chain_1_rssi']['mean']))
+                    'Attenuation = {0}dB\tPacket Loss = {1:.1f}%\t'
+                    'Avg RTT = {2:.2f}ms\tRSSI = {3:.1f} [{4:.1f},{5:.1f}]\t{6}\t'
+                    .format(atten,
+                            current_ping_stats['packet_loss_percentage'],
+                            statistics.mean(current_ping_stats['rtt']),
+                            current_rssi['signal_poll_rssi']['mean'],
+                            current_rssi['chain_0_rssi']['mean'],
+                            current_rssi['chain_1_rssi']['mean'], llstats_str))
                 if current_ping_stats['packet_loss_percentage'] == 100:
                     zero_counter = zero_counter + 1
                 else:
                     zero_counter = 0
+                    pending_first_ping = 0
             else:
                 self.log.info(
                     'Attenuation = {}dB. Disconnected.'.format(atten))
                 zero_counter = zero_counter + 1
             test_result['ping_results'].append(current_ping_stats.as_dict())
-            if zero_counter == self.MAX_CONSECUTIVE_ZEROS:
+            # Test ends when ping loss stable at 0. If test has successfully
+            # started, test ends on MAX_CONSECUTIVE_ZEROS. In case of a restry
+            # extra zeros are allowed to ensure a test properly starts.
+            if self.retry_flag and pending_first_ping:
+                allowable_zeros = self.MAX_CONSECUTIVE_ZEROS**2
+            else:
+                allowable_zeros = self.MAX_CONSECUTIVE_ZEROS
+            if zero_counter == allowable_zeros:
                 self.log.info('Ping loss stable at 100%. Stopping test now.')
                 for idx in range(
                         len(testcase_params['atten_range']) -
@@ -349,6 +369,9 @@ class WifiPingTest(base_test.BaseTestClass):
                     test_result['ping_results'].append(
                         self.DISCONNECTED_PING_RESULT)
                 break
+        # Set attenuator to 0 dB
+        for attenuator in self.attenuators:
+            attenuator.set_atten(0, strict=False, retry=True)
         if self.testbed_params['sniffer_enable']:
             self.sniffer.stop_capture()
         return test_result
@@ -361,12 +384,16 @@ class WifiPingTest(base_test.BaseTestClass):
         """
         band = self.access_point.band_lookup_by_channel(
             testcase_params['channel'])
-        if '2G' in band:
-            frequency = wutils.WifiEnums.channel_2G_to_freq[
-                testcase_params['channel']]
+        if '6G' in band:
+            frequency = wutils.WifiEnums.channel_6G_to_freq[int(
+                testcase_params['channel'].strip('6g'))]
         else:
-            frequency = wutils.WifiEnums.channel_5G_to_freq[
-                testcase_params['channel']]
+            if testcase_params['channel'] < 13:
+                frequency = wutils.WifiEnums.channel_2G_to_freq[
+                    testcase_params['channel']]
+            else:
+                frequency = wutils.WifiEnums.channel_5G_to_freq[
+                    testcase_params['channel']]
         if frequency in wutils.WifiEnums.DFS_5G_FREQUENCIES:
             self.access_point.set_region(self.testbed_params['DFS_region'])
         else:
@@ -386,24 +413,43 @@ class WifiPingTest(base_test.BaseTestClass):
         Args:
             testcase_params: dict containing AP and other test params
         """
-        # Check battery level before test
-        if not wputils.health_check(self.dut, 10):
-            asserts.skip('Battery level too low. Skipping test.')
         # Turn screen off to preserve battery
-        self.dut.go_to_sleep()
+        if self.testbed_params.get('screen_on',
+                                   False) or self.testclass_params.get(
+                                       'screen_on', False):
+            self.dut.droid.wakeLockAcquireDim()
+        else:
+            self.dut.go_to_sleep()
         if wputils.validate_network(self.dut,
                                     testcase_params['test_network']['SSID']):
             self.log.info('Already connected to desired network')
         else:
-            wutils.reset_wifi(self.dut)
-            wutils.set_wifi_country_code(self.dut,
-                                         self.testclass_params['country_code'])
             testcase_params['test_network']['channel'] = testcase_params[
                 'channel']
-            wutils.wifi_connect(self.dut,
-                                testcase_params['test_network'],
-                                num_of_tries=5,
-                                check_connectivity=True)
+            wutils.wifi_toggle_state(self.dut, False)
+            wutils.set_wifi_country_code(self.dut,
+                                         self.testclass_params['country_code'])
+            wutils.wifi_toggle_state(self.dut, True)
+            wutils.reset_wifi(self.dut)
+            if self.testbed_params.get('txbf_off', False):
+                wputils.disable_beamforming(self.dut)
+            wutils.set_wifi_country_code(self.dut,
+                                         self.testclass_params['country_code'])
+            if self.testbed_params['sniffer_enable']:
+                self.sniffer.start_capture(
+                    network={'SSID': testcase_params['test_network']['SSID']},
+                    chan=testcase_params['channel'],
+                    bw=testcase_params['bandwidth'],
+                    duration=180)
+            try:
+                wutils.wifi_connect(self.dut,
+                                    testcase_params['test_network'],
+                                    num_of_tries=1,
+                                    check_connectivity=True)
+            finally:
+                if self.testbed_params['sniffer_enable']:
+                    self.sniffer.stop_capture(tag='connection_setup')
+
         self.dut_ip = self.dut.droid.connectivityGetIPv4Addresses('wlan0')[0]
         if testcase_params['channel'] not in self.atten_dut_chain_map.keys():
             self.atten_dut_chain_map[testcase_params[
@@ -428,7 +474,7 @@ class WifiPingTest(base_test.BaseTestClass):
         self.setup_ap(testcase_params)
         # Set attenuator to 0 dB
         for attenuator in self.attenuators:
-            attenuator.set_atten(0, strict=False)
+            attenuator.set_atten(0, strict=False, retry=True)
         # Reset, configure, and connect DUT
         self.setup_dut(testcase_params)
 
@@ -446,6 +492,11 @@ class WifiPingTest(base_test.BaseTestClass):
         return self.testclass_params['range_atten_start']
 
     def compile_test_params(self, testcase_params):
+        # Check if test should be skipped.
+        wputils.check_skip_conditions(testcase_params, self.dut,
+                                      self.access_point,
+                                      getattr(self, 'ota_chamber', None))
+
         band = self.access_point.band_lookup_by_channel(
             testcase_params['channel'])
         testcase_params['test_network'] = self.main_network[band]
@@ -516,11 +567,11 @@ class WifiPingTest(base_test.BaseTestClass):
         allowed_configs = {
             20: [
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48, 64, 100,
-                116, 132, 140, 149, 153, 157, 161
+                116, 132, 140, 149, 153, 157, 161, '6g37', '6g117', '6g213'
             ],
-            40: [36, 44, 100, 149, 157],
-            80: [36, 100, 149],
-            160: [36]
+            40: [36, 44, 100, 149, 157, '6g37', '6g117', '6g213'],
+            80: [36, 100, 149, '6g37', '6g117', '6g213'],
+            160: [36, '6g37', '6g117', '6g213']
         }
 
         for channel, mode, chain, test_type in itertools.product(
@@ -545,25 +596,33 @@ class WifiPingTest(base_test.BaseTestClass):
 class WifiPing_TwoChain_Test(WifiPingTest):
     def __init__(self, controllers):
         super().__init__(controllers)
-        self.tests = self.generate_test_cases(
-            ap_power='standard',
-            channels=[1, 6, 11, 36, 40, 44, 48, 149, 153, 157, 161],
-            modes=['bw20', 'bw40', 'bw80'],
-            test_types=[
-                'test_ping_range', 'test_fast_ping_rtt', 'test_slow_ping_rtt'
-            ],
-            chain_mask=['2x2'])
+        self.tests = self.generate_test_cases(ap_power='standard',
+                                              channels=[
+                                                  1, 6, 11, 36, 40, 44, 48,
+                                                  149, 153, 157, 161, '6g37',
+                                                  '6g117', '6g213'
+                                              ],
+                                              modes=['bw20', 'bw40', 'bw80'],
+                                              test_types=[
+                                                  'test_ping_range',
+                                                  'test_fast_ping_rtt',
+                                                  'test_slow_ping_rtt'
+                                              ],
+                                              chain_mask=['2x2'])
 
 
 class WifiPing_PerChainRange_Test(WifiPingTest):
     def __init__(self, controllers):
         super().__init__(controllers)
-        self.tests = self.generate_test_cases(
-            ap_power='standard',
-            chain_mask=['0', '1', '2x2'],
-            channels=[1, 6, 11, 36, 40, 44, 48, 149, 153, 157, 161],
-            modes=['bw20', 'bw40', 'bw80'],
-            test_types=['test_ping_range'])
+        self.tests = self.generate_test_cases(ap_power='standard',
+                                              chain_mask=['0', '1', '2x2'],
+                                              channels=[
+                                                  1, 6, 11, 36, 40, 44, 48,
+                                                  149, 153, 157, 161, '6g37',
+                                                  '6g117', '6g213'
+                                              ],
+                                              modes=['bw20', 'bw40', 'bw80'],
+                                              test_types=['test_ping_range'])
 
 
 class WifiPing_LowPowerAP_Test(WifiPingTest):
@@ -635,7 +694,7 @@ class WifiOtaPingTest(WifiPingTest):
             x_label = 'Angle (deg)'
         elif chamber_mode == 'stepped stirrers':
             x_label = 'Position Index'
-        figure = wputils.BokehFigure(
+        figure = BokehFigure(
             title='Range vs. Position',
             x_label=x_label,
             primary_y_label='Range (dB)',
@@ -717,11 +776,11 @@ class WifiOtaPingTest(WifiPingTest):
         allowed_configs = {
             20: [
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48, 64, 100,
-                116, 132, 140, 149, 153, 157, 161
+                116, 132, 140, 149, 153, 157, 161, '6g37', '6g117', '6g213'
             ],
-            40: [36, 44, 100, 149, 157],
-            80: [36, 100, 149],
-            160: [36]
+            40: [36, 44, 100, 149, 157, '6g37', '6g117', '6g213'],
+            80: [36, 100, 149, '6g37', '6g117', '6g213'],
+            160: [36, '6g37', '6g117', '6g213']
         }
         for channel, mode, position in itertools.product(
                 channels, modes, positions):
@@ -749,23 +808,27 @@ class WifiOtaPingTest(WifiPingTest):
 class WifiOtaPing_TenDegree_Test(WifiOtaPingTest):
     def __init__(self, controllers):
         WifiOtaPingTest.__init__(self, controllers)
-        self.tests = self.generate_test_cases(ap_power='standard',
-                                              channels=[6, 36, 149],
-                                              modes=['bw20'],
-                                              chamber_mode='orientation',
-                                              positions=list(range(0, 360,
-                                                                   10)))
+        self.tests = self.generate_test_cases(
+            ap_power='standard',
+            channels=[6, 36, 149, '6g37', '6g117', '6g213'],
+            modes=['bw20'],
+            chamber_mode='orientation',
+            positions=list(range(0, 360, 10)))
 
 
 class WifiOtaPing_45Degree_Test(WifiOtaPingTest):
     def __init__(self, controllers):
         WifiOtaPingTest.__init__(self, controllers)
-        self.tests = self.generate_test_cases(
-            ap_power='standard',
-            channels=[1, 6, 11, 36, 40, 44, 48, 149, 153, 157, 161],
-            modes=['bw20'],
-            chamber_mode='orientation',
-            positions=list(range(0, 360, 45)))
+        self.tests = self.generate_test_cases(ap_power='standard',
+                                              channels=[
+                                                  1, 6, 11, 36, 40, 44, 48,
+                                                  149, 153, 157, 161, '6g37',
+                                                  '6g117', '6g213'
+                                              ],
+                                              modes=['bw20'],
+                                              chamber_mode='orientation',
+                                              positions=list(range(0, 360,
+                                                                   45)))
 
 
 class WifiOtaPing_SteppedStirrers_Test(WifiOtaPingTest):

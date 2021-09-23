@@ -108,6 +108,7 @@ from acts_contrib.test_utils.tel.tel_defines import RAT_FAMILY_WLAN
 from acts_contrib.test_utils.tel.tel_defines import RAT_FAMILY_WCDMA
 from acts_contrib.test_utils.tel.tel_defines import RAT_1XRTT
 from acts_contrib.test_utils.tel.tel_defines import RAT_UNKNOWN
+from acts_contrib.test_utils.tel.tel_defines import RAT_5G
 from acts_contrib.test_utils.tel.tel_defines import SERVICE_STATE_EMERGENCY_ONLY
 from acts_contrib.test_utils.tel.tel_defines import SERVICE_STATE_IN_SERVICE
 from acts_contrib.test_utils.tel.tel_defines import SERVICE_STATE_MAPPING
@@ -178,7 +179,9 @@ from acts_contrib.test_utils.tel.tel_lookup_tables import rat_families_for_netwo
 from acts_contrib.test_utils.tel.tel_lookup_tables import rat_family_for_generation
 from acts_contrib.test_utils.tel.tel_lookup_tables import rat_family_from_rat
 from acts_contrib.test_utils.tel.tel_lookup_tables import rat_generation_from_rat
-from acts_contrib.test_utils.tel.tel_subscription_utils import get_default_data_sub_id, get_subid_from_slot_index
+from acts_contrib.test_utils.tel.tel_subscription_utils import get_default_data_sub_id
+from acts_contrib.test_utils.tel.tel_subscription_utils import get_subid_by_adb
+from acts_contrib.test_utils.tel.tel_subscription_utils import get_subid_from_slot_index
 from acts_contrib.test_utils.tel.tel_subscription_utils import get_outgoing_message_sub_id
 from acts_contrib.test_utils.tel.tel_subscription_utils import get_outgoing_voice_sub_id
 from acts_contrib.test_utils.tel.tel_subscription_utils import get_incoming_voice_sub_id
@@ -187,7 +190,7 @@ from acts_contrib.test_utils.tel.tel_subscription_utils import set_subid_for_out
 from acts_contrib.test_utils.tel.tel_subscription_utils import set_incoming_voice_sub_id
 from acts_contrib.test_utils.tel.tel_subscription_utils import set_subid_for_message
 from acts_contrib.test_utils.tel.tel_subscription_utils import get_subid_on_same_network_of_host_ad
-from acts_contrib.test_utils.tel.tel_5g_utils import is_current_network_5g_nsa_for_subscription
+from acts_contrib.test_utils.tel.tel_5g_utils import is_current_network_5g_for_subscription
 from acts_contrib.test_utils.tel.tel_5g_utils import is_current_network_5g_nsa
 from acts_contrib.test_utils.wifi import wifi_test_utils
 from acts_contrib.test_utils.wifi import wifi_constants
@@ -3636,13 +3639,20 @@ def phone_number_formatter(input_string, formatter=None):
     # make sure input_string is 10 digital
     # Remove white spaces, dashes, dots
     input_string = input_string.replace(" ", "").replace("-", "").replace(
-        ".", "").lstrip("0")
-    if not formatter:
-        return input_string
-    # Remove +81 and add 0 for Japan Carriers only.
-    if (len(input_string) == 13 and input_string[0:3] == "+81"):
+        ".", "")
+
+    # Remove a country code with '+' sign and add 0 for Japan/Korea Carriers.
+    if (len(input_string) == 13
+            and (input_string[0:3] == "+81" or input_string[0:3] == "+82")):
         input_string = "0" + input_string[3:]
         return input_string
+
+    if not formatter:
+        return input_string
+
+    # Remove leading 0 for the phone with area code started with 0
+    input_string = input_string.lstrip("0")
+
     # Remove "1"  or "+1"from front
     if (len(input_string) == PHONE_NUMBER_STRING_FORMAT_11_DIGIT
             and input_string[0] == "1"):
@@ -5863,7 +5873,7 @@ def wait_for_ims_registered(log, ad, max_time=MAX_WAIT_TIME_WFC_ENABLED):
     return _wait_for_droid_in_state(log, ad, max_time, is_ims_registered)
 
 
-def is_volte_available(log, ad, sub_id):
+def is_volte_available(log, ad, sub_id=None):
     """Return True if VoLTE is available.
 
     Args:
@@ -6334,7 +6344,6 @@ def sms_send_receive_verify_for_subscription(
     phonenumber_rx = ad_rx.telephony['subscription'][subid_rx]['phone_num']
 
     for ad in (ad_tx, ad_rx):
-        ad.send_keycode("BACK")
         if not getattr(ad, "messaging_droid", None):
             ad.messaging_droid, ad.messaging_ed = ad.get_droid()
             ad.messaging_ed.start()
@@ -6520,7 +6529,6 @@ def mms_send_receive_verify_for_subscription(
     toggle_enforce = False
 
     for ad in (ad_tx, ad_rx):
-        ad.send_keycode("BACK")
         if "Permissive" not in ad.adb.shell("su root getenforce"):
             ad.adb.shell("su root setenforce 0")
             toggle_enforce = True
@@ -6791,7 +6799,9 @@ def ensure_network_generation(log,
                               generation,
                               max_wait_time=MAX_WAIT_TIME_NW_SELECTION,
                               voice_or_data=None,
-                              toggle_apm_after_setting=False):
+                              toggle_apm_after_setting=False,
+                              sa_or_nsa=None,
+                              mmwave=None):
     """Ensure ad's network is <network generation> for default subscription ID.
 
     Set preferred network generation to <generation>.
@@ -6800,7 +6810,7 @@ def ensure_network_generation(log,
     """
     return ensure_network_generation_for_subscription(
         log, ad, ad.droid.subscriptionGetDefaultSubId(), generation,
-        max_wait_time, voice_or_data, toggle_apm_after_setting)
+        max_wait_time, voice_or_data, toggle_apm_after_setting, sa_or_nsa, mmwave)
 
 
 def ensure_network_generation_for_subscription(
@@ -6810,7 +6820,9 @@ def ensure_network_generation_for_subscription(
         generation,
         max_wait_time=MAX_WAIT_TIME_NW_SELECTION,
         voice_or_data=None,
-        toggle_apm_after_setting=False):
+        toggle_apm_after_setting=False,
+        sa_or_nsa=None,
+        mmwave=None):
     """Ensure ad's network is <network generation> for specified subscription ID.
 
         Set preferred network generation to <generation>.
@@ -6827,6 +6839,8 @@ def ensure_network_generation_for_subscription(
             This parameter is optional. If voice_or_data is None, then if
             either voice or data in expected generation, function will return True.
         toggle_apm_after_setting: Cycle airplane mode if True, otherwise do nothing.
+        sa_or_nsa: sa if nw_gen is sa 5G or nsa if nw_gen is nsa 5G or None for other nw_gen.
+        mmwave: True if nw_gen is nsa 5g mmwave.
 
     Returns:
         True if success, False if fail.
@@ -6866,12 +6880,13 @@ def ensure_network_generation_for_subscription(
         ad.log.info("MSIM - Non DDS, ignore data RAT")
         return True
 
-    if generation == GEN_5G:
-        if is_current_network_5g_nsa_for_subscription(ad, sub_id=sub_id):
-            ad.log.info("Current network type is 5G NSA.")
+    if (generation == GEN_5G) or (generation == RAT_5G):
+        if is_current_network_5g_for_subscription(ad, sub_id=sub_id,
+                                        sa_or_nsa=sa_or_nsa, mmwave=mmwave):
+            ad.log.info("Current network type is 5G.")
             return True
         else:
-            ad.log.error("Not in 5G NSA coverage for Sub %s.", sub_id)
+            ad.log.error("Not in 5G coverage for Sub %s.", sub_id)
             return False
 
     if is_droid_in_network_generation_for_subscription(
@@ -6989,6 +7004,15 @@ def wait_for_network_generation_for_subscription(
         generation,
         max_wait_time=MAX_WAIT_TIME_NW_SELECTION,
         voice_or_data=None):
+
+    if generation == GEN_5G:
+        if is_current_network_5g_for_subscription(ad, sub_id=sub_id):
+            ad.log.info("Current network type is 5G.")
+            return True
+        else:
+            ad.log.error("Not in 5G coverage for Sub %s.", sub_id)
+            return False
+
     return _wait_for_droid_in_state_for_subscription(
         log, ad, sub_id, max_wait_time,
         is_droid_in_network_generation_for_subscription, generation,
@@ -8073,7 +8097,7 @@ def start_qxdm_logger(ad, begin_time=None):
         seconds = None
         file_count = ad.adb.shell(
             "find %s -type f -iname *.qmdl | wc -l" % ad.qxdm_log_path)
-        if int(file_count) > 50:
+        if int(file_count) > 3:
             if begin_time:
                 # if begin_time specified, delete old qxdm logs modified
                 # 10 minutes before begin time
@@ -8805,7 +8829,7 @@ def flash_radio(ad, file_path, skip_setup_wizard=True):
     adb_radio_version_output = ad.adb.getprop("gsm.version.baseband")
     ad.log.info("adb getprop gsm.version.baseband = %s",
                 adb_radio_version_output)
-    if adb_radio_version_output != fastboot_radio_version_output:
+    if not fastboot_radio_version_output in adb_radio_version_output:
         msg = ("fastboot radio version output %s does not match with adb"
                " radio version output %s" % (fastboot_radio_version_output,
                                              adb_radio_version_output))
@@ -8894,6 +8918,101 @@ def wait_for_state(state_check_func,
     return False
 
 
+def power_off_sim_by_adb(ad, sim_slot_id,
+                         timeout=MAX_WAIT_TIME_FOR_STATE_CHANGE):
+    """Disable pSIM/eSIM SUB by adb command.
+
+    Args:
+        ad: android device object.
+        sim_slot_id: slot 0 or slot 1.
+        timeout: wait time for state change.
+
+    Returns:
+        True if success, False otherwise.
+    """
+    release_version =  int(ad.adb.getprop("ro.build.version.release"))
+    if sim_slot_id == 0 and release_version < 12:
+        ad.log.error(
+            "The disable pSIM SUB command only support for Android S or higher "
+            "version, abort test.")
+        raise signals.TestSkip(
+            "The disable pSIM SUB command only support for Android S or higher "
+            "version, abort test.")
+    try:
+        if sim_slot_id:
+            ad.adb.shell("am broadcast -a android.telephony.euicc.action."
+                "TEST_PROFILE -n com.google.android.euicc/com.android.euicc."
+                "receiver.ProfileTestReceiver --es 'operation' 'switch' --ei "
+                "'subscriptionId' -1")
+        else:
+            sub_id = get_subid_by_adb(ad, sim_slot_id)
+            # The command only support for Android S. (b/159605922)
+            ad.adb.shell(
+                "cmd phone disable-physical-subscription %d" % sub_id)
+    except Exception as e:
+        ad.log.error(e)
+        return False
+    while timeout > 0:
+        if get_subid_by_adb(ad, sim_slot_id) == INVALID_SUB_ID:
+            return True
+        timeout = timeout - WAIT_TIME_BETWEEN_STATE_CHECK
+        time.sleep(WAIT_TIME_BETWEEN_STATE_CHECK)
+    sim_state = ad.adb.getprop("gsm.sim.state").split(",")
+    ad.log.warning("Fail to power off SIM slot %d, sim_state=%s",
+        sim_slot_id, sim_state[sim_slot_id])
+    return False
+
+
+def power_on_sim_by_adb(ad, sim_slot_id,
+                         timeout=MAX_WAIT_TIME_FOR_STATE_CHANGE):
+    """Enable pSIM/eSIM SUB by adb command.
+
+    Args:
+        ad: android device object.
+        sim_slot_id: slot 0 or slot 1.
+        timeout: wait time for state change.
+
+    Returns:
+        True if success, False otherwise.
+    """
+    release_version =  int(ad.adb.getprop("ro.build.version.release"))
+    if sim_slot_id == 0 and release_version < 12:
+        ad.log.error(
+            "The enable pSIM SUB command only support for Android S or higher "
+            "version, abort test.")
+        raise signals.TestSkip(
+            "The enable pSIM SUB command only support for Android S or higher "
+            "version, abort test.")
+    try:
+        output = ad.adb.shell(
+            "dumpsys isub | grep addSubInfoRecord | grep slotIndex=%d" %
+            sim_slot_id)
+        pattern = re.compile(r"subId=(\d+)")
+        sub_id = pattern.findall(output)
+        sub_id = int(sub_id[-1]) if sub_id else INVALID_SUB_ID
+        if sim_slot_id:
+            ad.adb.shell("am broadcast -a android.telephony.euicc.action."
+                "TEST_PROFILE -n com.google.android.euicc/com.android.euicc."
+                "receiver.ProfileTestReceiver --es 'operation' 'switch' --ei "
+                "'subscriptionId' %d" % sub_id)
+        else:
+            # The command only support for Android S or higher. (b/159605922)
+            ad.adb.shell(
+                "cmd phone enable-physical-subscription %d" % sub_id)
+    except Exception as e:
+        ad.log.error(e)
+        return False
+    while timeout > 0:
+        if get_subid_by_adb(ad, sim_slot_id) != INVALID_SUB_ID:
+            return True
+        timeout = timeout - WAIT_TIME_BETWEEN_STATE_CHECK
+        time.sleep(WAIT_TIME_BETWEEN_STATE_CHECK)
+    sim_state = ad.adb.getprop("gsm.sim.state").split(",")
+    ad.log.warning("Fail to power on SIM slot %d, sim_state=%s",
+        sim_slot_id, sim_state[sim_slot_id])
+    return False
+
+
 def power_off_sim(ad, sim_slot_id=None,
                   timeout=MAX_WAIT_TIME_FOR_STATE_CHANGE):
     try:
@@ -8911,7 +9030,8 @@ def power_off_sim(ad, sim_slot_id=None,
         return False
     while timeout > 0:
         sim_state = verify_func(*verify_args)
-        if sim_state in (SIM_STATE_UNKNOWN, SIM_STATE_ABSENT):
+        if sim_state in (
+            SIM_STATE_UNKNOWN, SIM_STATE_ABSENT, SIM_STATE_NOT_READY):
             ad.log.info("SIM slot is powered off, SIM state is %s", sim_state)
             return True
         timeout = timeout - WAIT_TIME_BETWEEN_STATE_CHECK
@@ -9141,6 +9261,44 @@ def add_whitelisted_account(ad, user_account,user_password, retries=3):
             return True
     ad.log.error("Failed to add google account - %s", output)
     return False
+
+
+def install_dialer_apk(ad, dialer_util):
+    """Install dialer.apk to specific device.
+
+    Args:
+        ad: android device object.
+        dialer_util: path of dialer.apk
+
+    Returns:
+        True if success, False if fail.
+    """
+    ad.log.info("Install dialer_util %s", dialer_util)
+    ad.adb.install("-r -g %s" % dialer_util, timeout=300, ignore_status=True)
+    time.sleep(3)
+    if not ad.is_apk_installed("com.google.android.dialer"):
+        ad.log.info("com.google.android.dialer is not installed")
+        return False
+    return True
+
+
+def install_message_apk(ad, message_util):
+    """Install message.apk to specific device.
+
+    Args:
+        ad: android device object.
+        message_util: path of message.apk
+
+    Returns:
+        True if success, False if fail.
+    """
+    ad.log.info("Install message_util %s", message_util)
+    ad.adb.install("-r -g %s" % message_util, timeout=300, ignore_status=True)
+    time.sleep(3)
+    if not ad.is_apk_installed("com.google.android.apps.messaging"):
+        ad.log.info("com.google.android.apps.messaging is not installed")
+        return False
+    return True
 
 
 def install_googleaccountutil_apk(ad, account_util):
@@ -9690,7 +9848,7 @@ def set_call_forwarding_by_mmi(
 
     if ad.droid.connectivityCheckAirplaneMode():
         ad.log.warning("%s is now in airplane mode.", ad.serial)
-        return False
+        return True
 
     operator_name = get_operator_name(log, ad)
 
@@ -11311,3 +11469,15 @@ def wait_for_log(ad, pattern, begin_time=None, end_time=None, max_wait_time=120)
         passed_time = (stop_time - start_time).total_seconds()
         if passed_time > max_wait_time:
             return
+
+
+def cycle_airplane_mode(ad):
+    """Turn on APM and then off."""
+    # APM toggle
+    if not toggle_airplane_mode(ad.log, ad, True):
+        ad.log.info("Failed to turn on airplane mode.")
+        return False
+    if not toggle_airplane_mode(ad.log, ad, False):
+        ad.log.info("Failed to turn off airplane mode.")
+        return False
+    return True
