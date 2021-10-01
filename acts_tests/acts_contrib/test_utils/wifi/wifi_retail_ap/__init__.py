@@ -66,13 +66,21 @@ def create(configs):
             'name': 'NetgearRAX80AP',
             'package': 'netgear_rax80'
         },
+        ('Netgear', 'RAX120'): {
+            'name': 'NetgearRAX120AP',
+            'package': 'netgear_rax120'
+        },
         ('Netgear', 'RAX200'): {
             'name': 'NetgearRAX200AP',
             'package': 'netgear_rax200'
         },
-        ('Netgear', 'RAX120'): {
-            'name': 'NetgearRAX120AP',
-            'package': 'netgear_rax120'
+        ('Netgear', 'RAXE500'): {
+            'name': 'NetgearRAXE500AP',
+            'package': 'netgear_raxe500'
+        },
+        ('Brcm', 'Reference'): {
+            'name': 'BrcmRefAP',
+            'package': 'brcm_ref'
         },
         ('Google', 'Wifi'): {
             'name': 'GoogleWifiAP',
@@ -350,7 +358,7 @@ class WifiRetailAP(object):
         if channel not in self.capabilities['channels'][network]:
             self.log.error('Ch{} is not supported on {} interface.'.format(
                 channel, network))
-        setting_to_update = {network: {'channel': str(channel)}}
+        setting_to_update = {network: {'channel': channel}}
         self.update_ap_settings(setting_to_update)
 
     def set_bandwidth(self, network, bandwidth):
@@ -363,10 +371,12 @@ class WifiRetailAP(object):
         if 'bw' in bandwidth:
             bandwidth = bandwidth.replace('bw',
                                           self.capabilities['default_mode'])
+        elif isinstance(bandwidth, int):
+            bandwidth = str(bandwidth) + self.capabilities['default_mode']
         if bandwidth not in self.capabilities['modes'][network]:
             self.log.error('{} mode is not supported on {} interface.'.format(
                 bandwidth, network))
-        setting_to_update = {network: {'bandwidth': str(bandwidth)}}
+        setting_to_update = {network: {'bandwidth': bandwidth}}
         self.update_ap_settings(setting_to_update)
 
     def set_power(self, network, power):
@@ -379,7 +389,7 @@ class WifiRetailAP(object):
         if 'power' not in self.ap_settings[network].keys():
             self.log.error(
                 'Cannot configure power on {} interface.'.format(network))
-        setting_to_update = {network: {'power': str(power)}}
+        setting_to_update = {network: {'power': power}}
         self.update_ap_settings(setting_to_update)
 
     def set_security(self, network, security_type, *password):
@@ -463,12 +473,13 @@ class WifiRetailAP(object):
         Args:
             channel: channel number to lookup
         Returns:
-            band: name of band which this channel belongs to on this ap
+            band: name of band which this channel belongs to on this ap, False
+            if not supported
         """
         for key, value in self.capabilities['channels'].items():
             if channel in value:
                 return key
-        raise ValueError('Invalid channel passed in argument.')
+        return False
 
     def _get_control_ip_address(self):
         """Function to get AP's Control Interface IP address."""

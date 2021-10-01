@@ -15,7 +15,6 @@
 #   limitations under the License.
 
 import collections
-import selenium
 import time
 from acts_contrib.test_utils.wifi.wifi_retail_ap import WifiRetailAP
 from acts_contrib.test_utils.wifi.wifi_retail_ap import BlockingBrowser
@@ -119,7 +118,7 @@ class NetgearRAX200AP(WifiRetailAP):
                 'VHT20': 'Up to 433 Mbps',
                 'VHT40': 'Up to 1000 Mbps',
                 'VHT80': 'Up to 2165 Mbps',
-                'VHT160': 'Up to 4330'
+                'VHT160': 'Up to 4330 Mbps'
             },
             '5G_2': {
                 'HE20': 'Up to 600 Mbps',
@@ -129,7 +128,7 @@ class NetgearRAX200AP(WifiRetailAP):
                 'VHT20': 'Up to 433 Mbps',
                 'VHT40': 'Up to 1000 Mbps',
                 'VHT80': 'Up to 2165 Mbps',
-                'VHT160': 'Up to 4330'
+                'VHT160': 'Up to 4330 Mbps'
             }
         }
         self.bw_mode_values = {
@@ -252,6 +251,10 @@ class NetgearRAX200AP(WifiRetailAP):
                         for item in config_item:
                             if item.checked:
                                 self.ap_settings[key[0]][key[1]] = item.value
+                    elif 'channel' in key:
+                        config_item = browser.find_by_name(value)
+                        self.ap_settings[key[0]][key[1]] = int(
+                            config_item.first.value)
                     else:
                         config_item = browser.find_by_name(value)
                         self.ap_settings[key[0]][
@@ -321,8 +324,10 @@ class NetgearRAX200AP(WifiRetailAP):
                         self.log.warning(
                             'Cannot select channel. Keeping AP default.')
                     try:
-                        alert = browser.get_alert()
-                        alert.accept()
+                        for idx in range(0, 2):
+                            alert = browser.get_alert()
+                            alert.accept()
+                            time.sleep(BROWSER_WAIT_SHORT)
                     except:
                         pass
             time.sleep(BROWSER_WAIT_SHORT)
@@ -336,7 +341,6 @@ class NetgearRAX200AP(WifiRetailAP):
                 time.sleep(BROWSER_WAIT_SHORT)
             browser.visit_persistent(self.config_page, BROWSER_WAIT_EXTRA_LONG,
                                      10)
-        self.validate_ap_settings()
 
     def configure_radio_on_off(self):
         """Helper configuration function to turn radios on/off."""
