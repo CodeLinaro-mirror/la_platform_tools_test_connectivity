@@ -51,8 +51,8 @@ def create(configs):
             'package': 'netgear_r7500'
         },
         ('Netgear', 'R7500NA'): {
-        'name': 'NetgearR7500NAAP',
-        'package': 'netgear_r7500'
+            'name': 'NetgearR7500NAAP',
+            'package': 'netgear_r7500'
         },
         ('Netgear', 'R7800'): {
             'name': 'NetgearR7800AP',
@@ -324,7 +324,9 @@ class WifiRetailAP(object):
         Args:
             region: string indicating AP region
         """
-        self.log.warning('Updating region may overwrite wireless settings.')
+        if region != self.ap_settings['region']:
+            self.log.warning(
+                'Updating region may overwrite wireless settings.')
         setting_to_update = {'region': region}
         self.update_ap_settings(setting_to_update)
 
@@ -377,6 +379,33 @@ class WifiRetailAP(object):
             self.log.error('{} mode is not supported on {} interface.'.format(
                 bandwidth, network))
         setting_to_update = {network: {'bandwidth': bandwidth}}
+        self.update_ap_settings(setting_to_update)
+
+    def set_channel_and_bandwidth(self, network, channel, bandwidth):
+        """Function that sets network bandwidth/mode and channel.
+
+        Args:
+            network: string containing network identifier (2G, 5G_1, 5G_2)
+            channel: string containing desired channel
+            bandwidth: string containing mode, e.g. 11g, VHT20, VHT40, VHT80.
+        """
+        if 'bw' in bandwidth:
+            bandwidth = bandwidth.replace('bw',
+                                          self.capabilities['default_mode'])
+        elif isinstance(bandwidth, int):
+            bandwidth = str(bandwidth) + self.capabilities['default_mode']
+        if bandwidth not in self.capabilities['modes'][network]:
+            self.log.error('{} mode is not supported on {} interface.'.format(
+                bandwidth, network))
+        if channel not in self.capabilities['channels'][network]:
+            self.log.error('Ch{} is not supported on {} interface.'.format(
+                channel, network))
+        setting_to_update = {
+            network: {
+                'bandwidth': bandwidth,
+                'channel': channel
+            }
+        }
         self.update_ap_settings(setting_to_update)
 
     def set_power(self, network, power):

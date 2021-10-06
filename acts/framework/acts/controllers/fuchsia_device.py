@@ -37,6 +37,7 @@ from acts.controllers.fuchsia_lib.audio_lib import FuchsiaAudioLib
 from acts.controllers.fuchsia_lib.backlight_lib import FuchsiaBacklightLib
 from acts.controllers.fuchsia_lib.bt.avdtp_lib import FuchsiaAvdtpLib
 from acts.controllers.fuchsia_lib.bt.hfp_lib import FuchsiaHfpLib
+from acts.controllers.fuchsia_lib.bt.rfcomm_lib import FuchsiaRfcommLib
 from acts.controllers.fuchsia_lib.light_lib import FuchsiaLightLib
 
 from acts.controllers.fuchsia_lib.basemgr_lib import FuchsiaBasemgrLib
@@ -195,6 +196,7 @@ class FuchsiaDevice:
         sl4f_port: The SL4F HTTP port number of the Fuchsia device.
         ssh_config: The ssh_config for connecting to the Fuchsia device.
     """
+
     def __init__(self, fd_conf_data):
         """
         Args:
@@ -353,6 +355,10 @@ class FuchsiaDevice:
         # Grab commands from FuchsiaHfpLib
         self.hfp_lib = FuchsiaHfpLib(self.address, self.test_counter,
                                      self.client_id)
+
+        # Grab commands from FuchsiaRfcommLib
+        self.rfcomm_lib = FuchsiaRfcommLib(self.address, self.test_counter,
+                                           self.client_id)
 
         # Grab commands from FuchsiaLightLib
         self.light_lib = FuchsiaLightLib(self.address, self.test_counter,
@@ -659,9 +665,7 @@ class FuchsiaDevice:
                         timeout=3)
                     self.clean_up_services()
         elif reboot_type == FUCHSIA_REBOOT_TYPE_SOFT_AND_FLASH:
-            flash(self,
-                  use_ssh,
-                  FUCHSIA_RECONNECT_AFTER_REBOOT_TIME)
+            flash(self, use_ssh, FUCHSIA_RECONNECT_AFTER_REBOOT_TIME)
             skip_unreachable_check = True
         elif reboot_type == FUCHSIA_REBOOT_TYPE_HARD:
             self.log.info('Power cycling FuchsiaDevice (%s)' % self.ip)
@@ -812,8 +816,7 @@ class FuchsiaDevice:
                     ssh_conn.close()
         return command_result
 
-    def version(self,
-                timeout=FUCHSIA_DEFAULT_COMMAND_TIMEOUT):
+    def version(self, timeout=FUCHSIA_DEFAULT_COMMAND_TIMEOUT):
         """Returns the version of Fuchsia running on the device.
 
         Args:
@@ -826,9 +829,8 @@ class FuchsiaDevice:
         Raises:
             DeviceOffline: If SSH to the device fails.
         """
-        return self.send_command_ssh(
-            FUCHSIA_GET_VERSION_CMD,
-            timeout=timeout).stdout
+        return self.send_command_ssh(FUCHSIA_GET_VERSION_CMD,
+                                     timeout=timeout).stdout
 
     def ping(self,
              dest_ip,
