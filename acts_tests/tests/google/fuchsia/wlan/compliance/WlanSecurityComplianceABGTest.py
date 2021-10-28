@@ -39,6 +39,7 @@ def create_security_profile(test_func):
         security_profile_generator: The function that generates the security
             profile object
     """
+
     @wraps(test_func)
     def security_profile_generator(self, *args, **kwargs):
         """Function that looks at the name of the function and determines what
@@ -54,7 +55,7 @@ def create_security_profile(test_func):
             *args: args that were sent to the original test function
             **kwargs: kwargs that were sent to the original test function
         Returns:
-            The original fuction that was called
+            The original function that was called
         """
         utf8_password_2g = '2𝔤_𝔊𝔬𝔬𝔤𝔩𝔢'
         utf8_password_2g_french = 'du Feÿ Château'
@@ -162,6 +163,7 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
     * One Android device or Fuchsia device
     * One Access Point
     """
+
     def setup_class(self):
         super().setup_class()
         if 'dut' in self.user_params:
@@ -1105,11 +1107,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  password=self.client_password,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11a_pmf_sec_wpa2_psk_ptk_ccmp(self):
@@ -1156,11 +1161,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  password=self.client_password,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11a_pmf_max_length_password_sec_wpa2_psk_ptk_ccmp(self):
@@ -1208,11 +1216,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  password=self.client_password,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11a_pmf_max_length_psk_sec_wpa2_psk_ptk_ccmp(self):
@@ -1261,11 +1272,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  frag_threshold=430,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11a_pmf_frag_430_sec_wpa2_psk_ptk_ccmp(self):
@@ -1315,11 +1329,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  rts_threshold=256,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11a_pmf_rts_256_sec_wpa2_psk_ptk_ccmp(self):
@@ -4133,11 +4150,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  password=self.client_password,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11bg_pmf_sec_wpa2_psk_ptk_ccmp(self):
@@ -4185,11 +4205,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  password=self.client_password,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11bg_pmf_max_length_password_sec_wpa2_psk_ptk_ccmp(
@@ -4238,11 +4261,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  password=self.client_password,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11bg_pmf_max_length_psk_sec_wpa2_psk_ptk_ccmp(self):
@@ -4291,11 +4317,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  frag_threshold=430,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11bg_pmf_frag_430_sec_wpa2_psk_ptk_ccmp(self):
@@ -4345,11 +4374,14 @@ class WlanSecurityComplianceABGTest(AbstractDeviceWlanDeviceBaseTest):
                  rts_threshold=256,
                  force_wmm=False)
 
-        asserts.assert_true(
+        asserts.assert_false(
             self.dut.associate(self.ssid,
                                target_security=self.target_security,
                                target_pwd=self.client_password),
-            'Failed to associate.')
+            'Expected failure to associate. This device must support TKIP and '
+            'PMF, which is not supported on Fuchsia. If this device is a '
+            'mainstream device, we need to reconsider adding support for TKIP '
+            'and PMF on Fuchsia.')
 
     @create_security_profile
     def test_associate_11bg_pmf_rts_256_sec_wpa2_psk_ptk_ccmp(self):

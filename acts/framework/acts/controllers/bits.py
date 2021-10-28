@@ -137,6 +137,10 @@ def _get_single_file(registry, key):
 
 
 class Bits(object):
+
+    ROOT_RAIL_KEY = 'RootRail'
+    ROOT_RAIL_DEFAULT_VALUE = 'Monsoon:mA'
+
     def __init__(self, index, config):
         """Creates an instance of a bits controller.
 
@@ -165,6 +169,8 @@ class Bits(object):
                             'serial': 'serial_2'
                         }
                     ]
+                    // optional
+                    'RootRail': 'Monsoon:mA'
                 }
         """
         self.index = index
@@ -173,6 +179,8 @@ class Bits(object):
         self._client = None
         self._active_collection = None
         self._collections_counter = 0
+        self._root_rail = config.get(self.ROOT_RAIL_KEY,
+                                     self.ROOT_RAIL_DEFAULT_VALUE)
 
     def setup(self, *_, registry=None, **__):
         """Starts a bits_service in the background.
@@ -273,6 +281,7 @@ class Bits(object):
                 {
                    'duration': <seconds to measure for>
                    'hz': <samples per second>
+                   'measure_after_seconds': <sleep time before measurement>
                 }
                 The actual number of samples per second is limited by the
                 bits configuration. The value of hz is defaulted to 1000.
@@ -292,6 +301,11 @@ class Bits(object):
                 'duration can not be left undefined within measurement_args')
 
         hz = measurement_args.get('hz', 1000)
+
+        # Delay the start of the measurement if an offset is required
+        measure_after_seconds = measurement_args.get('measure_after_seconds')
+        if measure_after_seconds:
+            time.sleep(measure_after_seconds)
 
         if self._active_collection:
             raise BitsError(
@@ -415,8 +429,8 @@ class Bits(object):
         milli_amps_channel = None
 
         for channel in available_channels:
-            if channel.endswith('Monsoon:mA'):
-                milli_amps_channel = 'Monsoon:mA'
+            if channel.endswith(self._root_rail):
+                milli_amps_channel = self._root_rail
                 break
 
         if milli_amps_channel is None:

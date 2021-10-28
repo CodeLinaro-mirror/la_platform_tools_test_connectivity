@@ -27,6 +27,10 @@ from acts.test_decorators import test_tracker_info
 from acts.utils import load_config
 from acts_contrib.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 from acts_contrib.test_utils.tel.tel_defines import CARRIER_TEST_CONF_XML_PATH
+from acts_contrib.test_utils.tel.tel_defines import CLEAR_NOTIFICATION_BAR
+from acts_contrib.test_utils.tel.tel_defines import DEFAULT_ALERT_TYPE
+from acts_contrib.test_utils.tel.tel_defines import EXPAND_NOTIFICATION_BAR
+from acts_contrib.test_utils.tel.tel_defines import COLLAPSE_NOTIFICATION_BAR
 from acts_contrib.test_utils.tel.tel_defines import UAE
 from acts_contrib.test_utils.tel.tel_defines import JAPAN_KDDI
 from acts_contrib.test_utils.tel.tel_defines import NEWZEALAND
@@ -90,6 +94,7 @@ class CellBroadcastTest(TelephonyBaseTest):
         self.emergency_alert_settings_conf = self.user_params.get("emergency_alert_settings")
         self.emergency_alert_channels_conf = self.user_params.get("emergency_alert_channels")
         self.verify_vibration = self.user_params.get("verify_vibration", True)
+        self._disable_vibration_check_for_11()
         self.verify_sound = self.user_params.get("verify_sound", True)
         self.region_plmn_dict = load_config(self.region_plmn_list_conf)
         self.emergency_alert_settings_dict = load_config(self.emergency_alert_settings_conf)
@@ -122,6 +127,9 @@ class CellBroadcastTest(TelephonyBaseTest):
             ad.log.info("device not in %s region", region.upper())
             return False
 
+    def _disable_vibration_check_for_11(self):
+        if self.android_devices[0].adb.getprop("ro.build.version.release") in ("11", "R"):
+            self.verify_vibration = False
 
     def _get_toggle_value(self, ad, alert_text=None):
         node = uutils.wait_and_get_xml_node(ad, timeout=30, text=alert_text)
@@ -336,8 +344,38 @@ class CellBroadcastTest(TelephonyBaseTest):
         log_screen_shot(ad, "alert_%s_for_%s_%s" % (state, region, channel))
 
 
+    def _show_statusbar_notifications(self, ad):
+        ad.adb.shell(EXPAND_NOTIFICATION_BAR)
+
+
+    def _hide_statusbar_notifications(self, ad):
+        ad.adb.shell(COLLAPSE_NOTIFICATION_BAR)
+
+
+    def _clear_statusbar_notifications(self, ad):
+        ad.adb.shell(CLEAR_NOTIFICATION_BAR)
+
+
+    def _popup_alert_in_statusbar_notifications(self, ad, alert_text):
+        alert_in_notification = False
+        # Open status bar notifications.
+        self._show_statusbar_notifications(ad)
+        # Wait for status bar notifications showing.
+        time.sleep(WAIT_TIME_ANDROID_STATE_SETTLING)
+        if self._verify_text_present_on_ui(ad, alert_text):
+            # Found alert in notifications, display it.
+            uutils.wait_and_click(ad, text=alert_text)
+            alert_in_notification = True
+        else:
+            # Close status bar notifications
+            self._hide_statusbar_notifications(ad)
+        return alert_in_notification
+
+
     def _verify_send_receive_wea_alerts(self, ad, region=None):
         result = True
+        # Always clear notifications in the status bar before testing to find alert notification easily.
+        self._clear_statusbar_notifications(ad)
         for key, value in self.emergency_alert_channels_dict[region].items():
             # Configs
             iteration_result = True
@@ -348,6 +386,7 @@ class CellBroadcastTest(TelephonyBaseTest):
             vibration_time = value.get("vibration_time", DEFAULT_VIBRATION_TIME)
             sound_time = value.get("sound_time", DEFAULT_SOUND_TIME)
             offset = value.get("offset", DEFAULT_OFFSET)
+            alert_type = value.get("alert_type", DEFAULT_ALERT_TYPE)
 
             # Begin Iteration
             begintime = self._get_current_time_in_secs(ad)
@@ -363,7 +402,16 @@ class CellBroadcastTest(TelephonyBaseTest):
 
             # Receive Alert
             if not self._verify_text_present_on_ui(ad, alert_text):
-                if alert_expected == "true":
+                alert_in_notification = False
+                # Check if alert message is expected to be in the notification drawer
+                if alert_expected == "true" and alert_type == "notification":
+                    # Verify expected notification in notification drawer and open the message
+                    if self._popup_alert_in_statusbar_notifications(ad, alert_text):
+                        ad.log.info("Found alert channel %d in status bar notifications, pop it up.", channel)
+                        # Verify alert text in message.
+                        # Skip sound and vibration verification since it's not expected for notification alert.
+                        alert_in_notification = self._verify_text_present_on_ui(ad, alert_text)
+                if alert_expected == "true" and not alert_in_notification:
                     iteration_result = False
                     self._log_and_screenshot_alert_fail(ad, "missing", region, channel)
             else:

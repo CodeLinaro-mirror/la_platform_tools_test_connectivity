@@ -689,7 +689,10 @@ NETWORK_MODE_NR_LTE_TDSCDMA_GSM_WCDMA = "NETWORK_MODE_NR_LTE_TDSCDMA_GSM_WCDMA"
 NETWORK_MODE_NR_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA = "NETWORK_MODE_NR_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA"
 
 # Constants for APP Package Name
+DIALER_PACKAGE_NAME = "com.google.android.dialer"
+MESSAGE_PACKAGE_NAME = "com.google.android.apps.messaging"
 YOUTUBE_PACKAGE_NAME = "com.google.android.youtube"
+SL4A_PACKAGE_NAME = "com.googlecode.android_scripting"
 
 # Constants for CellBroadcast module test
 CARRIER_TEST_CONF_XML_PATH = "/data/user_de/0/com.android.phone/files/"
@@ -711,6 +714,10 @@ EXIT_ALERT_LIST = ["Got It", "OK", "Hide", "TO CLOSE"]
 CMD_DND_OFF = "cmd notification set_dnd off"
 CMD_DND_ON = "cmd notification set_dnd on"
 DUMPSYS_VIBRATION = "dumpsys vibrator_manager | grep -i  com.google.android.cellbroadcastreceiver | tail -1"
+DEFAULT_ALERT_TYPE = "popup"
+EXPAND_NOTIFICATION_BAR = "cmd statusbar expand-notifications"
+COLLAPSE_NOTIFICATION_BAR = "cmd statusbar collapse"
+CLEAR_NOTIFICATION_BAR = "service call notification 1"
 
 # Countries/Carriers for Compliance Testing
 AUSTRALIA = "australia"
