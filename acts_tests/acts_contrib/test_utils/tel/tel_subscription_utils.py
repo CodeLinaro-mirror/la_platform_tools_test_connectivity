@@ -21,14 +21,13 @@ import time
 
 from acts_contrib.test_utils.tel.tel_defines import CHIPSET_MODELS_LIST
 from acts_contrib.test_utils.tel.tel_defines import INVALID_SUB_ID
-from acts_contrib.test_utils.tel.tel_defines import MAX_WAIT_TIME_NW_SELECTION
 from acts_contrib.test_utils.tel.tel_defines import WAIT_TIME_CHANGE_DATA_SUB_ID
 from future import standard_library
 
 standard_library.install_aliases()
 
 
-def initial_set_up_for_subid_infomation(log, ad):
+def initial_set_up_for_subid_information(log, ad):
     """Initial subid setup for voice, message and data according to ad's
     attribute.
 
@@ -340,24 +339,6 @@ def set_voice_sub_id(ad, sub_id):
     if hasattr(ad, "outgoing_voice_sub_id"):
         ad.outgoing_voice_sub_id = sub_id
 
-
-def set_voice_sub_id(ad, sub_id):
-    """Set default subId for both incoming and outgoing voice calls
-
-    Args:
-        ad: android device object.
-        sub_id: subscription id (integer)
-
-    Returns:
-        None
-    """
-    ad.droid.subscriptionSetDefaultVoiceSubId(sub_id)
-    if hasattr(ad, "incoming_voice_sub_id"):
-        ad.incoming_voice_sub_id = sub_id
-    if hasattr(ad, "outgoing_voice_sub_id"):
-        ad.outgoing_voice_sub_id = sub_id
-
-
 def set_default_sub_for_all_services(ad, slot_id=0):
     """Set subId for all services
 
@@ -593,3 +574,38 @@ def get_slot_index_from_data_sub_id(ad):
         if info['subscriptionId'] == data_sub_id:
             return info['simSlotIndex']
     return INVALID_SUB_ID
+
+def get_slot_index_from_voice_sub_id(ad):
+    """Get slot index from the current voice sub ID.
+
+    Args:
+        ad: android object
+
+    Returns:
+        0: pSIM
+        1: eSIM
+        INVALID_SUB_ID (-1): if no sub ID is equal to current voice sub ID.
+    """
+    voice_sub_id = get_incoming_voice_sub_id(ad)
+    sub_info = ad.droid.subscriptionGetAllSubInfoList()
+    for info in sub_info:
+        if info['subscriptionId'] == voice_sub_id:
+            return info['simSlotIndex']
+    return INVALID_SUB_ID
+
+def get_all_sub_id(ad):
+    """Return all valid subscription IDs.
+
+    Args:
+        ad: Android object
+
+    Returns:
+        List containing all valid subscription IDs.
+    """
+    sub_id_list = []
+    sub_info = ad.droid.subscriptionGetAllSubInfoList()
+    for info in sub_info:
+        if info['simSlotIndex'] != INVALID_SUB_ID:
+            sub_id_list.append(info['subscriptionId'])
+
+    return sub_id_list

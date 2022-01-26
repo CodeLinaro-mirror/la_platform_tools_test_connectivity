@@ -35,11 +35,14 @@ from acts.controllers.android_device import list_fastboot_devices
 from acts.controllers.android_device import DEFAULT_QXDM_LOG_PATH
 from acts.controllers.android_device import SL4A_APK_NAME
 from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
+from acts_contrib.test_utils.tel import tel_logging_utils as tlutils
 from acts_contrib.test_utils.tel import tel_test_utils as tutils
 from acts_contrib.test_utils.instrumentation.device.command.instrumentation_command_builder import InstrumentationCommandBuilder
 from acts_contrib.test_utils.instrumentation.device.command.instrumentation_command_builder import InstrumentationTestCommandBuilder
 from acts.utils import get_current_epoch_time
 from acts.utils import epoch_to_human_time
+from acts_contrib.test_utils.gnss.gnss_defines import BCM_GPS_XML_PATH
+from acts_contrib.test_utils.gnss.gnss_defines import BCM_NVME_STO_PATH
 
 WifiEnums = wutils.WifiEnums
 PULL_TIMEOUT = 300
@@ -48,7 +51,7 @@ GNSSSTATUS_LOG_PATH = (
 QXDM_MASKS = ["GPS.cfg", "GPS-general.cfg", "default.cfg"]
 TTFF_REPORT = namedtuple(
     "TTFF_REPORT", "utc_time ttff_loop ttff_sec ttff_pe ttff_ant_cn "
-                   "ttff_base_cn")
+                   "ttff_base_cn ttff_haccu")
 TRACK_REPORT = namedtuple(
     "TRACK_REPORT", "l5flag pe ant_top4cn ant_cn base_top4cn base_cn")
 LOCAL_PROP_FILE_CONTENTS = """\
@@ -807,7 +810,8 @@ def start_ttff_by_gtw_gpstool(ad,
                               aid_data=False,
                               raninterval=False,
                               mininterval=10,
-                              maxinterval=40):
+                              maxinterval=40,
+                              hot_warm_sleep=300):
     """Identify which TTFF mode for different test items.
 
     Args:
@@ -818,21 +822,25 @@ def start_ttff_by_gtw_gpstool(ad,
         raninterval: Boolean for identify random interval of TTFF in enable or not.
         mininterval: Minimum value of random interval pool. The unit is second.
         maxinterval: Maximum value of random interval pool. The unit is second.
+        hot_warm_sleep: Wait time for acquiring Almanac.
     """
     begin_time = get_current_epoch_time()
     if (ttff_mode == "hs" or ttff_mode == "ws") and not aid_data:
-        ad.log.info("Wait 5 minutes to start TTFF %s..." % ttff_mode.upper())
-        time.sleep(300)
+        ad.log.info("Wait {} seconds to start TTFF {}...".format(
+            hot_warm_sleep, ttff_mode.upper()))
+        time.sleep(hot_warm_sleep)
     if ttff_mode == "cs":
         ad.log.info("Start TTFF Cold Start...")
         time.sleep(3)
+    elif ttff_mode == "csa":
+        ad.log.info("Start TTFF CSWith Assist...")
+        time.sleep(3)
     for i in range(1, 4):
-        ad.adb.shell(
-            "am broadcast -a com.android.gpstool.ttff_action "
-            "--es ttff {} --es cycle {}  --ez raninterval {} "
-            "--ei mininterval {} --ei maxinterval {}"
-            .format(ttff_mode, iteration, raninterval, mininterval,
-                    maxinterval))
+        ad.adb.shell("am broadcast -a com.android.gpstool.ttff_action "
+                     "--es ttff {} --es cycle {}  --ez raninterval {} "
+                     "--ei mininterval {} --ei maxinterval {}".format(
+                         ttff_mode, iteration, raninterval, mininterval,
+                         maxinterval))
         time.sleep(1)
         if ad.search_logcat("act=com.android.gpstool.start_test_action",
                             begin_time):
@@ -1002,6 +1010,8 @@ def process_ttff_by_gtw_gpstool(ad, begin_time, true_position, type="gnss"):
                         loc_time = int(
                             gnss_location_log[10].split("=")[-1].strip(","))
                         utc_time = epoch_to_human_time(loc_time)
+                        ttff_haccu = float(
+                            gnss_location_log[11].split("=")[-1].strip(","))
                 elif type == "flp":
                     flp_results = ad.search_logcat("GPSService: FLP Location",
                                                    begin_time)
@@ -1011,12 +1021,14 @@ def process_ttff_by_gtw_gpstool(ad, begin_time, true_position, type="gnss"):
                             "log_message"].split()
                         ttff_lat = float(flp_location_log[8].split(",")[0])
                         ttff_lon = float(flp_location_log[8].split(",")[1])
+                        ttff_haccu = float(flp_location_log[9].split("=")[1])
                         utc_time = epoch_to_human_time(get_current_epoch_time())
             else:
                 ttff_ant_cn = float(ttff_log[19].strip("]"))
                 ttff_base_cn = float(ttff_log[26].strip("]"))
                 ttff_lat = 0
                 ttff_lon = 0
+                ttff_haccu = 0
                 utc_time = epoch_to_human_time(get_current_epoch_time())
             ad.log.debug("TTFF Loop %d - (Lat, Lon) = (%s, %s)" % (ttff_loop,
                                                                    ttff_lat,
@@ -1028,16 +1040,19 @@ def process_ttff_by_gtw_gpstool(ad, begin_time, true_position, type="gnss"):
                                                ttff_sec=ttff_sec,
                                                ttff_pe=ttff_pe,
                                                ttff_ant_cn=ttff_ant_cn,
-                                               ttff_base_cn=ttff_base_cn)
+                                               ttff_base_cn=ttff_base_cn,
+                                               ttff_haccu=ttff_haccu)
             ad.log.info("UTC Time = %s, Loop %d = %.1f seconds, "
                         "Position Error = %.1f meters, "
                         "Antenna Average Signal = %.1f dbHz, "
-                        "Baseband Average Signal = %.1f dbHz" % (utc_time,
+                        "Baseband Average Signal = %.1f dbHz, "
+                        "Horizontal Accuracy = %.1f meters" % (utc_time,
                                                                  ttff_loop,
                                                                  ttff_sec,
                                                                  ttff_pe,
                                                                  ttff_ant_cn,
-                                                                 ttff_base_cn))
+                                                                 ttff_base_cn,
+                                                                 ttff_haccu))
         stop_gps_results = ad.search_logcat("stop gps test", begin_time)
         if stop_gps_results:
             ad.send_keycode("HOME")
@@ -1102,6 +1117,8 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
                    ttff_data.keys()]
     base_cn_list = [float(ttff_data[key].ttff_base_cn) for key in
                     ttff_data.keys()]
+    haccu_list = [float(ttff_data[key].ttff_haccu) for key in
+                    ttff_data.keys()]
     timeoutcount = sec_list.count(0.0)
     if len(sec_list) == timeoutcount:
         avgttff = 9527
@@ -1115,6 +1132,7 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
     maxdis = max(pe_list)
     ant_avgcn = sum(ant_cn_list)/len(ant_cn_list)
     base_avgcn = sum(base_cn_list)/len(base_cn_list)
+    avg_haccu = sum(haccu_list)/len(haccu_list)
     ad.log.info(prop_basename+"AvgTime %.1f" % avgttff)
     ad.log.info(prop_basename+"MaxTime %.1f" % maxttff)
     ad.log.info(prop_basename+"TimeoutCount %d" % timeoutcount)
@@ -1122,6 +1140,7 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
     ad.log.info(prop_basename+"MaxDis %.1f" % maxdis)
     ad.log.info(prop_basename+"Ant_AvgSignal %.1f" % ant_avgcn)
     ad.log.info(prop_basename+"Base_AvgSignal %.1f" % base_avgcn)
+    ad.log.info(prop_basename+"Avg_Horizontal_Accuracy %.1f" % avg_haccu)
 
 
 def calculate_position_error(latitude, longitude, true_position):
@@ -1288,9 +1307,9 @@ def set_gnss_qxdm_mask(ad, masks):
     """
     try:
         for mask in masks:
-            if not tutils.find_qxdm_log_mask(ad, mask):
+            if not tlutils.find_qxdm_log_mask(ad, mask):
                 continue
-            tutils.set_qxdm_logger_command(ad, mask)
+            tlutils.set_qxdm_logger_command(ad, mask)
             break
     except Exception as e:
         ad.log.error(e)
@@ -1388,9 +1407,9 @@ def start_toggle_gnss_by_gtw_gpstool(ad, iteration):
                          "--es mode toggle --es cycle %d" % iteration)
             time.sleep(1)
             if is_device_wearable(ad):
-                # Wait 10 seconds for Wearable low performance time.
-                time.sleep(10)
-                if ad.search_logcat("cmp=com.android.gpstool/.GPSTool",
+                # Wait 20 seconds for Wearable low performance time.
+                time.sleep(20)
+                if ad.search_logcat("ToggleGPS onResume",
                                 begin_time):
                     ad.log.info("Send ToggleGPS start_test_action successfully.")
                     break
@@ -1404,7 +1423,7 @@ def start_toggle_gnss_by_gtw_gpstool(ad, iteration):
                                     "start_test_action within 3 attempts.")
         time.sleep(2)
         if is_device_wearable(ad):
-            test_start = ad.search_logcat("GPSTool: msg:First fixed",
+            test_start = ad.search_logcat("GPSService: create toggle GPS log",
                                       begin_time)
         else:
             test_start = ad.search_logcat("GPSTool_ToggleGPS: startService",
@@ -2132,6 +2151,9 @@ def pair_to_wearable(ad, ad1):
     ad.log.info("Wait 1 min for wearable system busy time.")
     time.sleep(60)
     ad.adb.shell("input keyevent 4")
+    # Clear Denali paired data in phone.
+    ad1.adb.shell("pm clear com.google.android.gms")
+    ad1.adb.shell("pm clear com.google.android.apps.wear.companion")
     ad1.adb.shell("am start -S -n com.google.android.apps.wear.companion/"
                         "com.google.android.apps.wear.companion.application.RootActivity")
     uia_click(ad1, "Next")
@@ -2143,7 +2165,8 @@ def pair_to_wearable(ad, ad1):
     uia_click(ad1, "Finish")
     ad.log.info("Wait 3 mins for complete pairing process.")
     time.sleep(180)
-    ad.adb.shell("adb shell settings put global stay_on_while_plugged_in 7")
+    ad.adb.shell("settings put global stay_on_while_plugged_in 7")
+    check_location_service(ad)
     if is_bluetooth_connected(ad, ad1):
         ad.log.info("Pairing successfully.")
     else:
@@ -2278,3 +2301,68 @@ def uia_click(ad, matching_text):
         ad.log.info("Click button %s" % matching_text)
     else:
         ad.log.error("No button named %s" % matching_text)
+
+
+def delete_bcm_nvmem_sto_file(ad):
+    """Delete BCM's NVMEM ephemeris gldata.sto.
+
+    Args:
+        ad: An AndroidDevice object.
+    """
+    remount_device(ad)
+    rm_cmd = "rm -rf {}".format(BCM_NVME_STO_PATH)
+    status = ad.adb.shell(rm_cmd)
+    ad.log.info("Delete BCM's NVMEM ephemeris files.\n%s" % status)
+
+
+def bcm_gps_xml_add_option(ad,
+                           search_line=None,
+                           append_txt=None,
+                           gps_xml_path=BCM_GPS_XML_PATH):
+    """Append parameter setting in gps.xml for BCM solution
+
+    Args:
+        ad: An AndroidDevice object.
+        search_line: Pattern matching of target
+        line for appending new line data.
+        append_txt: New line that will be appended after the search_line.
+        gps_xml_path: gps.xml file location of DUT
+    """
+    remount_device(ad)
+    #Update gps.xml
+    if not search_line or not append_txt:
+        ad.log.info("Nothing for update.")
+    else:
+        tmp_log_path = tempfile.mkdtemp()
+        ad.pull_files(gps_xml_path, tmp_log_path)
+        gps_xml_tmp_path = os.path.join(tmp_log_path, "gps.xml")
+        gps_xml_file = open(gps_xml_tmp_path, "r")
+        lines = gps_xml_file.readlines()
+        gps_xml_file.close()
+        fout = open(gps_xml_tmp_path, "w")
+        append_txt_tag = append_txt.strip()
+        for line in lines:
+            if append_txt_tag in line:
+                ad.log.info('{} is already in the file. Skip'.format(append_txt))
+                continue
+            fout.write(line)
+            if search_line in line:
+                fout.write(append_txt)
+                ad.log.info("Update new line: '{}' in gps.xml.".format(append_txt))
+        fout.close()
+
+        # Update gps.xml with gps_new.xml
+        ad.push_system_file(gps_xml_tmp_path, gps_xml_path)
+
+        # remove temp folder
+        shutil.rmtree(tmp_log_path, ignore_errors=True)
+
+
+def bcm_gps_ignore_rom_alm(ad):
+    """ Update BCM gps.xml with ignoreRomAlm="True"
+    Args:
+        ad: An AndroidDevice object.
+    """
+    search_line_tag = '<gll\n'
+    append_line_str = '       IgnoreRomAlm=\"true\"\n'
+    bcm_gps_xml_add_option(ad, search_line_tag, append_line_str)
