@@ -42,7 +42,8 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
         req_params = ["pixel_lab_network", "standalone_cs_criteria",
                       "flp_ttff_max_threshold", "pixel_lab_location",
                       "flp_ttff_cycle", "default_gnss_signal_attenuation",
-                      "flp_waiting_time", "tracking_test_time"]
+                      "flp_waiting_time", "tracking_test_time",
+                      "fast_start_criteria" ]
         self.unpack_userparams(req_param_names=req_params)
         # create hashmap for SSID
         self.ssid_map = {}
@@ -58,6 +59,7 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
     def setup_test(self):
         gutils.get_baseband_and_gms_version(self.watch)
         gutils.clear_logd_gnss_qxdm_log(self.watch)
+        gutils.clear_logd_gnss_qxdm_log(self.phone)
         gutils.set_attenuator_gnss_signal(self.watch, self.attenuators,
                                        self.default_gnss_signal_attenuation)
         if not gutils.is_mobile_data_on(self.watch):
@@ -90,6 +92,10 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
         tutils.start_adb_tcpdump(self.watch)
 
     def flp_ttff(self, mode, criteria, location):
+        self.start_qxdm_and_tcpdump_log()
+        start_gnss_by_gtw_gpstool(self.phone, True, type="FLP")
+        time.sleep(self.flp_waiting_time)
+        self.watch.unlock_screen(password=None)
         begin_time = get_current_epoch_time()
         process_gnss_by_gtw_gpstool(
             self.watch, self.standalone_cs_criteria, type="flp")
@@ -98,11 +104,13 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
         results = gutils.process_ttff_by_gtw_gpstool(
             self.watch, begin_time, location, type="flp")
         gutils.check_ttff_data(self.watch, results, mode, criteria)
+        self.check_location_from_phone()
+        start_gnss_by_gtw_gpstool(self.phone, False, type="FLP")
 
-    def check_location(self):
+    def check_location_from_phone(self):
         watch_file = check_tracking_file(self.watch)
         phone_file = check_tracking_file(self.phone)
-        gutils.compare_watch_phone_location(self, watch_file, phone_file)
+        return gutils.compare_watch_phone_location(self, watch_file, phone_file)
 
     """ Test Cases """
 
@@ -149,11 +157,7 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
             flp_ttff_max_threshold.
             2. Watch uses phone's FLP location.
         """
-        self.start_qxdm_and_tcpdump_log()
-        start_gnss_by_gtw_gpstool(self.phone, True, type="FLP")
-        time.sleep(self.flp_waiting_time)
         self.flp_ttff("cs", self.flp_ttff_max_threshold, self.pixel_lab_location)
-        self.check_location()
 
     @test_tracker_info(uuid="de19617c-1f03-4077-99af-542b300ab4ed")
     def test_flp_ttff_ws(self):
@@ -169,11 +173,7 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
             flp_ttff_max_threshold.
             2. Watch uses phone's FLP location.
         """
-        self.start_qxdm_and_tcpdump_log()
-        start_gnss_by_gtw_gpstool(self.phone, True, type="FLP")
-        time.sleep(self.flp_waiting_time)
         self.flp_ttff("ws", self.flp_ttff_max_threshold, self.pixel_lab_location)
-        self.check_location()
 
     @test_tracker_info(uuid="c58c90ae-9f4a-4619-a9f8-f2f98c930008")
     def test_flp_ttff_hs(self):
@@ -189,11 +189,7 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
             flp_ttff_max_threshold.
             2. Watch uses phone's FLP location.
         """
-        self.start_qxdm_and_tcpdump_log()
-        start_gnss_by_gtw_gpstool(self.phone, True, type="FLP")
-        time.sleep(self.flp_waiting_time)
         self.flp_ttff("hs", self.flp_ttff_max_threshold, self.pixel_lab_location)
-        self.check_location()
 
     @test_tracker_info(uuid="ca955ad3-e2eb-4fde-af2b-3e19abe47792")
     def test_tracking_during_bt_disconnect_resume(self):
@@ -226,12 +222,51 @@ class GnssWearableTetherFunctionTest(BaseTestClass):
             time.sleep(self.flp_waiting_time)
             self.watch.log.info("Wait 1 min for tracking")
             time.sleep(self.tracking_test_time)
-            if not self.check_location():
+            if not self.check_location_from_phone():
                 raise signals.TestFailure("Watch is not using phone location")
             self.watch.droid.bluetoothToggleState(False)
             self.watch.log.info("Turn off Watch Bluetooth")
             self.watch.log.info("Wait 1 min for tracking")
             time.sleep(self.tracking_test_time)
-            if not not self.check_location():
+            if self.check_location_from_phone():
                 raise signals.TestError("Watch should not use phone location")
             gutils.parse_gtw_gpstool_log(self.watch, self.pixel_lab_location, type="FLP")
+            start_gnss_by_gtw_gpstool(self.phone, False, type="FLP")
+
+    @test_tracker_info(uuid="654a8f1b-f9c6-433e-a21f-59224cce822e")
+    def test_fast_start_first_fix_and_ttff(self):
+        """Verify first fix and TTFF of Fast Start (Warm Start v4) within the criteria
+
+        Steps:
+            1. Pair watch to phone during OOBE.
+            2. Ensure LTO file download in watch.
+            3. Ensure UTC time inject in watch.
+            4. Enable AirPlane mode to untether to phone.
+            5. Open GPSTool to get first fix in LTO and UTC time injected.
+            6. Repeat Step1 ~ Step5 for 5 times.
+            7. After Step6, Warm Start TTFF for 10 iterations.
+
+        Expected Results:
+            1. First fix should be within fast_start_threshold.
+            2. TTFF should be within fast_start_threshold.
+        """
+        for i in range(1,6):
+            self.watch.log.info("First fix of Fast Start - attempts %s" % i)
+            pair_to_wearable(self.watch, self.phone)
+            gutils.enable_framework_log(self.watch)
+            self.start_qxdm_and_tcpdump_log()
+            begin_time = get_current_epoch_time()
+            gutils.check_xtra_download(self.watch, begin_time)
+            gutils.check_inject_time(self.watch)
+            self.watch.log.info("Turn airplane mode on")
+            self.watch.droid.connectivityToggleAirplaneMode(True)
+            self.watch.unlock_screen(password=None)
+            gutils.process_gnss_by_gtw_gpstool(
+                self.watch, self.fast_start_criteria, clear_data=False)
+        gutils.start_ttff_by_gtw_gpstool(
+            self.watch, ttff_mode="ws", iteration=self.ttff_test_cycle)
+        ttff_data = gutils.process_ttff_by_gtw_gpstool(self.watch, begin_time,
+                                                self.pixel_lab_location)
+        result = gutils.check_ttff_data(self.watch, ttff_data, self.ttff_mode.get("ws"),
+                                 criteria=self.fast_start_criteria)
+        asserts.assert_true(result, "TTFF fails to reach designated criteria")

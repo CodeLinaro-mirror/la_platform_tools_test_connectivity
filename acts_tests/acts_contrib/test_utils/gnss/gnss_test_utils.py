@@ -2054,6 +2054,10 @@ def parse_brcm_nmea_log(ad, nmea_pattern, brcm_error_log_allowlist):
             with zipfile.ZipFile(zip_path, "r") as zip_file:
                 zip_file.extractall(tmp_log_path)
                 gl_logs = zip_file.namelist()
+                # b/214145973 check if hidden exists in pixel logger zip file
+                tmp_file = [name for name in gl_logs if 'tmp' in name]
+                if tmp_file:
+                    ad.log.warn(f"Hidden file {tmp_file} exists in pixel logger zip file")
             break
         elif os.path.isdir(zip_path):
             ad.log.info("BRCM logs didn't zip properly. Log path is directory.")
@@ -2107,6 +2111,9 @@ def check_dpo_rate_via_brcm_log(ad, dpo_threshold, brcm_error_log_allowlist):
     power_save_count = 0
     pglor_list, brcm_error_log = parse_brcm_nmea_log(
         ad, "$PGLOR,11,STA", brcm_error_log_allowlist)
+    if not pglor_list:
+        raise signals.TestFailure("Fail to get DPO logs from pixel logger")
+
     for pglor in pglor_list:
         power_res = re.compile(r',P,(\w),').search(pglor).group(1)
         if power_res == "D":
@@ -2136,6 +2143,7 @@ def check_dpo_rate_via_brcm_log(ad, dpo_threshold, brcm_error_log_allowlist):
                                   threshold,
                                   brcm_error_log))
 
+
 def pair_to_wearable(ad, ad1):
     """Pair phone to watch via Bluetooth.
 
@@ -2144,6 +2152,7 @@ def pair_to_wearable(ad, ad1):
         ad1: A wearable project.
     """
     check_location_service(ad1)
+    utils.sync_device_time(ad1)
     bt_model_name = ad.adb.getprop("ro.product.model")
     bt_sn_name = ad.adb.getprop("ro.serialno")
     bluetooth_name = bt_model_name +" " + bt_sn_name[10:]
@@ -2167,6 +2176,7 @@ def pair_to_wearable(ad, ad1):
     time.sleep(180)
     ad.adb.shell("settings put global stay_on_while_plugged_in 7")
     check_location_service(ad)
+    enable_gnss_verbose_logging(ad)
     if is_bluetooth_connected(ad, ad1):
         ad.log.info("Pairing successfully.")
     else:
@@ -2246,6 +2256,7 @@ def compare_watch_phone_location(ad,watch_file, phone_file):
         return False
     else:
         ad.log.info("Watch's locations are using Phone's location.")
+        return True
 
 
 def check_tracking_file(ad):
@@ -2366,3 +2377,52 @@ def bcm_gps_ignore_rom_alm(ad):
     search_line_tag = '<gll\n'
     append_line_str = '       IgnoreRomAlm=\"true\"\n'
     bcm_gps_xml_add_option(ad, search_line_tag, append_line_str)
+
+
+def check_inject_time(ad):
+    """Check if watch could get the UTC time.
+
+    Args:
+        ad: An AndroidDevice object.
+    """
+    for i in range(1, 6):
+        time.sleep(10)
+        inject_time_results = ad.search_logcat("GPSIC.OUT.gps_inject_time")
+        ad.log.info("Check time injected - attempt %s" % i)
+        if inject_time_results:
+            ad.log.info("Time is injected successfully.")
+            return True
+    raise signals.TestFailure("Fail to get time injected within %s attempts." % i)
+
+
+def enable_framework_log(ad):
+    """Enable framework log for wearable to check UTC time download.
+
+    Args:
+        ad: An AndroidDevice object.
+    """
+    remount_device(ad)
+    time.sleep(3)
+    ad.log.info("Start to enable framwork log for wearable.")
+    ad.adb.shell("echo 'log.tag.LocationManagerService=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GnssLocationProvider=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GpsNetInitiatedHandler=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GnssNetInitiatedHandler=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GnssNetworkConnectivityHandler=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.NtpTimeHelper=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.ConnectivityService=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GnssPsdsDownloader=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GnssVisibilityControl=VERBOSE'  >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.Gnss=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GnssConfiguration=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.ImsPhone=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GsmCdmaPhone=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.Phone=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("echo 'log.tag.GCoreFlp=VERBOSE' >> /data/local.prop")
+    ad.adb.shell("chmod 644 /data/local.prop")
+    ad.adb.shell("echo 'LogEnabled=true' > /data/vendor/gps/libgps.conf")
+    ad.adb.shell("chown gps.system /data/vendor/gps/libgps.conf")
+    ad.adb.shell("sync")
+    reboot(ad)
+    ad.log.info("Wait 2 mins for Wearable booting system busy")
+    time.sleep(120)
