@@ -35,6 +35,7 @@ class AttenuatorInstrument(attenuator.AttenuatorInstrument):
     With the exception of HTTP-specific commands, all functionality is defined
     by the AttenuatorInstrument class.
     """
+
     def __init__(self, num_atten=1):
         super(AttenuatorInstrument, self).__init__(num_atten)
         self._ip_address = None
@@ -144,8 +145,7 @@ class AttenuatorInstrument(attenuator.AttenuatorInstrument):
             raise IndexError('Attenuator index out of range!', self.num_atten,
                              idx)
         att_req = urllib.request.urlopen(
-            'http://{}:{}/CHAN:{}:ATT?'.format(self._ip_address, self.port,
-                                               idx + 1),
+            'http://{}:{}/CHAN:{}:ATT?'.format(self._ip_address, self.port, idx + 1),
             timeout=self._timeout)
         att_resp = att_req.read().decode('utf-8').strip()
         try:
