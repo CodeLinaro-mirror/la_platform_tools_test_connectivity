@@ -251,8 +251,8 @@ class LhdConf(GpsConfig):
         return False
 
 
-class GnssUserBuildBroadcomConfigurationTest(BaseTestClass):
-    """ GNSS user build configuration Tests on Broadcom device."""
+class GnssBroadcomConfigurationTest(BaseTestClass):
+    """ GNSS configuration Tests on Broadcom device."""
     def setup_class(self):
         super().setup_class()
         self.ad = self.android_devices[0]
@@ -273,6 +273,7 @@ class GnssUserBuildBroadcomConfigurationTest(BaseTestClass):
     def setup_test(self):
         if gutils.check_chipset_vendor_by_qualcomm(self.ad):
             raise signals.TestSkip("Device is Qualcomm, skip the test")
+        gutils.get_baseband_and_gms_version(self.ad)
         gutils.clear_logd_gnss_qxdm_log(self.ad)
 
     def teardown_test(self):

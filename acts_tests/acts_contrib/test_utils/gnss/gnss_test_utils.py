@@ -13,7 +13,6 @@
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
-
 import time
 import re
 import os
@@ -21,11 +20,14 @@ import math
 import shutil
 import fnmatch
 import posixpath
+import subprocess
 import tempfile
 import zipfile
 from collections import namedtuple
 from datetime import datetime
 from xml.etree import ElementTree
+from contextlib import contextmanager
+from statistics import median
 
 from acts import utils
 from acts import asserts
@@ -35,9 +37,12 @@ from acts.controllers.android_device import list_adb_devices
 from acts.controllers.android_device import list_fastboot_devices
 from acts.controllers.android_device import DEFAULT_QXDM_LOG_PATH
 from acts.controllers.android_device import SL4A_APK_NAME
+from acts_contrib.test_utils.gnss.gnss_measurement import GnssMeasurement
 from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
 from acts_contrib.test_utils.tel import tel_logging_utils as tlutils
 from acts_contrib.test_utils.tel import tel_test_utils as tutils
+from acts_contrib.test_utils.gnss import gnssstatus_utils
+from acts_contrib.test_utils.gnss import gnss_constant
 from acts_contrib.test_utils.instrumentation.device.command.instrumentation_command_builder import InstrumentationCommandBuilder
 from acts_contrib.test_utils.instrumentation.device.command.instrumentation_command_builder import InstrumentationTestCommandBuilder
 from acts.utils import get_current_epoch_time
@@ -46,6 +51,7 @@ from acts_contrib.test_utils.gnss.gnss_defines import BCM_GPS_XML_PATH
 from acts_contrib.test_utils.gnss.gnss_defines import BCM_NVME_STO_PATH
 
 WifiEnums = wutils.WifiEnums
+UPLOAD_TO_SPONGE_PREFIX = "TestResult "
 PULL_TIMEOUT = 300
 GNSSSTATUS_LOG_PATH = (
     "/storage/emulated/0/Android/data/com.android.gpstool/files/")
@@ -70,6 +76,11 @@ log.tag.NtpTrustedTime=VERBOSE
 log.tag.GnssPsdsDownloader=VERBOSE
 log.tag.Gnss=VERBOSE
 log.tag.GnssConfiguration=VERBOSE"""
+LOCAL_PROP_FILE_CONTENTS_FOR_WEARABLE = """\
+log.tag.ImsPhone=VERBOSE
+log.tag.GsmCdmaPhone=VERBOSE
+log.tag.Phone=VERBOSE
+log.tag.GCoreFlp=VERBOSE"""
 TEST_PACKAGE_NAME = "com.google.android.apps.maps"
 LOCATION_PERMISSIONS = [
     "android.permission.ACCESS_FINE_LOCATION",
@@ -149,7 +160,11 @@ def enable_gnss_verbose_logging(ad):
     else:
         ad.adb.shell("echo LogEnabled=true >> /data/vendor/gps/libgps.conf")
         ad.adb.shell("chown gps.system /data/vendor/gps/libgps.conf")
-    ad.adb.shell("echo %r >> /data/local.prop" % LOCAL_PROP_FILE_CONTENTS)
+    if is_device_wearable(ad):
+       PROP_CONTENTS = LOCAL_PROP_FILE_CONTENTS + LOCAL_PROP_FILE_CONTENTS_FOR_WEARABLE
+    else:
+        PROP_CONTENTS = LOCAL_PROP_FILE_CONTENTS
+    ad.adb.shell("echo %r >> /data/local.prop" % PROP_CONTENTS)
     ad.adb.shell("chmod 644 /data/local.prop")
     ad.adb.shell("setprop persist.logd.logpersistd.size 20000")
     ad.adb.shell("setprop persist.logd.size 16777216")
@@ -246,8 +261,11 @@ def disable_supl_mode(ad):
         reboot(ad)
 
 
-def kill_xtra_daemon(ad):
-    """Kill XTRA daemon to test SUPL only test item.
+def disable_vendor_orbit_assistance_data(ad):
+    """Disable vendor assiatance features.
+
+    For Qualcomm: disable XTRA
+    For Broadcom: disable LTO
 
     Args:
         ad: An AndroidDevice object.
@@ -282,26 +300,25 @@ def _init_device(ad):
     Args:
         ad: An AndroidDevice object.
     """
+    check_location_service(ad)
     enable_gnss_verbose_logging(ad)
-    enable_compact_and_particle_fusion_log(ad)
     prepare_gps_overlay(ad)
     if check_chipset_vendor_by_qualcomm(ad):
         disable_xtra_throttle(ad)
     enable_supl_mode(ad)
-    if is_device_wearable(ad):
-        ad.adb.shell("settings put global stay_on_while_plugged_in 7")
-    else:
-        ad.adb.shell("settings put system screen_off_timeout 1800000")
+    set_screen_always_on(ad)
     wutils.wifi_toggle_state(ad, False)
     ad.log.info("Setting Bluetooth state to False")
     ad.droid.bluetoothToggleState(False)
-    check_location_service(ad)
     set_wifi_and_bt_scanning(ad, True)
     disable_private_dns_mode(ad)
     reboot(ad)
     init_gtw_gpstool(ad)
     if not is_mobile_data_on(ad):
         set_mobile_data(ad, True)
+    disable_ramdump(ad)
+    if is_device_wearable(ad):
+        disable_battery_defend(ad)
 
 
 def prepare_gps_overlay(ad):
@@ -801,7 +818,7 @@ def start_gnss_by_gtw_gpstool(ad,
         options = ("--es type {} --ei freq {} --ez BG {} --ez meas {} --ez "
                    "lowpower {}").format(type, freq, bgdisplay, meas, lowpower)
         cmd = cmd + " " + options
-    ad.adb.shell(cmd)
+    ad.adb.shell(cmd, ignore_status=True, timeout = 300)
     time.sleep(3)
 
 
@@ -809,7 +826,9 @@ def process_gnss_by_gtw_gpstool(ad,
                                 criteria,
                                 type="gnss",
                                 clear_data=True,
-                                meas_flag=False):
+                                meas_flag=False,
+                                freq=0,
+                                bg_display=False):
     """Launch GTW GPSTool and Clear all GNSS aiding data
        Start GNSS tracking on GTW_GPSTool.
 
@@ -821,6 +840,8 @@ def process_gnss_by_gtw_gpstool(ad,
         set to True.
         meas_flag: True to enable GnssMeasurement. False is not to. Default
         set to False.
+        freq: An integer to set location update frequency. Default set to 0.
+        bg_display: To enable GPS tool bg display or not
 
     Returns:
         True: First fix TTFF are within criteria.
@@ -838,7 +859,8 @@ def process_gnss_by_gtw_gpstool(ad,
             clear_aiding_data_by_gtw_gpstool(ad)
         ad.log.info("Start %s on GTW_GPSTool - attempt %d" % (type.upper(),
                                                               i+1))
-        start_gnss_by_gtw_gpstool(ad, state=True, type=type, meas=meas_flag)
+        start_gnss_by_gtw_gpstool(ad, state=True, type=type, meas=meas_flag, freq=freq,
+                                  bgdisplay=bg_display)
         for _ in range(10 + criteria):
             logcat_results = ad.search_logcat("First fixed", begin_time)
             if logcat_results:
@@ -878,6 +900,8 @@ def start_ttff_by_gtw_gpstool(ad,
         mininterval: Minimum value of random interval pool. The unit is second.
         maxinterval: Maximum value of random interval pool. The unit is second.
         hot_warm_sleep: Wait time for acquiring Almanac.
+    Returns:
+        latest_start_time: (Datetime) the start time of latest successful TTFF
     """
     begin_time = get_current_epoch_time()
     if (ttff_mode == "hs" or ttff_mode == "ws") and not aid_data:
@@ -897,10 +921,12 @@ def start_ttff_by_gtw_gpstool(ad,
                          ttff_mode, iteration, raninterval, mininterval,
                          maxinterval))
         time.sleep(1)
-        if ad.search_logcat("act=com.android.gpstool.start_test_action",
-                            begin_time):
+        result = ad.search_logcat("act=com.android.gpstool.start_test_action", begin_time)
+        if result:
+            ad.log.debug("TTFF start log" % result)
+            latest_start_time = max(list(map(lambda x: x['datetime_obj'], result)))
             ad.log.info("Send TTFF start_test_action successfully.")
-            break
+            return latest_start_time
     else:
         check_current_focus_app(ad)
         raise signals.TestError("Fail to send TTFF start_test_action.")
@@ -910,7 +936,9 @@ def gnss_tracking_via_gtw_gpstool(ad,
                                   criteria,
                                   type="gnss",
                                   testtime=60,
-                                  meas_flag=False):
+                                  meas_flag=False,
+                                  freq=0,
+                                  is_screen_off=False):
     """Start GNSS/FLP tracking tests for input testtime on GTW_GPSTool.
 
     Args:
@@ -920,19 +948,40 @@ def gnss_tracking_via_gtw_gpstool(ad,
         testtime: Tracking test time for minutes. Default set to 60 minutes.
         meas_flag: True to enable GnssMeasurement. False is not to. Default
         set to False.
+        freq: An integer to set location update frequency. Default set to 0.
+        is_screen_off: whether to turn off during tracking
     """
     process_gnss_by_gtw_gpstool(
-        ad, criteria=criteria, type=type, meas_flag=meas_flag)
+        ad, criteria=criteria, type=type, meas_flag=meas_flag, freq=freq, bg_display=is_screen_off)
     ad.log.info("Start %s tracking test for %d minutes" % (type.upper(),
                                                            testtime))
     begin_time = get_current_epoch_time()
-    while get_current_epoch_time() - begin_time < testtime * 60 * 1000:
-        detect_crash_during_tracking(ad, begin_time, type)
-    ad.log.info("Successfully tested for %d minutes" % testtime)
+    with set_screen_status(ad, off=is_screen_off):
+        while get_current_epoch_time() - begin_time < testtime * 60 * 1000:
+            detect_crash_during_tracking(ad, begin_time, type)
+            # add sleep here to avoid too many request and cause device not responding
+            time.sleep(1)
+        ad.log.info("Successfully tested for %d minutes" % testtime)
     start_gnss_by_gtw_gpstool(ad, state=False, type=type)
 
 
-def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
+# TODO: (diegowchung) GnssFunctionTest has similar function, need to handle the duplication
+def run_ttff_via_gtw_gpstool(ad, mode, criteria, test_cycle, true_location):
+    """Run GNSS TTFF test with selected mode and parse the results.
+
+    Args:
+        mode: "cs", "ws" or "hs"
+        criteria: Criteria for the TTFF.
+    """
+    process_gnss_by_gtw_gpstool(ad, criteria)
+    ttff_start_time = start_ttff_by_gtw_gpstool(ad, mode, test_cycle)
+    ttff_data = process_ttff_by_gtw_gpstool(ad, ttff_start_time, true_location)
+    result = check_ttff_data(ad, ttff_data, gnss_constant.TTFF_MODE.get(mode), criteria)
+    asserts.assert_true(
+        result, "TTFF %s fails to reach designated criteria of %d "
+                "seconds." % (gnss_constant.TTFF_MODE.get(mode), criteria))
+
+def parse_gtw_gpstool_log(ad, true_position, type="gnss", validate_gnssstatus=False):
     """Process GNSS/FLP API logs from GTW GPSTool and output track_data to
     test_run_info for ACTS plugin to parse and display on MobileHarness as
     Property.
@@ -942,7 +991,13 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
         true_position: Coordinate as [latitude, longitude] to calculate
         position error.
         type: Different API for location fix. Use gnss/flp/nmea
+        validate_gnssstatus: Validate gnssstatus or not
+
+    Returns:
+        A dict of location reported from GPSTool
+            {<utc_time>: TRACK_REPORT, ...}
     """
+    gnssstatus_count = 0
     test_logfile = {}
     track_data = {}
     ant_top4_cn = 0
@@ -955,8 +1010,8 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
     file_count = int(ad.adb.shell("find %s -type f -iname *.txt | wc -l"
                                   % GNSSSTATUS_LOG_PATH))
     if file_count != 1:
-        ad.log.error("%d API logs exist." % file_count)
-    dir_file = ad.adb.shell("ls %s" % GNSSSTATUS_LOG_PATH).split()
+        ad.log.warn("%d API logs exist." % file_count)
+    dir_file = ad.adb.shell("ls -tr %s" % GNSSSTATUS_LOG_PATH).split()
     for path_key in dir_file:
         if fnmatch.fnmatch(path_key, "*.txt"):
             logpath = posixpath.join(GNSSSTATUS_LOG_PATH, path_key)
@@ -970,7 +1025,20 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
     if not test_logfile:
         raise signals.TestError("Failed to get test log file in device.")
     lines = ad.adb.shell("cat %s" % test_logfile).split("\n")
+    gnss_svid_container = gnssstatus_utils.GnssSvidContainer()
     for line in lines:
+        if line.startswith('Fix'):
+            try:
+                gnss_status = gnssstatus_utils.GnssStatus(line)
+                gnssstatus_count += 1
+            except gnssstatus_utils.RegexParseException as e:
+                ad.log.warn(e)
+                continue
+
+            gnss_svid_container.add_satellite(gnss_status)
+            if validate_gnssstatus:
+                gnss_status.validate_gnssstatus()
+
         if "Antenna_History Avg Top4" in line:
             ant_top4_cn = float(line.split(":")[-1].strip())
         elif "Antenna_History Avg" in line:
@@ -996,8 +1064,9 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
                                                  ant_cn=ant_cn,
                                                  base_top4cn=base_top4_cn,
                                                  base_cn=base_cn)
+    ad.log.info("Total %d gnssstatus samples verified" %gnssstatus_count)
     ad.log.debug(track_data)
-    prop_basename = "TestResult %s_tracking_" % type.upper()
+    prop_basename = UPLOAD_TO_SPONGE_PREFIX + f"{type.upper()}_tracking_"
     time_list = sorted(track_data.keys())
     l5flag_list = [track_data[key].l5flag for key in time_list]
     pe_list = [float(track_data[key].pe) for key in time_list]
@@ -1016,6 +1085,56 @@ def parse_gtw_gpstool_log(ad, true_position, type="gnss"):
     ad.log.info(prop_basename+"Ant_AvgSignal %.1f" % ant_cn_list[-1])
     ad.log.info(prop_basename+"Base_AvgTop4Signal %.1f" % base_top4cn_list[-1])
     ad.log.info(prop_basename+"Base_AvgSignal %.1f" % base_cn_list[-1])
+    _log_svid_info(gnss_svid_container, prop_basename, ad)
+
+    return track_data
+
+def validate_location_fix_rate(ad, location_reported, run_time, fix_rate_criteria):
+    """Check location reported count
+
+    The formula is "total_fix_points / (run_time * 60)"
+    When the result is lower than fix_rate_criteria, fail the test case
+
+    Args:
+        ad: AndroidDevice object
+        location_reported: (Enumerate) Contains the reported location
+        run_time: (int) How many minutes do we need to verify
+        fix_rate_criteria: The threshold of the pass criteria
+            if we expect fix rate to be 99%, then fix_rate_criteria should be 0.99
+    """
+    ad.log.info("Validating fix rate")
+    pass_criteria = run_time * 60 * fix_rate_criteria
+    actual_location_count = len(location_reported)
+
+    # The fix rate may exceed 100% occasionally, to standardlize the result
+    # set maximum fix rate to 100%
+    actual_fix_rate = min(1, (actual_location_count / (run_time * 60)))
+    actual_fix_rate_percentage = f"{actual_fix_rate:.0%}"
+
+    log_prefix = UPLOAD_TO_SPONGE_PREFIX + f"FIX_RATE_"
+    ad.log.info("%sresult %s" % (log_prefix, actual_fix_rate_percentage))
+    ad.log.debug("Actual location count %s" % actual_location_count)
+
+    fail_message = (f"Fail to meet criteria. Expect to have at least {pass_criteria} location count"
+                    f" Actual: {actual_location_count}")
+    asserts.assert_true(pass_criteria <= actual_location_count, msg=fail_message)
+
+
+def _log_svid_info(container, log_prefix, ad):
+    """Write GnssSvidContainer svid information into logger
+    Args:
+        container: A GnssSvidContainer object
+        log_prefix:
+            A prefix used to specify the log will be upload to dashboard
+        ad: An AndroidDevice object
+    """
+    for sv_type, svids in container.used_in_fix.items():
+        message = f"{log_prefix}{sv_type} {len(svids)}"
+        ad.log.info(message)
+        ad.log.debug("Satellite used in fix %s ids are: %s", sv_type, svids)
+
+    for sv_type, svids in container.not_used_in_fix.items():
+        ad.log.debug("Satellite not used in fix %s ids are: %s", sv_type, svids)
 
 
 def process_ttff_by_gtw_gpstool(ad, begin_time, true_position, type="gnss"):
@@ -1165,6 +1284,7 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
         ttff_data: TTFF data of secs, position error and signal strength.
         ttff_mode: TTFF Test mode for current test item.
     """
+    timeout_ttff = 61
     prop_basename = "TestResult "+ttff_mode.replace(" ", "_")+"_TTFF_"
     sec_list = [float(ttff_data[key].ttff_sec) for key in ttff_data.keys()]
     pe_list = [float(ttff_data[key].ttff_pe) for key in ttff_data.keys()]
@@ -1175,12 +1295,14 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
     haccu_list = [float(ttff_data[key].ttff_haccu) for key in
                     ttff_data.keys()]
     timeoutcount = sec_list.count(0.0)
+    sec_list = sorted(sec_list)
     if len(sec_list) == timeoutcount:
-        avgttff = 9527
+        median_ttff = avgttff = timeout_ttff
     else:
         avgttff = sum(sec_list)/(len(sec_list) - timeoutcount)
+        median_ttff = median(sec_list)
     if timeoutcount != 0:
-        maxttff = 9527
+        maxttff = timeout_ttff
     else:
         maxttff = max(sec_list)
     avgdis = sum(pe_list)/len(pe_list)
@@ -1189,6 +1311,7 @@ def ttff_property_key_and_value(ad, ttff_data, ttff_mode):
     base_avgcn = sum(base_cn_list)/len(base_cn_list)
     avg_haccu = sum(haccu_list)/len(haccu_list)
     ad.log.info(prop_basename+"AvgTime %.1f" % avgttff)
+    ad.log.info(prop_basename+"MedianTime %.1f" % median_ttff)
     ad.log.info(prop_basename+"MaxTime %.1f" % maxttff)
     ad.log.info(prop_basename+"TimeoutCount %d" % timeoutcount)
     ad.log.info(prop_basename+"AvgDis %.1f" % avgdis)
@@ -1249,11 +1372,14 @@ def check_current_focus_app(ad):
 
     Args:
         ad: An AndroidDevice object.
+    Returns:
+        string: the current focused window / app
     """
     time.sleep(1)
     current = ad.adb.shell(
         "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
     ad.log.debug("\n"+current)
+    return current
 
 
 def check_location_api(ad, retries):
@@ -2199,53 +2325,51 @@ def check_dpo_rate_via_brcm_log(ad, dpo_threshold, brcm_error_log_allowlist):
                                   brcm_error_log))
 
 
-def pair_to_wearable(ad, ad1):
-    """Pair phone to watch via Bluetooth.
+def process_pair(watch, phone):
+    """Pair phone to watch via Bluetooth in OOBE.
 
     Args:
-        ad: A pixel phone.
-        ad1: A wearable project.
+        watch: A wearable project.
+        phone: A pixel phone.
     """
-    check_location_service(ad1)
-    utils.sync_device_time(ad1)
-    bt_model_name = ad.adb.getprop("ro.product.model")
-    bt_sn_name = ad.adb.getprop("ro.serialno")
+    check_location_service(phone)
+    utils.sync_device_time(phone)
+    bt_model_name = watch.adb.getprop("ro.product.model")
+    bt_sn_name = watch.adb.getprop("ro.serialno")
     bluetooth_name = bt_model_name +" " + bt_sn_name[10:]
-    fastboot_factory_reset(ad, False)
-    ad.log.info("Wait 1 min for wearable system busy time.")
+    fastboot_factory_reset(watch, False)
+    # TODO (chenstanley)Need to re-structure for better code and test flow instead of simply waiting
+    watch.log.info("Wait 1 min for wearable system busy time.")
     time.sleep(60)
-    ad.adb.shell("input keyevent 4")
+    watch.adb.shell("input keyevent 4")
     # Clear Denali paired data in phone.
-    ad1.adb.shell("pm clear com.google.android.gms")
-    ad1.adb.shell("pm clear com.google.android.apps.wear.companion")
-    ad1.adb.shell("am start -S -n com.google.android.apps.wear.companion/"
+    phone.adb.shell("pm clear com.google.android.gms")
+    phone.adb.shell("pm clear com.google.android.apps.wear.companion")
+    phone.adb.shell("am start -S -n com.google.android.apps.wear.companion/"
                         "com.google.android.apps.wear.companion.application.RootActivity")
-    uia_click(ad1, "Next")
-    uia_click(ad1, "I agree")
-    uia_click(ad1, bluetooth_name)
-    uia_click(ad1, "Pair")
-    uia_click(ad1, "Skip")
-    uia_click(ad1, "Skip")
-    uia_click(ad1, "Finish")
-    ad.log.info("Wait 3 mins for complete pairing process.")
+    uia_click(phone, "Next")
+    uia_click(phone, "I agree")
+    uia_click(phone, bluetooth_name)
+    uia_click(phone, "Pair")
+    uia_click(phone, "Skip")
+    uia_click(phone, "Skip")
+    uia_click(phone, "Finish")
+    # TODO (chenstanley)Need to re-structure for better code and test flow instead of simply waiting
+    watch.log.info("Wait 3 mins for complete pairing process.")
     time.sleep(180)
-    ad.adb.shell("settings put global stay_on_while_plugged_in 7")
-    check_location_service(ad)
-    enable_gnss_verbose_logging(ad)
-    if is_bluetooth_connected(ad, ad1):
-        ad.log.info("Pairing successfully.")
-    else:
-        raise signals.TestFailure("Fail to pair watch and phone successfully.")
+    set_screen_always_on(watch)
+    check_location_service(watch)
+    enable_gnss_verbose_logging(watch)
 
 
-def is_bluetooth_connected(ad, ad1):
+def is_bluetooth_connected(watch, phone):
     """Check if device's Bluetooth status is connected or not.
 
     Args:
-    ad: A wearable project
-    ad1: A pixel phone.
+    watch: A wearable project
+    phone: A pixel phone.
     """
-    return ad.droid.bluetoothIsDeviceConnected(ad1.droid.bluetoothGetLocalAddress())
+    return watch.droid.bluetoothIsDeviceConnected(phone.droid.bluetoothGetLocalAddress())
 
 
 def detect_crash_during_tracking(ad, begin_time, type):
@@ -2264,7 +2388,7 @@ def detect_crash_during_tracking(ad, begin_time, type):
         ad.start_adb_logcat()
     for attr in gnss_crash_list:
         gnss_crash_result = ad.adb.shell(
-            "logcat -d | grep -E -i '%s'" % attr)
+            "logcat -d | grep -E -i '%s'" % attr, ignore_status=True, timeout = 300)
         if gnss_crash_result:
             start_gnss_by_gtw_gpstool(ad, state=False, type=type)
             raise signals.TestFailure(
@@ -2381,47 +2505,65 @@ def delete_bcm_nvmem_sto_file(ad):
     ad.log.info("Delete BCM's NVMEM ephemeris files.\n%s" % status)
 
 
-def bcm_gps_xml_add_option(ad,
+def bcm_gps_xml_update_option(ad,
+                           option,
                            search_line=None,
                            append_txt=None,
+                           update_txt=None,
+                           delete_txt=None,
                            gps_xml_path=BCM_GPS_XML_PATH):
     """Append parameter setting in gps.xml for BCM solution
 
     Args:
+        option: A str to identify the operation (add/update/delete).
         ad: An AndroidDevice object.
         search_line: Pattern matching of target
         line for appending new line data.
-        append_txt: New line that will be appended after the search_line.
+        append_txt: New lines that will be appended after the search_line.
+        update_txt: New line to update the original file.
+        delete_txt: lines to delete from the original file.
         gps_xml_path: gps.xml file location of DUT
     """
     remount_device(ad)
     #Update gps.xml
-    if not search_line or not append_txt:
-        ad.log.info("Nothing for update.")
-    else:
-        tmp_log_path = tempfile.mkdtemp()
-        ad.pull_files(gps_xml_path, tmp_log_path)
-        gps_xml_tmp_path = os.path.join(tmp_log_path, "gps.xml")
-        gps_xml_file = open(gps_xml_tmp_path, "r")
-        lines = gps_xml_file.readlines()
-        gps_xml_file.close()
-        fout = open(gps_xml_tmp_path, "w")
-        append_txt_tag = append_txt.strip()
+    tmp_log_path = tempfile.mkdtemp()
+    ad.pull_files(gps_xml_path, tmp_log_path)
+    gps_xml_tmp_path = os.path.join(tmp_log_path, "gps.xml")
+    gps_xml_file = open(gps_xml_tmp_path, "r")
+    lines = gps_xml_file.readlines()
+    gps_xml_file.close()
+    fout = open(gps_xml_tmp_path, "w")
+    if option == "add":
         for line in lines:
-            if append_txt_tag in line:
-                ad.log.info('{} is already in the file. Skip'.format(append_txt))
+            if line.strip() in append_txt:
+                ad.log.info("{} is already in the file. Skip".format(append_txt))
                 continue
             fout.write(line)
             if search_line in line:
-                fout.write(append_txt)
-                ad.log.info("Update new line: '{}' in gps.xml.".format(append_txt))
-        fout.close()
+                for add_txt in append_txt:
+                    fout.write(add_txt)
+                    ad.log.info("Add new line: '{}' in gps.xml.".format(add_txt))
+    elif option == "update":
+        for line in lines:
+            if search_line in line:
+                ad.log.info(line)
+                fout.write(update_txt)
+                ad.log.info("Update line: '{}' in gps.xml.".format(update_txt))
+                continue
+            fout.write(line)
+    elif option == "delete":
+        for line in lines:
+            if line in delete_txt:
+                ad.log.info("Delete line: '{}' in gps.xml.".format(line.strip()))
+                continue
+            fout.write(line)
+    fout.close()
 
-        # Update gps.xml with gps_new.xml
-        ad.push_system_file(gps_xml_tmp_path, gps_xml_path)
+    # Update gps.xml with gps_new.xml
+    ad.push_system_file(gps_xml_tmp_path, gps_xml_path)
 
-        # remove temp folder
-        shutil.rmtree(tmp_log_path, ignore_errors=True)
+    # remove temp folder
+    shutil.rmtree(tmp_log_path, ignore_errors=True)
 
 
 def bcm_gps_ignore_rom_alm(ad):
@@ -2430,8 +2572,8 @@ def bcm_gps_ignore_rom_alm(ad):
         ad: An AndroidDevice object.
     """
     search_line_tag = '<gll\n'
-    append_line_str = '       IgnoreRomAlm=\"true\"\n'
-    bcm_gps_xml_add_option(ad, search_line_tag, append_line_str)
+    append_line_str = ['       IgnoreRomAlm=\"true\"\n']
+    bcm_gps_xml_update_option(ad, "add", search_line_tag, append_line_str)
 
 
 def check_inject_time(ad):
@@ -2449,35 +2591,344 @@ def check_inject_time(ad):
             return True
     raise signals.TestFailure("Fail to get time injected within %s attempts." % i)
 
+def recover_paired_status(watch, phone):
+    """Recover Bluetooth paired status if not paired.
 
-def enable_framework_log(ad):
-    """Enable framework log for wearable to check UTC time download.
+    Args:
+        watch: A wearable project.
+        phone: A pixel phone.
+    """
+    for _ in range(3):
+        watch.log.info("Switch Bluetooth Off-On to recover paired status.")
+        for status in (False, True):
+            watch.droid.bluetoothToggleState(status)
+            phone.droid.bluetoothToggleState(status)
+            # TODO (chenstanley)Need to re-structure for better code and test flow instead of simply waiting
+            watch.log.info("Wait for Bluetooth auto re-connect.")
+            time.sleep(10)
+        if is_bluetooth_connected(watch, phone):
+            watch.log.info("Success to recover paired status.")
+            return True
+    raise signals.TestFailure("Fail to recover BT paired status in 3 attempts.")
+
+def push_lhd_overlay(ad):
+    """Push lhd_overlay.conf to device in /data/vendor/gps/overlay/
+
+    ad:
+        ad: An AndroidDevice object.
+    """
+    overlay_name = "lhd_overlay.conf"
+    overlay_asset = ad.adb.shell("ls /data/vendor/gps/overlay/")
+    if overlay_name in overlay_asset:
+        ad.log.info(f"{overlay_name} already in device, skip.")
+        return
+
+    temp_path = tempfile.mkdtemp()
+    file_path = os.path.join(temp_path, overlay_name)
+    lhd_content = 'Lhe477xDebugFlags=RPC:FACILITY=2097151:LOG_INFO:STDOUT_PUTS:STDOUT_LOG\n'\
+                  'LogLevel=*:E\nLogLevel=*:W\nLogLevel=*:I\nLog=LOGCAT\nLogEnabled=true\n'
+    overlay_path = "/data/vendor/gps/overlay/"
+    with open(file_path, "w") as f:
+        f.write(lhd_content)
+    ad.log.info("Push lhd_overlay to device")
+    ad.adb.push(file_path, overlay_path)
+
+
+def disable_ramdump(ad):
+    """Disable ramdump so device will reboot when about to enter ramdump
+
+    Once device enter ramdump, it will take a while to generate dump file
+    The process may take a while and block all the tests.
+    By disabling the ramdump mode, device will reboot instead of entering ramdump mode
 
     Args:
         ad: An AndroidDevice object.
     """
-    remount_device(ad)
-    time.sleep(3)
-    ad.log.info("Start to enable framwork log for wearable.")
-    ad.adb.shell("echo 'log.tag.LocationManagerService=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GnssLocationProvider=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GpsNetInitiatedHandler=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GnssNetInitiatedHandler=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GnssNetworkConnectivityHandler=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.NtpTimeHelper=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.ConnectivityService=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GnssPsdsDownloader=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GnssVisibilityControl=VERBOSE'  >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.Gnss=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GnssConfiguration=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.ImsPhone=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GsmCdmaPhone=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.Phone=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("echo 'log.tag.GCoreFlp=VERBOSE' >> /data/local.prop")
-    ad.adb.shell("chmod 644 /data/local.prop")
-    ad.adb.shell("echo 'LogEnabled=true' > /data/vendor/gps/libgps.conf")
-    ad.adb.shell("chown gps.system /data/vendor/gps/libgps.conf")
-    ad.adb.shell("sync")
-    reboot(ad)
-    ad.log.info("Wait 2 mins for Wearable booting system busy")
-    time.sleep(120)
+    ad.log.info("Enter bootloader mode")
+    ad.stop_services()
+    ad.adb.reboot("bootloader")
+    for _ in range(1,9):
+        if ad.is_bootloader:
+            break
+        time.sleep(1)
+    else:
+        raise signals.TestFailure("can't enter bootloader mode")
+    ad.log.info("Disable ramdump")
+    ad.fastboot.oem("ramdump disable")
+    ad.fastboot.reboot()
+    ad.wait_for_boot_completion()
+    ad.root_adb()
+    tutils.bring_up_sl4a(ad)
+    ad.start_adb_logcat()
+
+
+def deep_suspend_device(ad):
+    """Force DUT to enter deep suspend mode
+
+    When DUT is connected to PCs, it won't enter deep suspend mode
+    by pressing power button.
+
+    To force DUT enter deep suspend mode, we need to send the
+    following command to DUT  "echo mem >/sys/power/state"
+
+    To make sure the DUT stays in deep suspend mode for a while,
+    it will send the suspend command 3 times with 15s interval
+
+    Args:
+        ad: An AndroidDevice object.
+    """
+    ad.log.info("Ready to go to deep suspend mode")
+    begin_time = get_device_time(ad)
+    ad.droid.goToSleepNow()
+    ensure_power_manager_is_dozing(ad, begin_time)
+    ad.stop_services()
+    try:
+        command = "echo deep > /sys/power/mem_sleep && echo mem > /sys/power/state"
+        for i in range(1, 4):
+            ad.log.debug(f"Send deep suspend command round {i}")
+            ad.adb.shell(command, ignore_status=True)
+            # sleep here to ensure the device stays enough time in deep suspend mode
+            time.sleep(15)
+            if not _is_device_enter_deep_suspend(ad):
+                raise signals.TestFailure("Device didn't enter deep suspend mode")
+        ad.log.info("Wake device up now")
+    except Exception:
+        # when exception happen, it's very likely the device is rebooting
+        # to ensure the test can go on, wait for the device is ready
+        ad.log.warn("Device may be rebooting, wait for it")
+        ad.wait_for_boot_completion()
+        ad.root_adb()
+        raise
+    finally:
+        tutils.bring_up_sl4a(ad)
+        ad.start_adb_logcat()
+        ad.droid.wakeUpNow()
+
+
+def get_device_time(ad):
+    """Get current datetime from device
+
+    Args:
+        ad: An AndroidDevice object.
+
+    Returns:
+        datetime object
+    """
+    result = ad.adb.shell("date +\"%Y-%m-%d %T.%3N\"")
+    return datetime.strptime(result, "%Y-%m-%d %H:%M:%S.%f")
+
+
+def ensure_power_manager_is_dozing(ad, begin_time):
+    """Check if power manager is in dozing
+    When device is sleeping, power manager should goes to doze mode.
+    To ensure that, we check the log every 1 second (maximum to 3 times)
+
+    Args:
+        ad: An AndroidDevice object.
+        begin_time: datetime, used as the starting point to search log
+    """
+    keyword = "PowerManagerService: Dozing"
+    ad.log.debug("Log search start time: %s" % begin_time)
+    for i in range(0,3):
+        result = ad.search_logcat(keyword, begin_time)
+        if result:
+            break
+        ad.log.debug("Power manager is not dozing... retry in 1 second")
+        time.sleep(1)
+    else:
+        ad.log.warn("Power manager didn't enter dozing")
+
+
+
+def _is_device_enter_deep_suspend(ad):
+    """Check device has been enter deep suspend mode
+
+    If device has entered deep suspend mode, we should be able to find keyword
+    "suspend entry (deep)"
+
+    Args:
+        ad: An AndroidDevice object.
+
+    Returns:
+        bool: True / False -> has / has not entered deep suspend
+    """
+    cmd = f"adb -s {ad.serial} logcat -d|grep \"suspend entry (deep)\""
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, shell=True)
+    result, _ = process.communicate()
+    ad.log.debug(f"suspend result = {result}")
+
+    return bool(result)
+
+
+def check_location_report_interval(ad, location_reported_time_src, total_seconds, tolerance):
+    """Validate the interval between two location reported time
+    Normally the interval should be around 1 second but occasionally it may up to nearly 2 seconds
+    So we set up a tolerance - 99% of reported interval should be less than 1.3 seconds
+
+    We validate the interval backward, because the wrong interval mostly happened at the end
+    Args:
+        ad: An AndroidDevice object.
+        location_reported_time_src: A list of reported time(in string) from GPS tool
+        total_seconds: (int) how many seconds has the GPS been enabled
+        tolerance: (float) set how many ratio of error should be accepted
+                   if we want to set tolerance to be 1% then pass 0.01 as tolerance value
+    """
+    ad.log.info("Checking location report frequency")
+    error_count = 0
+    error_tolerance = max(1, int(total_seconds * tolerance))
+    expected_longest_interval = 1.3
+    location_reported_time = list(map(lambda x: datetime.strptime(x, "%Y/%m/%d %H:%M:%S.%f"),
+                                      location_reported_time_src))
+    location_reported_time = sorted(location_reported_time)
+    last_gps_report_time = location_reported_time[-1]
+    ad.log.debug("Location report time: %s" % location_reported_time)
+
+    for reported_time in reversed(location_reported_time):
+        time_diff = last_gps_report_time - reported_time
+        if time_diff.total_seconds() > expected_longest_interval:
+            error_count += 1
+        last_gps_report_time = reported_time
+
+    if error_count > error_tolerance:
+        fail_message = (f"Interval longer than {expected_longest_interval}s "
+                        f"exceed tolerance count: {error_tolerance}, error count: {error_count}")
+        ad.log.error(fail_message)
+
+
+@contextmanager
+def set_screen_status(ad, off=True):
+    """Set screen on / off
+
+    A context manager function, can be used with "with" statement.
+    example:
+        with set_screen_status(ad, off=True):
+            do anything you want during screen is off
+    Once the function end, it will turn on the screen
+    Args:
+        ad: AndroidDevice object
+        off: (bool) True -> turn off screen / False -> leave screen as it is
+    """
+    try:
+        if off:
+            ad.droid.goToSleepNow()
+        yield ad
+    finally:
+        ad.droid.wakeUpNow()
+        ensure_device_screen_is_on(ad)
+
+
+@contextmanager
+def full_gnss_measurement(ad):
+    """Context manager function to enable full gnss measurement"""
+    try:
+        ad.adb.shell("settings put global enable_gnss_raw_meas_full_tracking 1")
+        yield ad
+    finally:
+        ad.adb.shell("settings put global enable_gnss_raw_meas_full_tracking 0")
+
+
+def ensure_device_screen_is_on(ad):
+    """Make sure the screen is on
+
+    Will try 3 times, each with 1 second interval
+
+    Raise:
+        GnssTestUtilsError: if screen can't be turn on after 3 tries
+    """
+    for _ in range(3):
+        # when NotificationShade appears in focus window, it indicates the screen is still off
+        if "NotificationShade" not in check_current_focus_app(ad):
+            break
+        time.sleep(1)
+    else:
+        raise GnssTestUtilsError("Device screen is not on after 3 tries")
+
+
+def start_qxdm_and_tcpdump_log(ad, enable):
+    """Start QXDM and adb tcpdump if collect_logs is True.
+    Args:
+        ad: AndroidDevice object
+        enable: (bool) True -> start collecting
+                       False -> not start collecting
+    """
+    if enable:
+        start_pixel_logger(ad)
+        tlutils.start_adb_tcpdump(ad)
+
+
+def set_screen_always_on(ad):
+    """Ensure the sceen will not turn off and display the correct app screen
+    for wearable, we also disable the charing screen,
+    otherwise the charing screen will keep popping up and block the GPS tool
+    """
+    if is_device_wearable(ad):
+        ad.adb.shell("settings put global stay_on_while_plugged_in 7")
+        ad.adb.shell("setprop persist.enable_charging_experience false")
+    else:
+        ad.adb.shell("settings put system screen_off_timeout 1800000")
+
+
+def validate_adr_rate(ad, pass_criteria):
+    """Check the ADR rate
+
+    Args:
+        ad: AndroidDevice object
+        pass_criteria: (float) the passing ratio, 1 = 100%, 0.5 = 50%
+    """
+    adr_statistic = GnssMeasurement(ad).get_adr_static()
+
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX + "ADR_valid_rate {0:.1%}".format(adr_statistic.valid_rate))
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX +
+                "ADR_usable_rate {0:.1%}".format(adr_statistic.usable_rate))
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX + "ADR_total_count %s" % adr_statistic.total_count)
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX + "ADR_valid_count %s" % adr_statistic.valid_count)
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX + "ADR_reset_count %s" % adr_statistic.reset_count)
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX +
+                "ADR_cycle_slip_count %s" % adr_statistic.cycle_slip_count)
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX +
+                "ADR_half_cycle_reported_count %s" % adr_statistic.half_cycle_reported_count)
+    ad.log.info(UPLOAD_TO_SPONGE_PREFIX +
+                "ADR_half_cycle_resolved_count %s" % adr_statistic.half_cycle_resolved_count)
+
+    if pass_criteria > adr_statistic.usable_rate:
+        # TODO: (diegowchung) add assertion once we have the expected criteria
+        ad.log.warn("Usable rate: %s lower than expected: %s" %
+                    (adr_statistic.usable_rate, pass_criteria))
+
+
+def pair_to_wearable(watch, phone):
+    """Pair watch to phone.
+
+    Args:
+        watch: A wearable project.
+        phone: A pixel phone.
+    Raise:
+        TestFailure: If pairing process could not success after 3 tries.
+    """
+    for _ in range(3):
+        process_pair(watch, phone)
+        if is_bluetooth_connected(watch, phone):
+            watch.log.info("Pairing successfully.")
+            return True
+    raise signals.TestFailure("Pairing is not successfully.")
+
+
+def disable_battery_defend(ad):
+    """Disable battery defend config to prevent battery defend message pop up
+    after connecting to the same charger for 4 days in a row.
+
+    Args:
+        ad: A wearable project.
+    """
+    for _ in range(5):
+        remount_device(ad)
+        ad.adb.shell("setprop vendor.battery.defender.disable 1")
+        # To simulate cable unplug and the status will be recover after device reboot.
+        ad.adb.shell("cmd battery unplug")
+        # Sleep 3 seconds for waiting adb commend changes config and simulates cable unplug.
+        time.sleep(3)
+        config_setting = ad.adb.shell("getprop vendor.battery.defender.state")
+        if config_setting == "DISABLED":
+            ad.log.info("Disable Battery Defend setting successfully.")
+            break
