@@ -16,6 +16,7 @@
 import time
 import re
 import os
+import pathlib
 import math
 import shutil
 import fnmatch
@@ -33,6 +34,7 @@ from acts import utils
 from acts import asserts
 from acts import signals
 from acts.libs.proc import job
+from acts.controllers.adb_lib.error import AdbCommandError
 from acts.controllers.android_device import list_adb_devices
 from acts.controllers.android_device import list_fastboot_devices
 from acts.controllers.android_device import DEFAULT_QXDM_LOG_PATH
@@ -433,20 +435,27 @@ def clear_logd_gnss_qxdm_log(ad):
     """
     remount_device(ad)
     ad.log.info("Clear Logd, GNSS and PixelLogger Log from previous test item.")
-    ad.adb.shell("rm -rf /data/misc/logd", ignore_status=True)
+    folders_should_be_removed = ["/data/misc/logd"]
     ad.adb.shell(
         'find %s -name "*.txt" -type f -delete' % GNSSSTATUS_LOG_PATH,
         ignore_status=True)
     if check_chipset_vendor_by_qualcomm(ad):
         diag_logs = (
             "/sdcard/Android/data/com.android.pixellogger/files/logs/diag_logs")
-        ad.adb.shell("rm -rf %s" % diag_logs, ignore_status=True)
         output_path = posixpath.join(DEFAULT_QXDM_LOG_PATH, "logs")
+        folders_should_be_removed += [diag_logs, output_path]
     else:
         output_path = ("/sdcard/Android/data/com.android.pixellogger/files"
                        "/logs/gps/")
-    ad.adb.shell("rm -rf %s" % output_path, ignore_status=True)
-    reboot(ad)
+        always_on_logger_log_path = ("/data/vendor/gps/logs")
+        folders_should_be_removed += [always_on_logger_log_path, output_path]
+    for folder in folders_should_be_removed:
+        ad.log.info("Folder to be deleted: %s" % folder)
+        folder_contents = ad.adb.shell(f"ls {folder}", ignore_status=True)
+        ad.log.debug("Contents to be deleted: %s" % folder_contents)
+        ad.adb.shell("rm -rf %s" % folder, ignore_status=True)
+    if not is_device_wearable(ad):
+        reboot(ad)
 
 
 def get_gnss_qxdm_log(ad, qdb_path=None):
@@ -2223,55 +2232,46 @@ def parse_brcm_nmea_log(ad, nmea_pattern, brcm_error_log_allowlist):
     brcm_log_list = []
     brcm_log_error_pattern = ["lhd: FS: Start Failsafe dump", "E slog"]
     brcm_error_log_list = []
-    stop_pixel_logger(ad)
     pixellogger_path = (
         "/sdcard/Android/data/com.android.pixellogger/files/logs/gps/.")
-    tmp_log_path = tempfile.mkdtemp()
-    ad.pull_files(pixellogger_path, tmp_log_path)
-    for path_key in os.listdir(tmp_log_path):
-        zip_path = posixpath.join(tmp_log_path, path_key)
-        if path_key.endswith(".zip"):
-            ad.log.info("Processing zip file: {}".format(zip_path))
-            with zipfile.ZipFile(zip_path, "r") as zip_file:
-                zip_file.extractall(tmp_log_path)
-                gl_logs = zip_file.namelist()
-                # b/214145973 check if hidden exists in pixel logger zip file
-                tmp_file = [name for name in gl_logs if 'tmp' in name]
-                if tmp_file:
-                    ad.log.warn(f"Hidden file {tmp_file} exists in pixel logger zip file")
-            break
-        elif os.path.isdir(zip_path):
-            ad.log.info("BRCM logs didn't zip properly. Log path is directory.")
-            tmp_log_path = zip_path
-            gl_logs = os.listdir(tmp_log_path)
-            ad.log.info("Processing BRCM log files: {}".format(gl_logs))
-            break
-    else:
-        raise signals.TestError(
-            "No BRCM logs found in {}".format(os.listdir(tmp_log_path)))
-    gl_logs = [log for log in gl_logs
-               if log.startswith("gl") and log.endswith(".log")]
-    for file in gl_logs:
-        nmea_log_path = posixpath.join(tmp_log_path, file)
-        ad.log.info("Parsing log pattern of \"%s\" in %s" % (nmea_pattern,
-                                                             nmea_log_path))
-        brcm_log = open(nmea_log_path, "r", encoding="UTF-8", errors="ignore")
-        lines = brcm_log.readlines()
-        for line in lines:
-            if nmea_pattern in line:
-                brcm_log_list.append(line)
-            for attr in brcm_log_error_pattern:
-                if attr in line:
-                    benign_log = False
-                    for allow_log in brcm_error_log_allowlist:
-                        if allow_log in line:
-                            benign_log = True
-                            ad.log.info("\"%s\" is in allow-list and removed "
-                                        "from error." % allow_log)
-                    if not benign_log:
-                        brcm_error_log_list.append(line)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            ad.pull_files(pixellogger_path, tmp_dir)
+        except AdbCommandError:
+            raise FileNotFoundError("No pixel logger folders found")
+
+        # Although we don't rely on the zip file, stop pixel logger here to avoid
+        # wasting resources.
+        stop_pixel_logger(ad)
+
+        tmp_path = pathlib.Path(tmp_dir)
+        log_folders = sorted([x for x in tmp_path.iterdir() if x.is_dir()])
+        if not log_folders:
+            raise FileNotFoundError("No BRCM logs found.")
+        # The folder name is a string of datetime, the latest one will be in the last index.
+        gl_logs = log_folders[-1].glob("**/gl*.log")
+
+        for nmea_log_path in gl_logs:
+            ad.log.info("Parsing log pattern of \"%s\" in %s" % (nmea_pattern,
+                                                                 nmea_log_path))
+            brcm_log = open(nmea_log_path, "r", encoding="UTF-8", errors="ignore")
+            lines = brcm_log.readlines()
+            for line in lines:
+                if nmea_pattern in line:
+                    brcm_log_list.append(line)
+                for attr in brcm_log_error_pattern:
+                    if attr in line:
+                        benign_log = False
+                        for allow_log in brcm_error_log_allowlist:
+                            if allow_log in line:
+                                benign_log = True
+                                ad.log.info("\"%s\" is in allow-list and removed "
+                                            "from error." % allow_log)
+                        if not benign_log:
+                            brcm_error_log_list.append(line)
+
     brcm_error_log = "".join(brcm_error_log_list)
-    shutil.rmtree(tmp_log_path, ignore_errors=True)
     return brcm_log_list, brcm_error_log
 
 
@@ -2347,13 +2347,16 @@ def process_pair(watch, phone):
     phone.adb.shell("pm clear com.google.android.apps.wear.companion")
     phone.adb.shell("am start -S -n com.google.android.apps.wear.companion/"
                         "com.google.android.apps.wear.companion.application.RootActivity")
-    uia_click(phone, "Next")
+    uia_click(phone, "Continue")
+    uia_click(phone, "More")
     uia_click(phone, "I agree")
+    uia_click(phone, "I accept")
     uia_click(phone, bluetooth_name)
     uia_click(phone, "Pair")
     uia_click(phone, "Skip")
+    uia_click(phone, "Next")
     uia_click(phone, "Skip")
-    uia_click(phone, "Finish")
+    uia_click(phone, "Done")
     # TODO (chenstanley)Need to re-structure for better code and test flow instead of simply waiting
     watch.log.info("Wait 3 mins for complete pairing process.")
     time.sleep(180)
