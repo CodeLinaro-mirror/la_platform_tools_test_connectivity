@@ -15,9 +15,9 @@
 #   limitations under the License.
 
 import time
-import datetime
 import re
 import statistics
+from datetime import datetime, timedelta
 from acts import utils
 from acts import signals
 from acts.base_test import BaseTestClass
@@ -36,9 +36,13 @@ CONCURRENCY_TYPE = {
 GPS_XML_CONFIG = {
     "CS": [
         '    IgnorePosition=\"true\"\n', '    IgnoreEph=\"true\"\n',
-        '    IgnoreTime=\"true\"\n', '    AsstIgnoreLto=\"true\"\n', '    IgnoreJniTime=\"true\"\n'
+        '    IgnoreTime=\"true\"\n', '    AsstIgnoreLto=\"true\"\n',
+        '    IgnoreJniTime=\"true\"\n'
     ],
-    "WS": ['    IgnorePosition=\"true\"\n', '    AsstIgnoreLto=\"true\"\n', '    IgnoreJniTime=\"true\"\n'],
+    "WS": [
+        '    IgnorePosition=\"true\"\n', '    AsstIgnoreLto=\"true\"\n',
+        '    IgnoreJniTime=\"true\"\n'
+    ],
     "HS": []
 }
 
@@ -125,48 +129,82 @@ class GnssConcurrencyTest(BaseTestClass):
             if "ap" not in type:
                 self.ad.adb.shell(" ".join([cmd, type, option]))
 
-    def parse_concurrency_result(self, begin_time, type, criteria):
+    def get_current_dut_time(self):
+        """ Get current time from test device via log.
+
+            Returns: a datetime_obj for current time.
+        """
+        # [TODO:b/235569769] Debugging only to check timestamp
+        last_log_time = ""
+        current_epoch = self.ad.adb.shell("date +%s")
+        dut_time = datetime.fromtimestamp(int(current_epoch))
+
+        last_loc_entry = self.ad.search_logcat("reportLocation")
+        if last_loc_entry:
+            last_log_time = last_loc_entry[-1]["datetime_obj"]
+
+        # Temporary workaround to solve test case failure
+        begin_time = datetime.now() + timedelta(hours=1)
+        self.ad.log.info(
+            f"\nDUT TIME:{dut_time}\nSYS TIME:{datetime.now()}\nLOG TIME:{last_log_time}"
+            f"\nSYS TIME+1:{begin_time}"
+        )
+        return begin_time
+
+    def parse_concurrency_result(self,
+                                 begin_time,
+                                 request_type,
+                                 criteria,
+                                 exam_lower=True):
         """ Parse the test result with given time and criteria.
 
         Args:
             begin_time: test begin time.
-            type: str for location request type.
+            request_type: str for location request type.
             criteria: dictionary for test criteria.
+            exam_lower: a boolean to identify the lower bond or not.
         Return: List for the failure and outlier loops and results.
         """
         results = []
         failures = []
         outliers = []
-        search_results = self.ad.search_logcat(CONCURRENCY_TYPE[type],
+        upper_bound = criteria * (
+            1 + self.chre_tolerate_rate) + self.outlier_criteria
+        lower_bound = criteria * (
+            1 - self.chre_tolerate_rate) - self.outlier_criteria
+        search_results = self.ad.search_logcat(CONCURRENCY_TYPE[request_type],
                                                begin_time)
         if not search_results:
             raise signals.TestFailure(f"No log entry found for keyword:"
-                                      f"{CONCURRENCY_TYPE[type]}")
-        ttff = (search_results[0]["datetime_obj"] - begin_time).total_seconds()
-        results.append(ttff)
+                                      f"{CONCURRENCY_TYPE[request_type]}")
+
         for i in range(len(search_results) - 1):
             target = search_results[i + 1]
             timedelt = target["datetime_obj"] - search_results[i]["datetime_obj"]
             timedelt_sec = timedelt.total_seconds()
             results.append(timedelt_sec)
-            if timedelt_sec > (criteria *
-                               self.chre_tolerate_rate) + self.outlier_criteria:
+            res_tag = ""
+            if timedelt_sec > upper_bound:
                 failures.append(timedelt_sec)
-                self.ad.log.error("[Failure][%s]:%.2f sec" %
-                                  (target["time_stamp"], timedelt_sec))
-            elif timedelt_sec > criteria * self.chre_tolerate_rate:
-                outliers.append(target)
-                self.ad.log.info("[Outlier][%s]:%.2f sec" %
-                                 (target["time_stamp"], timedelt_sec))
+                res_tag = "Failure"
+            elif timedelt_sec < lower_bound and exam_lower:
+                failures.append(timedelt_sec)
+                res_tag = "Failure"
+            elif timedelt_sec > criteria * (1 + self.chre_tolerate_rate):
+                outliers.append(timedelt_sec)
+                res_tag = "Outlier"
+            if res_tag:
+                self.ad.log.error(
+                    f"[{res_tag}][{target['time_stamp']}]:{timedelt_sec:.2f} sec"
+                )
 
-        res_summary = " ".join([str(res) for res in results])
-        self.ad.log.info("[%s]Overall Result: %s" % (type, res_summary))
-        self.ad.log.info("TestResult %s_samples %d" %
-                         (type, len(search_results)))
-        self.ad.log.info("TestResult %s_outliers %d" % (type, len(outliers)))
-        self.ad.log.info("TestResult %s_failures %d" % (type, len(failures)))
-        self.ad.log.info("TestResult %s_max_time %.2f" %
-                         (type, max(results[1:])))
+        res_summary = " ".join([str(res) for res in results[1:]])
+        self.ad.log.info(f"[{request_type}]Overall Result: {res_summary}")
+        log_prefix = f"TestResult {request_type}"
+        self.ad.log.info(f"{log_prefix}_samples {len(search_results)}")
+        self.ad.log.info(f"{log_prefix}_outliers {len(outliers)}")
+        self.ad.log.info(f"{log_prefix}_failures {len(failures)}")
+        self.ad.log.info(f"{log_prefix}_max_time {max(results):.2f}")
 
         return outliers, failures, results
 
@@ -177,11 +215,14 @@ class GnssConcurrencyTest(BaseTestClass):
             criteria: int for test criteria.
             test_duration: int for test duration.
         """
-        begin_time = datetime.datetime.now()
-        self.ad.log.info(f"Test Start at {begin_time}")
-        gutils.start_gnss_by_gtw_gpstool(
-            self.ad, True, freq=criteria["ap_location"])
         self.enable_chre(criteria["gnss"])
+        TTFF_criteria = criteria["ap_location"] + self.standalone_cs_criteria
+        gutils.process_gnss_by_gtw_gpstool(
+            self.ad, TTFF_criteria, freq=criteria["ap_location"])
+        self.ad.log.info("Tracking 10 sec to prevent flakiness.")
+        time.sleep(10)
+        begin_time = self.get_current_dut_time()
+        self.ad.log.info(f"Test Start at {begin_time}")
         time.sleep(test_duration)
         self.enable_chre(0)
         gutils.start_gnss_by_gtw_gpstool(self.ad, False)
@@ -194,7 +235,7 @@ class GnssConcurrencyTest(BaseTestClass):
             criteria: int for test criteria.
             test_duration: int for test duration.
         """
-        begin_time = datetime.datetime.now()
+        begin_time = self.get_current_dut_time()
         self.ad.log.info(f"Test Start at {begin_time}")
         self.enable_chre(criteria["gnss"])
         time.sleep(test_duration)
@@ -217,7 +258,7 @@ class GnssConcurrencyTest(BaseTestClass):
             self.ad.log.info("Starting process %s result" % request_type)
             outliers[request_type], failures[request_type], results[
                 request_type] = self.parse_concurrency_result(
-                    begin_time, request_type, criteria)
+                    begin_time, request_type, criteria, exam_lower=False)
             if not results[request_type]:
                 failure_log += "[%s] Fail to find location report.\n" % request_type
             if len(failures[request_type]) > 0:
@@ -237,7 +278,7 @@ class GnssConcurrencyTest(BaseTestClass):
             freq: a list identify source1/2 frequency [freq1, freq2]
         """
         request = {"ap_location": self.max_interval}
-        begin_time = datetime.datetime.now()
+        begin_time = self.get_current_dut_time()
         self.ad.droid.startLocating(freq[0] * 1000, 0)
         time.sleep(10)
         for i in range(5):
@@ -278,7 +319,7 @@ class GnssConcurrencyTest(BaseTestClass):
             interval_sec: test interval in seconds for CHRE.
             duration: test duration.
         """
-        begin_time = datetime.datetime.now()
+        begin_time = self.get_current_dut_time()
         self.ad.log.info(f"Test start at {begin_time}")
         self.enable_chre(interval_sec)
         time.sleep(duration)
@@ -362,7 +403,7 @@ class GnssConcurrencyTest(BaseTestClass):
         cmd_base = "chre_power_test_client gnss tcm"
         cmd_start = " ".join([cmd_base, "enable 1000"])
         cmd_stop = " ".join([cmd_base, "disable"])
-        begin_time = datetime.datetime.now()
+        begin_time = self.get_current_dut_time()
 
         self.ad.log.info("Send CHRE enable to DUT")
         self.ad.adb.shell(cmd_start)
@@ -456,7 +497,7 @@ class GnssConcurrencyTest(BaseTestClass):
         test_duration = 10
         intervals = [0, 0.5, 1.5]
         for interval in intervals:
-            begin_time = datetime.datetime.now()
+            begin_time = self.get_current_dut_time()
             self.ad.droid.startLocating(interval * 1000, 0)
             time.sleep(test_duration)
             self.ad.droid.stopLocating()
