@@ -273,7 +273,7 @@ def enable_vendor_orbit_assistance_data(ad):
     if is_device_wearable(ad):
         lto_mode_wearable(ad, True)
     elif check_chipset_vendor_by_qualcomm(ad):
-        reboot()
+        reboot(ad)
     else:
         lto_mode(ad, True)
 
@@ -958,11 +958,16 @@ def start_ttff_by_gtw_gpstool(ad,
         ad.log.info("Start TTFF CSWith Assist...")
         time.sleep(3)
     for i in range(1, 4):
-        ad.adb.shell("am broadcast -a com.android.gpstool.ttff_action "
-                     "--es ttff {} --es cycle {}  --ez raninterval {} "
-                     "--ei mininterval {} --ei maxinterval {}".format(
-                         ttff_mode, iteration, raninterval, mininterval,
-                         maxinterval))
+        try:
+            ad.adb.shell("am broadcast -a com.android.gpstool.ttff_action "
+                         "--es ttff {} --es cycle {}  --ez raninterval {} "
+                         "--ei mininterval {} --ei maxinterval {}".format(
+                             ttff_mode, iteration, raninterval, mininterval,
+                             maxinterval))
+        except:
+            # Debug only, to see what the sceen display when fail to trigger TTFF
+            ad.adb.shell(f"screencap -p {GNSSSTATUS_LOG_PATH}/ttff_fail.png")
+            raise
         time.sleep(1)
         result = ad.search_logcat("act=com.android.gpstool.start_test_action", begin_time)
         if result:
@@ -1017,6 +1022,10 @@ def wait_n_mins_for_gnss_tracking(ad, begin_time, testtime, api_type="gnss",
         testtime: Tracking test time for minutes.
         ignore_hal_crash: To ignore HAL crash error no not.
     """
+    ad.log.info(f"epoch is {get_current_epoch_time()}, while begin time is {begin_time}")
+    sys_tz = job.run('date +"%Z %z"')
+    dut_tz = ad.adb.shell('date +"%Z %z"')
+    ad.log.info(f"sys tz is {sys_tz.stdout}, dut tz is {dut_tz}")
     while get_current_epoch_time() - begin_time < testtime * 60 * 1000:
         detect_crash_during_tracking(ad, begin_time, api_type, ignore_hal_crash)
         # add sleep here to avoid too many request and cause device not responding
