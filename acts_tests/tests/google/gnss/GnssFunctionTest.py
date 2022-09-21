@@ -313,6 +313,7 @@ class GnssFunctionTest(BaseTestClass):
         location_data = parse_gtw_gpstool_log(self.ad, self.pixel_lab_location, api_type="gnss")
         gutils.validate_location_fix_rate(self.ad, location_data, run_time=test_time,
                                           fix_rate_criteria=0.99)
+        gutils.verify_gps_time_should_be_close_to_device_time(self.ad, location_data)
 
     @test_tracker_info(uuid="623628ab-fdab-449d-9025-ebf4e9a404c2")
     def test_dpo_function(self):
@@ -876,8 +877,10 @@ class GnssFunctionTest(BaseTestClass):
             All SUPL TTFF Cold Start results should be within supl_cs_criteria.
         """
         for times in range(1, 4):
+            self.ad.log.info(f"before reset - gms version is {gutils.get_gms_version(self.ad)}")
             fastboot_factory_reset(self.ad, True)
             self.ad.unlock_screen(password=None)
+            self.ad.log.info(f"after reset - gms version is {gutils.get_gms_version(self.ad)}")
             _init_device(self.ad)
             begin_time = get_current_epoch_time()
             disable_vendor_orbit_assistance_data(self.ad)
@@ -893,6 +896,9 @@ class GnssFunctionTest(BaseTestClass):
                                           "times -> FAIL" % times)
             self.ad.log.info("SUPL after Factory Reset test %d times -> "
                              "PASS" % times)
+        # For debug only, we'd like to see the bug report on the success case.
+        begin_time = get_current_epoch_time()
+        self.ad.take_bug_report("test_supl_factory_reset", begin_time)
 
     @test_tracker_info(uuid="2a9f2890-3c0a-48b8-821d-bf97e36355e9")
     def test_quick_toggle_gnss_state(self):
