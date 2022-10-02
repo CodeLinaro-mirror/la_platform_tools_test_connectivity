@@ -483,7 +483,8 @@ def toggle_airplane_mode_by_adb(log, ad, new_state=None):
     ad.log.info("Change airplane mode from %s to %s", cur_state, new_state)
     try:
         ad.adb.shell("settings put global airplane_mode_on %s" % int(new_state))
-        ad.adb.shell("am broadcast -a android.intent.action.AIRPLANE_MODE")
+        ad.adb.shell("am broadcast -a android.intent.action.AIRPLANE_MODE "
+                     "--ez state %s" % new_state)
     except Exception as e:
         ad.log.error(e)
         return False
@@ -3019,6 +3020,8 @@ def change_slot(ad: AndroidDevice, sim_slot: Sequence[SimSlotInfo],
     Returns:
         True if success, False otherwise.
     """
+    if not getattr(ad, "mep", False): return
+
     port_id = [sim_slot[0].value[1], sim_slot[1].value[1]]
     phy_slot_id = [sim_slot[0].value[2], sim_slot[1].value[2]]
     ad.adb.shell(
