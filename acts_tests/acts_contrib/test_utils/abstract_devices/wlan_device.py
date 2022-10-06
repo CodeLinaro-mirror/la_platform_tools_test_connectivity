@@ -329,11 +329,9 @@ class FuchsiaWlanDevice(WlanDevice):
 
     def wifi_toggle_state(self, state):
         """Stub for Fuchsia implementation."""
-        pass
 
     def reset_wifi(self):
         """Stub for Fuchsia implementation."""
-        pass
 
     def take_bug_report(self, test_name=None, begin_time=None):
         """Stub for Fuchsia implementation."""
@@ -341,11 +339,9 @@ class FuchsiaWlanDevice(WlanDevice):
 
     def get_log(self, test_name, begin_time):
         """Stub for Fuchsia implementation."""
-        pass
 
     def turn_location_off_and_scan_toggle_off(self):
         """Stub for Fuchsia implementation."""
-        pass
 
     def associate(self,
                   target_ssid,
@@ -464,7 +460,7 @@ class FuchsiaWlanDevice(WlanDevice):
             return False
 
     def send_command(self, command):
-        return self.device.send_command_ssh(str(command)).stdout
+        return self.device.ssh.run(str(command)).stdout
 
     def get_interface_ip_addresses(self, interface):
         return get_interface_ip_addresses(self.device, interface)
@@ -552,5 +548,6 @@ class FuchsiaWlanDevice(WlanDevice):
                 'host': self.device.ip,
                 'ssh_config': self.device.ssh_config
             },
+            ssh_provider=self.device.ssh,
             use_paramiko=True,
             test_interface=test_interface)
