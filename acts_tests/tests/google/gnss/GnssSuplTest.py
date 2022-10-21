@@ -8,12 +8,14 @@ from acts.test_decorators import test_tracker_info
 from acts.utils import get_current_epoch_time
 from acts_contrib.test_utils.gnss import gnss_test_utils as gutils
 from acts_contrib.test_utils.gnss import supl
+from acts_contrib.test_utils.gnss import gnss_defines
 from acts_contrib.test_utils.tel.tel_data_utils import http_file_download_by_sl4a
 from acts_contrib.test_utils.tel.tel_logging_utils import get_tcpdump_log
 from acts_contrib.test_utils.tel.tel_logging_utils import stop_adb_tcpdump
 from acts_contrib.test_utils.tel.tel_logging_utils import get_tcpdump_log
 from acts_contrib.test_utils.tel.tel_test_utils import check_call_state_connected_by_adb
 from acts_contrib.test_utils.tel.tel_test_utils import verify_internet_connection
+from acts_contrib.test_utils.tel.tel_test_utils import toggle_airplane_mode
 from acts_contrib.test_utils.tel.tel_voice_utils import initiate_call
 from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
 
@@ -71,7 +73,7 @@ class GnssSuplTest(BaseTestClass):
     def setup_test(self):
         gutils.clear_logd_gnss_qxdm_log(self.ad)
         gutils.get_baseband_and_gms_version(self.ad)
-        self.ad.droid.connectivityToggleAirplaneMode(False)
+        toggle_airplane_mode(self.ad.log, self.ad, new_state=False)
         if gutils.is_wearable_btwifi(self.ad):
             wutils.wifi_toggle_state(self.ad, True)
             gutils.connect_to_wifi_network(self.ad,
@@ -99,7 +101,13 @@ class GnssSuplTest(BaseTestClass):
         if self.collect_logs:
             self.ad.take_bug_report(test_name, begin_time)
             gutils.get_gnss_qxdm_log(self.ad, self.qdsp6m_path)
+            self.get_brcm_gps_xml_to_sponge()
             get_tcpdump_log(self.ad, test_name, begin_time)
+
+    def get_brcm_gps_xml_to_sponge(self):
+        # request from b/250506003 - to check the SUPL setting
+        if not gutils.check_chipset_vendor_by_qualcomm(self.ad):
+            self.ad.pull_files(gnss_defines.BCM_GPS_XML_PATH, self.ad.device_log_path)
 
     def run_ttff(self, mode, criteria):
         """Triggers TTFF.
@@ -128,7 +136,7 @@ class GnssSuplTest(BaseTestClass):
         gutils.connect_to_wifi_network(self.ad, self.ssid_map[self.pixel_lab_network[0]["SSID"]])
 
     def connect_to_wifi_with_airplane_mode_on(self):
-        self.ad.droid.connectivityToggleAirplaneMode(True)
+        toggle_airplane_mode(self.ad.log, self.ad, new_state=True)
         wutils.wifi_toggle_state(self.ad, True)
         gutils.connect_to_wifi_network(self.ad, self.ssid_map[self.pixel_lab_network[0]["SSID"]])
 
@@ -421,6 +429,8 @@ class GnssSuplTest(BaseTestClass):
             gutils.fastboot_factory_reset(self.ad, True)
             self.ad.unlock_screen(password=None)
             self.init_device()
+            if not verify_internet_connection(self.ad.log, self.ad, retries=3, expected_state=True):
+                raise signals.TestFailure("No internet connection on round {times}")
             self.ad.log.info("SUPL after factory reset round %d" % times)
             self.run_ttff(mode="cs", criteria=self.supl_cs_criteria)
             self.ad.log.info("SUPL after Factory Reset round %d -> PASS" % times)
