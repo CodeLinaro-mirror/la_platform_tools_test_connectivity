@@ -29,6 +29,7 @@ from acts_contrib.test_utils.wifi.wifi_test_utils import wifi_toggle_state
 from acts_contrib.test_utils.tel.tel_bootloader_utils import flash_radio
 from acts_contrib.test_utils.tel.tel_test_utils import verify_internet_connection
 from acts_contrib.test_utils.tel.tel_test_utils import check_call_state_connected_by_adb
+from acts_contrib.test_utils.tel.tel_test_utils import toggle_airplane_mode
 from acts_contrib.test_utils.tel.tel_voice_utils import hangup_call
 from acts_contrib.test_utils.gnss.gnss_test_utils import get_baseband_and_gms_version
 from acts_contrib.test_utils.gnss.gnss_test_utils import set_attenuator_gnss_signal
@@ -44,13 +45,11 @@ from acts_contrib.test_utils.gnss.gnss_test_utils import check_network_location
 from acts_contrib.test_utils.gnss.gnss_test_utils import launch_google_map
 from acts_contrib.test_utils.gnss.gnss_test_utils import check_location_api
 from acts_contrib.test_utils.gnss.gnss_test_utils import set_battery_saver_mode
-from acts_contrib.test_utils.gnss.gnss_test_utils import disable_vendor_orbit_assistance_data
 from acts_contrib.test_utils.gnss.gnss_test_utils import start_gnss_by_gtw_gpstool
 from acts_contrib.test_utils.gnss.gnss_test_utils import process_gnss_by_gtw_gpstool
 from acts_contrib.test_utils.gnss.gnss_test_utils import connect_to_wifi_network
 from acts_contrib.test_utils.gnss.gnss_test_utils import gnss_tracking_via_gtw_gpstool
 from acts_contrib.test_utils.gnss.gnss_test_utils import parse_gtw_gpstool_log
-from acts_contrib.test_utils.gnss.gnss_test_utils import enable_supl_mode
 from acts_contrib.test_utils.gnss.gnss_test_utils import start_toggle_gnss_by_gtw_gpstool
 from acts_contrib.test_utils.gnss.gnss_test_utils import grant_location_permission
 from acts_contrib.test_utils.gnss.gnss_test_utils import is_mobile_data_on
@@ -123,7 +122,7 @@ class GnssFunctionTest(BaseTestClass):
                 hangup_call(self.ad.log, self.ad)
         if self.ad.droid.connectivityCheckAirplaneMode():
             self.ad.log.info("Force airplane mode off")
-            self.ad.droid.connectivityToggleAirplaneMode(False)
+            toggle_airplane_mode(self.ad.log, self.ad, new_state=False)
         if not is_wearable_btwifi(self.ad) and self.ad.droid.wifiCheckState():
             wifi_toggle_state(self.ad, False)
         if not is_mobile_data_on(self.ad):
@@ -238,7 +237,7 @@ class GnssFunctionTest(BaseTestClass):
         """
         gutils.start_qxdm_and_tcpdump_log(self.ad, self.collect_logs)
         self.ad.log.info("Turn airplane mode on")
-        self.ad.droid.connectivityToggleAirplaneMode(True)
+        toggle_airplane_mode(self.ad.log, self.ad, new_state=True)
         gutils.run_ttff_via_gtw_gpstool(
             self.ad, mode, criteria, self.ttff_test_cycle, self.pixel_lab_location)
 
@@ -535,7 +534,6 @@ class GnssFunctionTest(BaseTestClass):
             All Standalone TTFF Cold Start results should be within
             standalone_cs_criteria.
         """
-        disable_vendor_orbit_assistance_data(self.ad)
         gutils.start_qxdm_and_tcpdump_log(self.ad, self.collect_logs)
         set_mobile_data(self.ad, False)
         gutils.run_ttff_via_gtw_gpstool(
@@ -557,7 +555,6 @@ class GnssFunctionTest(BaseTestClass):
         Expected Results:
             No single Timeout is seen in 10 iterations.
         """
-        enable_supl_mode(self.ad)
         gutils.start_qxdm_and_tcpdump_log(self.ad, self.collect_logs)
         start_toggle_gnss_by_gtw_gpstool(
             self.ad, iteration=self.ttff_test_cycle)
@@ -576,7 +573,6 @@ class GnssFunctionTest(BaseTestClass):
             Location fixed within supl_hs_criteria.
         """
         overall_test_result = []
-        enable_supl_mode(self.ad)
         process_gnss_by_gtw_gpstool(self.ad, self.supl_cs_criteria)
         start_gnss_by_gtw_gpstool(self.ad, False)
         for test_loop in range(1, 11):
@@ -740,3 +736,45 @@ class GnssFunctionTest(BaseTestClass):
         result = parse_gtw_gpstool_log(self.ad, self.pixel_lab_location)
         gutils.validate_location_fix_rate(self.ad, result, run_time=2,
                                           fix_rate_criteria=0.95)
+
+
+    @test_tracker_info(uuid="7b0cd50b-1143-4673-8add-0766ba27bde3")
+    def test_power_save_mode_should_apply_latest_measurement_setting(self):
+        """Ensure power save mode will apply the GNSS measurement setting.
+
+        1. Turn off full GNSS measurement.
+        2. Run tracking for 2 mins
+        3. Check the power save mode status
+        4. Turn on full GNSS measurement and re-register measurement callback
+        6. Run tracking for 30s
+        7. Check the power save mode status
+        8. Turn off full GNSS measurement and re-register measurement callback
+        9. Run tracking for 2 mins
+        10. Check the power save mode status
+        """
+        def wait_for_power_state_changes(wait_time):
+            gutils.re_register_measurement_callback(self.ad)
+            tracking_begin_time = get_current_epoch_time()
+            gutils.wait_n_mins_for_gnss_tracking(self.ad, tracking_begin_time, testtime=wait_time)
+            return tracking_begin_time
+
+        gutils.start_pixel_logger(self.ad)
+        with gutils.run_gnss_tracking(self.ad, criteria=self.supl_cs_criteria, meas_flag=True):
+            start_time = wait_for_power_state_changes(wait_time=2)
+            gutils.check_power_save_mode_status(
+                self.ad, full_power=False, begin_time=start_time,
+                brcm_error_allowlist=self.brcm_error_log_allowlist)
+
+            with gutils.full_gnss_measurement(self.ad):
+                start_time = wait_for_power_state_changes(wait_time=0.5)
+                gutils.check_power_save_mode_status(
+                    self.ad, full_power=True, begin_time=start_time,
+                    brcm_error_allowlist=self.brcm_error_log_allowlist)
+
+            start_time = wait_for_power_state_changes(wait_time=2)
+            gutils.check_power_save_mode_status(
+                self.ad, full_power=False, begin_time=start_time,
+                brcm_error_allowlist=self.brcm_error_log_allowlist)
+
+        gutils.stop_pixel_logger(self.ad)
+

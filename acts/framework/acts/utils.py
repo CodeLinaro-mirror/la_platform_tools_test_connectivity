@@ -36,7 +36,6 @@ import threading
 import traceback
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from zeroconf import IPVersion, Zeroconf
 
 from acts import signals
 from acts.controllers.adb_lib.error import AdbError
@@ -566,6 +565,7 @@ def timeout(sec):
     """
 
     def decorator(func):
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             if sec:
@@ -1435,7 +1435,7 @@ def get_interface_ip_addresses(comm_channel, interface):
             f'ip -o addr show {interface} | awk \'{{gsub("/", " "); print $4}}\''
         ).stdout.splitlines()
     elif type(comm_channel) is FuchsiaDevice:
-        interfaces = comm_channel.netstack_lib.netstackListInterfaces()
+        interfaces = comm_channel.sl4f.netstack_lib.netstackListInterfaces()
         err = interfaces.get('error')
         if err is not None:
             raise ActsUtilsError(f'Failed get_interface_ip_addresses: {err}')
@@ -1820,6 +1820,8 @@ def get_fuchsia_mdns_ipv6_address(device_mdns_name):
     Returns:
         string, IPv6 link-local address
     """
+    from zeroconf import IPVersion, Zeroconf
+
     if not device_mdns_name:
         return None
 
