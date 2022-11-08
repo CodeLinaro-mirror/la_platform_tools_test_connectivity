@@ -1017,6 +1017,7 @@ class WifiOtaRvrTest(WifiRvrTest):
                                     test_data['median_rvr'],
                                     legend='Median Throughput',
                                     marker='square')
+            test_id_phy = test_id + tuple('PHY')
             plots[test_id_phy].add_line(test_data['total_attenuation'],
                                         test_data['avg_rx_phy_rate'],
                                         legend='Average Rx Rate',
@@ -1025,6 +1026,14 @@ class WifiOtaRvrTest(WifiRvrTest):
                                         test_data['avg_tx_phy_rate'],
                                         legend='Average Tx Rate',
                                         marker='triangle')
+
+            # Save output as text file
+            results_file_path = os.path.join(
+                self.log_path, '{}_test_data.json'.format(test_id))
+            with open(results_file_path, 'w') as results_file:
+                json.dump(wputils.serialize_dict(test_data),
+                          results_file,
+                          indent=4)
 
         figure_list = []
         for plot_id, plot in plots.items():
