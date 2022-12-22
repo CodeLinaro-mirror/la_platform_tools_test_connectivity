@@ -23,6 +23,7 @@ import fnmatch
 import posixpath
 import subprocess
 import tempfile
+from retry import retry
 from collections import namedtuple
 from datetime import datetime
 from xml.etree import ElementTree
@@ -273,6 +274,7 @@ def enable_vendor_orbit_assistance_data(ad):
     if is_device_wearable(ad):
         lto_mode_wearable(ad, True)
     elif check_chipset_vendor_by_qualcomm(ad):
+        disable_xtra_throttle(ad)
         reboot(ad)
     else:
         lto_mode(ad, True)
@@ -329,19 +331,12 @@ def _init_device(ad):
     check_location_service(ad)
     enable_gnss_verbose_logging(ad)
     prepare_gps_overlay(ad)
-    if check_chipset_vendor_by_qualcomm(ad):
-        disable_xtra_throttle(ad)
-    enable_supl_mode(ad)
     set_screen_always_on(ad)
-    wutils.wifi_toggle_state(ad, False)
     ad.log.info("Setting Bluetooth state to False")
     ad.droid.bluetoothToggleState(False)
     set_wifi_and_bt_scanning(ad, True)
     disable_private_dns_mode(ad)
     init_gtw_gpstool(ad)
-    if not is_mobile_data_on(ad):
-        set_mobile_data(ad, True)
-    disable_ramdump(ad)
     if is_device_wearable(ad):
         disable_battery_defend(ad)
 
@@ -931,7 +926,8 @@ def start_ttff_by_gtw_gpstool(ad,
                               raninterval=False,
                               mininterval=10,
                               maxinterval=40,
-                              hot_warm_sleep=300):
+                              hot_warm_sleep=300,
+                              timeout=60):
     """Identify which TTFF mode for different test items.
 
     Args:
@@ -943,6 +939,7 @@ def start_ttff_by_gtw_gpstool(ad,
         mininterval: Minimum value of random interval pool. The unit is second.
         maxinterval: Maximum value of random interval pool. The unit is second.
         hot_warm_sleep: Wait time for acquiring Almanac.
+        timeout: TTFF time out. The unit is second.
     Returns:
         latest_start_time: (Datetime) the start time of latest successful TTFF
     """
@@ -1036,7 +1033,6 @@ def wait_n_mins_for_gnss_tracking(ad, begin_time, testtime, api_type="gnss",
         # add sleep here to avoid too many request and cause device not responding
         time.sleep(1)
 
-# TODO: (diegowchung) GnssFunctionTest has similar function, need to handle the duplication
 def run_ttff_via_gtw_gpstool(ad, mode, criteria, test_cycle, true_location):
     """Run GNSS TTFF test with selected mode and parse the results.
 
@@ -2185,7 +2181,7 @@ def launch_eecoexer(ad):
         raise signals.TestError("Failed to launch EEcoexer.")
 
 
-def excute_eecoexer_function(ad, eecoexer_args):
+def execute_eecoexer_function(ad, eecoexer_args):
     """Execute EEcoexer commands.
 
     Args:
@@ -2282,6 +2278,21 @@ def human_to_epoch_time(human_time):
         return None
 
 
+def _get_dpo_info_from_logcat(ad, begin_time):
+    """Gets the DPO info from logcat.
+
+    Args:
+        ad: The device under test.
+        begin_time: The start time of the log.
+    """
+    dpo_results = ad.search_logcat("HardwareClockDiscontinuityCount",
+                                   begin_time)
+    if not dpo_results:
+        raise signals.TestError(
+            "No \"HardwareClockDiscontinuityCount\" is found in logs.")
+    return dpo_results
+
+
 def check_dpo_rate_via_gnss_meas(ad, begin_time, dpo_threshold):
     """Check DPO engage rate through "HardwareClockDiscontinuityCount" in
     GnssMeasurement callback.
@@ -2292,11 +2303,7 @@ def check_dpo_rate_via_gnss_meas(ad, begin_time, dpo_threshold):
         dpo_threshold: The value to set threshold. (Ex: dpo_threshold = 60)
     """
     time_regex = r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3})'
-    dpo_results = ad.search_logcat("HardwareClockDiscontinuityCount",
-                                   begin_time)
-    if not dpo_results:
-        raise signals.TestError(
-            "No \"HardwareClockDiscontinuityCount\" is found in logs.")
+    dpo_results = _get_dpo_info_from_logcat(ad, begin_time)
     ad.log.info(dpo_results[0]["log_message"])
     ad.log.info(dpo_results[-1]["log_message"])
     start_time = re.compile(
@@ -2321,13 +2328,14 @@ def check_dpo_rate_via_gnss_meas(ad, begin_time, dpo_threshold):
                                            threshold))
 
 
-def parse_brcm_nmea_log(ad, nmea_pattern, brcm_error_log_allowlist):
+def parse_brcm_nmea_log(ad, nmea_pattern, brcm_error_log_allowlist, stop_logger=True):
     """Parse specific NMEA pattern out of BRCM NMEA log.
 
     Args:
         ad: An AndroidDevice object.
         nmea_pattern: Specific NMEA pattern to parse.
         brcm_error_log_allowlist: Benign error logs to exclude.
+        stop_logger: To stop pixel logger or not.
 
     Returns:
         brcm_log_list: A list of specific NMEA pattern logs.
@@ -2346,7 +2354,8 @@ def parse_brcm_nmea_log(ad, nmea_pattern, brcm_error_log_allowlist):
 
         # Although we don't rely on the zip file, stop pixel logger here to avoid
         # wasting resources.
-        stop_pixel_logger(ad)
+        if stop_logger:
+            stop_pixel_logger(ad)
 
         tmp_path = pathlib.Path(tmp_dir)
         log_folders = sorted([x for x in tmp_path.iterdir() if x.is_dir()])
@@ -2366,16 +2375,31 @@ def parse_brcm_nmea_log(ad, nmea_pattern, brcm_error_log_allowlist):
                 for attr in brcm_log_error_pattern:
                     if attr in line:
                         benign_log = False
-                        for allow_log in brcm_error_log_allowlist:
-                            if allow_log in line:
+                        for regex_pattern in brcm_error_log_allowlist:
+                            if re.search(regex_pattern, line):
                                 benign_log = True
                                 ad.log.info("\"%s\" is in allow-list and removed "
-                                            "from error." % allow_log)
+                                            "from error." % line)
                         if not benign_log:
                             brcm_error_log_list.append(line)
 
     brcm_error_log = "".join(brcm_error_log_list)
     return brcm_log_list, brcm_error_log
+
+
+def _get_power_mode_log_from_pixel_logger(ad, brcm_error_log_allowlist, stop_pixel_logger=True):
+    """Gets the power log from pixel logger.
+
+    Args:
+        ad: The device under test.
+        brcm_error_log_allow_list: The allow list to ignore certain error in pixel logger.
+        stop_pixel_logger: To disable pixel logger when getting the log.
+    """
+    pglor_list, brcm_error_log = parse_brcm_nmea_log(
+        ad, "$PGLOR,11,STA", brcm_error_log_allowlist, stop_pixel_logger)
+    if not pglor_list:
+        raise signals.TestFailure("Fail to get DPO logs from pixel logger")
+    return pglor_list, brcm_error_log
 
 
 def check_dpo_rate_via_brcm_log(ad, dpo_threshold, brcm_error_log_allowlist):
@@ -2393,10 +2417,7 @@ def check_dpo_rate_via_brcm_log(ad, dpo_threshold, brcm_error_log_allowlist):
     always_full_power_count = 0
     full_power_count = 0
     power_save_count = 0
-    pglor_list, brcm_error_log = parse_brcm_nmea_log(
-        ad, "$PGLOR,11,STA", brcm_error_log_allowlist)
-    if not pglor_list:
-        raise signals.TestFailure("Fail to get DPO logs from pixel logger")
+    pglor_list, brcm_error_log = _get_power_mode_log_from_pixel_logger(ad, brcm_error_log_allowlist)
 
     for pglor in pglor_list:
         power_res = re.compile(r',P,(\w),').search(pglor).group(1)
@@ -2680,7 +2701,9 @@ def bcm_gps_ignore_rom_alm(ad):
         ad: An AndroidDevice object.
     """
     search_line_tag = '<gll\n'
-    append_line_str = ['       IgnoreRomAlm=\"true\"\n']
+    append_line_str = ['       IgnoreRomAlm=\"true\"\n',
+                       '       AutoColdStartSignal=\"SIMULATED\"\n',
+                       '       IgnoreJniTime=\"true\"\n']
     bcm_gps_xml_update_option(ad, "add", search_line_tag, append_line_str)
 
 
@@ -2770,6 +2793,7 @@ def disable_ramdump(ad):
     ad.start_adb_logcat()
 
 
+@retry(Exception, tries=3, delay=30)
 def deep_suspend_device(ad):
     """Force DUT to enter deep suspend mode
 
@@ -3088,3 +3112,81 @@ def run_ttff(ad, mode, criteria, test_cycle, base_lat_long, collect_logs=False):
     """
     start_qxdm_and_tcpdump_log(ad, collect_logs)
     run_ttff_via_gtw_gpstool(ad, mode, criteria, test_cycle, base_lat_long)
+
+
+def re_register_measurement_callback(dut):
+    """Send command to unregister then register measurement callback.
+
+    Args:
+        dut: The device under test.
+    """
+    dut.log.info("Reregister measurement callback")
+    dut.adb.shell("am broadcast -a com.android.gpstool.stop_meas_action")
+    time.sleep(1)
+    dut.adb.shell("am broadcast -a com.android.gpstool.start_meas_action")
+    time.sleep(1)
+
+
+def check_power_save_mode_status(ad, full_power, begin_time, brcm_error_allowlist):
+    """Checks the power save mode status.
+
+    For Broadcom:
+        Gets NEMA sentences from pixel logger and retrieve the status [F, S, D].
+        F,S => not in full power mode
+        D => in full power mode
+    For Qualcomm:
+        Gets the HardwareClockDiscontinuityCount from logcat. In full power mode, the
+        HardwareClockDiscontinuityCount should not be increased.
+
+    Args:
+        ad: The device under test.
+        full_power: The device is in full power mode or not.
+        begin_time: It is used to get the correct logcat information for qualcomm.
+        brcm_error_allowlist: It is used to ignore certain error in pixel logger.
+    """
+    if check_chipset_vendor_by_qualcomm(ad):
+        _check_qualcomm_power_save_mode(ad, full_power, begin_time)
+    else:
+        _check_broadcom_power_save_mode(ad, full_power, brcm_error_allowlist)
+
+
+def _check_qualcomm_power_save_mode(ad, full_power, begin_time):
+    dpo_results = _get_dpo_info_from_logcat(ad, begin_time)
+    first_dpo_count = int(dpo_results[0]["log_message"].split()[-1])
+    final_dpo_count = int(dpo_results[-1]["log_message"].split()[-1])
+    dpo_count_diff = final_dpo_count - first_dpo_count
+    ad.log.debug("The DPO count diff is {diff}".format(diff=dpo_count_diff))
+    if full_power:
+        asserts.assert_equal(dpo_count_diff, 0, msg="DPO count diff should be 0")
+    else:
+        asserts.assert_true(dpo_count_diff > 0, msg="DPO count diff should be more than 0")
+
+
+def _check_broadcom_power_save_mode(ad, full_power, brcm_error_allowlist):
+    power_save_log, _ = _get_power_mode_log_from_pixel_logger(
+        ad, brcm_error_allowlist, stop_pixel_logger=False)
+    power_status = re.compile(r',P,(\w),').search(power_save_log[-2]).group(1)
+    ad.log.debug("The power status is {status}".format(status=power_status))
+    if full_power:
+        asserts.assert_true(power_status == "D", msg="Should be in full power mode")
+    else:
+        asserts.assert_true(power_status in ["F", "S"], msg="Should not be in full power mode")
+
+@contextmanager
+def run_gnss_tracking(ad, criteria, meas_flag):
+    """A context manager to enable gnss tracking and stops at the end.
+
+    Args:
+        ad: The device under test.
+        criteria: The criteria for First Fixed.
+        meas_flag: A flag to turn on measurement log or not.
+    """
+    process_gnss_by_gtw_gpstool(ad, criteria=criteria, meas_flag=meas_flag)
+    try:
+        yield
+    finally:
+        start_gnss_by_gtw_gpstool(ad, state=False)
+
+def log_current_epoch_time(ad, sponge_key):
+    current_epoch_time = get_current_epoch_time()
+    ad.log.info(f"TestResult {sponge_key} {current_epoch_time}")

@@ -18,6 +18,7 @@ from acts.base_test import BaseTestClass
 from acts.controllers.adb_lib.error import AdbCommandError
 from acts.libs.proc.job import TimeoutError
 from acts.test_decorators import test_tracker_info
+from acts_contrib.test_utils.wifi import wifi_test_utils as wutils
 from acts_contrib.test_utils.gnss import gnss_test_utils as gutils
 
 
@@ -259,7 +260,7 @@ class GnssBroadcomConfigurationTest(BaseTestClass):
         self.unpack_userparams(req_param_names=req_params)
 
         if not gutils.check_chipset_vendor_by_qualcomm(self.ad):
-            gutils._init_device(self.ad)
+            self.init_device()
             self.gps_config_path = tempfile.mkdtemp()
             self.gps_xml = GpsXml(self.ad)
             self.lhd_conf = LhdConf(self.ad)
@@ -267,11 +268,19 @@ class GnssBroadcomConfigurationTest(BaseTestClass):
             self.enable_testing_setting()
             self.backup_gps_config()
 
+    def init_device(self):
+        gutils._init_device(self.ad)
+        gutils.enable_vendor_orbit_assistance_data(self.ad)
+        wutils.wifi_toggle_state(self.ad, True)
+        gutils.set_mobile_data(self.ad, state=True)
+
+
     def teardown_class(self):
         if hasattr(self, "gps_config_path") and os.path.isdir(self.gps_config_path):
             shutil.rmtree(self.gps_config_path)
 
     def setup_test(self):
+        gutils.log_current_epoch_time(self.ad, "test_start_time")
         if gutils.check_chipset_vendor_by_qualcomm(self.ad):
             raise signals.TestSkip("Device is Qualcomm, skip the test")
         gutils.get_baseband_and_gms_version(self.ad)
@@ -281,6 +290,7 @@ class GnssBroadcomConfigurationTest(BaseTestClass):
         if not gutils.check_chipset_vendor_by_qualcomm(self.ad):
             self.revert_gps_config()
             self.ad.reboot()
+        gutils.log_current_epoch_time(self.ad, "test_end_time")
 
     def on_fail(self, test_name, begin_time):
         self.ad.take_bug_report(test_name, begin_time)

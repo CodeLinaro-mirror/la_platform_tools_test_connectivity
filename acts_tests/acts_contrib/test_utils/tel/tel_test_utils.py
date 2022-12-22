@@ -36,6 +36,7 @@ from acts.controllers.android_device import list_adb_devices
 from acts.controllers.android_device import list_fastboot_devices
 
 from acts.libs.proc.job import TimeoutError
+from acts_contrib.test_utils.net import ui_utils
 from acts_contrib.test_utils.tel.loggers.protos.telephony_metric_pb2 import TelephonyVoiceTestResult
 from acts_contrib.test_utils.tel.tel_defines import CarrierConfigs
 from acts_contrib.test_utils.tel.tel_defines import AOSP_PREFIX
@@ -483,7 +484,8 @@ def toggle_airplane_mode_by_adb(log, ad, new_state=None):
     ad.log.info("Change airplane mode from %s to %s", cur_state, new_state)
     try:
         ad.adb.shell("settings put global airplane_mode_on %s" % int(new_state))
-        ad.adb.shell("am broadcast -a android.intent.action.AIRPLANE_MODE")
+        ad.adb.shell("am broadcast -a android.intent.action.AIRPLANE_MODE "
+                     "--ez state %s" % new_state)
     except Exception as e:
         ad.log.error(e)
         return False
@@ -2785,7 +2787,7 @@ def recover_build_id(ad):
         build_id_override(ad, build_id)
 
 
-def enable_privacy_usage_diagnostics(ad):
+def check_and_enable_privacy_usage_diagnostics(ad):
     try:
         ad.ensure_screen_on()
         ad.send_keycode('HOME')
@@ -2793,9 +2795,25 @@ def enable_privacy_usage_diagnostics(ad):
         cmd = ('am start -n com.google.android.gms/com.google.android.gms.'
                'usagereporting.settings.UsageReportingActivity')
         ad.adb.shell(cmd)
-    # perform the toggle
-        ad.send_keycode('TAB')
-        ad.send_keycode('ENTER')
+    # perform the toggle using UI
+        resource = {
+        'resource_id': 'android:id/switch_widget',
+        }
+        node = ui_utils.wait_and_get_xml_node(ad,
+                                        timeout=30,
+                                        sibling=resource,
+                                        text="Usage & diagnostics",
+                                        resource_id="com.google.android.gms:id/switch_text")
+        current_state = node.attributes['checked'].value
+
+        if current_state == "false":
+            ad.log.info("Enabling Usage & diagnostics")
+            ui_utils.wait_and_click(ad,
+                                    text="Usage & diagnostics",
+                                    resource_id="com.google.android.gms:id/switch_text")
+        else:
+            ad.log.info("Usage & diagnostics is already enabled")
+
     except Exception:
         ad.log.info("Unable to toggle Usage and Diagnostics")
 
@@ -2811,6 +2829,8 @@ def build_id_override(ad, new_build_id=None, postfix=None):
     existing_build_id = ad.adb.getprop("ro.build.id")
     if postfix is not None and postfix in build_id:
         ad.log.info("Build id already contains %s", postfix)
+        if postfix == 'STATIONARY_TEST':
+            check_and_enable_privacy_usage_diagnostics(ad)
         return
     if not new_build_id:
         if postfix and build_id:
@@ -2819,7 +2839,7 @@ def build_id_override(ad, new_build_id=None, postfix=None):
         return
     ad.log.info("Override build id %s with %s", existing_build_id,
                 new_build_id)
-    enable_privacy_usage_diagnostics(ad)
+    check_and_enable_privacy_usage_diagnostics(ad)
     adb_disable_verity(ad)
     ad.adb.remount()
     if "backup.prop" not in ad.adb.shell("ls /sdcard/"):
@@ -3019,6 +3039,8 @@ def change_slot(ad: AndroidDevice, sim_slot: Sequence[SimSlotInfo],
     Returns:
         True if success, False otherwise.
     """
+    if not getattr(ad, "mep", False): return
+
     port_id = [sim_slot[0].value[1], sim_slot[1].value[1]]
     phy_slot_id = [sim_slot[0].value[2], sim_slot[1].value[2]]
     ad.adb.shell(

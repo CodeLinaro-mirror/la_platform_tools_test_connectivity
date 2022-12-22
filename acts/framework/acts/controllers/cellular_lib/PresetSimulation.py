@@ -11,7 +11,6 @@
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
-import time
 
 from acts.controllers.cellular_lib.BaseSimulation import BaseSimulation
 from acts.controllers.cellular_lib import BaseCellularDut
@@ -48,6 +47,8 @@ class PresetSimulation(BaseSimulation):
 
         super().__init__(simulator, log, dut, test_config, calibration_table,
                          nr_mode)
+        # require param for idle test case
+        self.rrc_sc_timer = 0
 
         # Set to KeySight APN
         log.info('Configuring APN.')

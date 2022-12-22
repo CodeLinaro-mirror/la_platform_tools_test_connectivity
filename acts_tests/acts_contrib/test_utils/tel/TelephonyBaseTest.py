@@ -28,6 +28,7 @@ from acts import records
 from acts import signals
 from acts import utils
 from acts.base_test import BaseTestClass
+from acts.controllers.adb_lib.error import AdbCommandError
 from acts.controllers.android_device import DEFAULT_QXDM_LOG_PATH
 from acts.keys import Config
 from acts.libs.utils.multithread import multithread_func
@@ -64,6 +65,7 @@ from acts_contrib.test_utils.tel.tel_subscription_utils import initial_set_up_fo
 from acts_contrib.test_utils.tel.tel_subscription_utils import set_default_sub_for_all_services
 from acts_contrib.test_utils.tel.tel_test_utils import activate_esim_using_suw
 from acts_contrib.test_utils.tel.tel_test_utils import activate_google_fi_account
+from acts_contrib.test_utils.tel.tel_test_utils import adb_disable_verity
 from acts_contrib.test_utils.tel.tel_test_utils import add_google_account
 from acts_contrib.test_utils.tel.tel_test_utils import build_id_override
 from acts_contrib.test_utils.tel.tel_test_utils import check_google_fi_activated
@@ -87,6 +89,9 @@ from acts_contrib.test_utils.tel.tel_test_utils import unlock_sim
 from acts_contrib.test_utils.tel.tel_test_utils import wait_for_sim_ready_by_adb
 from acts_contrib.test_utils.tel.tel_test_utils import wait_for_sims_ready_by_adb
 from acts_contrib.test_utils.tel.tel_wifi_utils import ensure_wifi_connected
+
+
+REMOUNT_REBOOT_MSG = "Now reboot your device for settings to take effect"
 
 
 class TelephonyBaseTest(BaseTestClass):
@@ -286,6 +291,7 @@ class TelephonyBaseTest(BaseTestClass):
                 new_build_id=self.user_params.get("build_id_override_with",
                                                   None),
                 postfix=build_postfix)
+
         if self.enable_radio_log_on:
             enable_radio_log_on(ad)
         list_of_models = CHIPSET_MODELS_LIST
@@ -298,10 +304,26 @@ class TelephonyBaseTest(BaseTestClass):
                              % phone_mode)
                 reboot_device(ad)
 
+        if "_test" not in ad.build_info["build_id"]:
+            ad.ensure_verity_disabled()
+            try:
+                ad.adb.remount()
+            except AdbCommandError as e:
+                if REMOUNT_REBOOT_MSG in e.stderr:
+                    ad.reboot()
+                    ad.adb.remount()
+            build_id = ad.build_info["build_id"].replace(".", r"\.")
+            ad.adb.shell("sed -i '/^ro.build.id=/ "
+                        f"s/{build_id}/&_test/g' /system/build.prop")
+            ad.adb.shell("sed -i '/^ro.build.description=/ "
+                        f"s/{build_id}/&_test/g' /system/build.prop")
+
         if ad.dsp_log:
             start_dsp_logger(ad)
-        if ad.dsp_log_p21:
+        elif ad.dsp_log_p21:
             start_dsp_logger(ad, p21=True)
+        else:
+            ad.reboot()
         stop_qxdm_logger(ad)
         if ad.qxdm_log:
             qxdm_log_mask = getattr(ad, "qxdm_log_mask", None)
@@ -374,7 +396,17 @@ class TelephonyBaseTest(BaseTestClass):
             else:
                 setup_droid_properties(self.log, ad, sim_conf_file)
 
-        if getattr(ad, 'dsds', False):
+        if getattr(ad, 'mep', False):
+            default_slot = getattr(ad, "default_slot", 1)
+            if get_subid_from_slot_index(ad.log, ad, default_slot) != INVALID_SUB_ID:
+                ad.log.info("Slot %s is the default slot.", default_slot)
+                set_default_sub_for_all_services(ad, default_slot)
+            else:
+                ad.log.warning("Slot %s is NOT a valid slot. Slot %s will be used by default.",
+                    default_slot, 1-default_slot)
+                set_default_sub_for_all_services(ad, 1-default_slot)
+                setattr(ad, "default_slot", 1-default_slot)
+        elif getattr(ad, 'dsds', False):
             default_slot = getattr(ad, "default_slot", 0)
             if get_subid_from_slot_index(ad.log, ad, default_slot) != INVALID_SUB_ID:
                 ad.log.info("Slot %s is the default slot.", default_slot)

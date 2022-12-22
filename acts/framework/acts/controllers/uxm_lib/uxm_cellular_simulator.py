@@ -14,12 +14,14 @@
 import os
 import socket
 import time
+import paramiko
+import re
 
 from acts.controllers.cellular_simulator import AbstractCellularSimulator
 
 
 class UXMCellularSimulator(AbstractCellularSimulator):
-    """A cellular simulator for UXM callbox. """
+    """A cellular simulator for UXM callbox."""
 
     # Keys to obtain data from cell_info dictionary.
     KEY_CELL_NUMBER = "cell_number"
@@ -31,28 +33,54 @@ class UXMCellularSimulator(AbstractCellularSimulator):
     # UXM SCPI COMMAND
     SCPI_IMPORT_STATUS_QUERY_CMD = 'SYSTem:SCPI:IMPort:STATus?'
     SCPI_SYSTEM_ERROR_CHECK_CMD = 'SYST:ERR?\n'
+    SCPI_CHECK_CONNECTION_CMD = '*IDN?\n'
+    SCPI_DEREGISTER_UE_IMS = 'SYSTem:IMS:SERVer:UE:DERegister'
     # require: path to SCPI file
     SCPI_IMPORT_SCPI_FILE_CMD = 'SYSTem:SCPI:IMPort "{}"\n'
     # require: 1. cell type (E.g. NR5G), 2. cell number (E.g CELL1)
     SCPI_CELL_ON_CMD = 'BSE:CONFig:{}:{}:ACTive 1'
-    # require: 1. cell type (E.g. NR5G), 2. cell number (E.g CELL1)
     SCPI_CELL_OFF_CMD = 'BSE:CONFig:{}:{}:ACTive 0'
-    # require: 1. cell type (E.g. NR5G), 2. cell number (E.g CELL1)
     SCPI_GET_CELL_STATUS = 'BSE:STATus:{}:{}?'
-    SCPI_CHECK_CONNECTION_CMD = '*IDN?\n'
+    SCPI_RRC_RELEASE_LTE_CMD = 'BSE:FUNCtion:{}:{}:RELease:SEND'
+    SCPI_RRC_RELEASE_NR_CMD = 'BSE:CONFig:{}:{}:RCONtrol:RRC:STARt RRELease'
+    # require cell number
+    SCPI_CREATE_DEDICATED_BEARER = 'BSE:FUNCtion:LTE:{}:NAS:EBID10:DEDicated:CREate'
 
-    def __init__(self, ip_address, custom_files):
+    # UXM's Test Application recovery
+    TA_BOOT_TIME = 100
+
+    # shh command
+    SSH_START_GUI_APP_CMD_FORMAT = 'psexec -s -d -i 1 "{exe_path}"'
+    SSH_CHECK_APP_RUNNING_CMD_FORMAT = 'tasklist | findstr /R {regex_app_name}'
+
+    # start process success regex
+    PSEXEC_PROC_STARTED_REGEX_FORMAT = 'started on * with process ID {proc_id}'
+
+    def __init__(self, ip_address, custom_files, uxm_user,
+                 ssh_private_key_to_uxm, ta_exe_path, ta_exe_name):
         """Initializes the cellular simulator.
 
         Args:
-            ip_address: the ip address of dektop where Keysight Test Application
+            ip_address: the ip address of host where Keysight Test Application (TA)
                 is installed.
             custom_files: a list of file path for custom files.
+            uxm_user: username of host where Keysight TA resides.
+            ssh_private_key_to_uxm: private key for key based ssh to
+                host where Keysight TA resides.
+            ta_exe_path: path to TA exe.
+            ta_exe_name: name of TA exe.
         """
         super().__init__()
         self.custom_files = custom_files
         self.rockbottom_script = None
         self.cells = []
+        self.uxm_ip = ip_address
+        self.uxm_user = uxm_user
+        self.ssh_private_key_to_uxm = os.path.expanduser(
+                                        ssh_private_key_to_uxm)
+        self.ta_exe_path = ta_exe_path
+        self.ta_exe_name = ta_exe_name
+        self.ssh_client = self.create_ssh_client()
 
         # get roclbottom file
         for file in self.custom_files:
@@ -60,9 +88,71 @@ class UXMCellularSimulator(AbstractCellularSimulator):
                 self.rockbottom_script = file
 
         # connect to Keysight Test Application via socket
-        self.socket = self._socket_connect(ip_address, self.UXM_PORT)
+        self.recovery_ta()
+        self.socket = self._socket_connect(self.uxm_ip, self.UXM_PORT)
         self.check_socket_connection()
         self.timeout = 120
+
+    def create_ssh_client(self):
+        """Create a ssh client to host."""
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        mykey = paramiko.Ed25519Key.from_private_key_file(
+            self.ssh_private_key_to_uxm)
+        ssh.connect(hostname=self.uxm_ip, username=self.uxm_user, pkey=mykey)
+        self.log.info('SSH client to %s is connected' % self.uxm_ip)
+        return ssh
+
+    def is_ta_running(self):
+        is_running_cmd = self.SSH_CHECK_APP_RUNNING_CMD_FORMAT.format(
+            regex_app_name=self.ta_exe_name)
+        stdin, stdout, stderr = self.ssh_client.exec_command(is_running_cmd)
+        stdin.close()
+        err = ''.join(stderr.readlines())
+        out = ''.join(stdout.readlines())
+        final_output = str(out) + str(err)
+        self.log.info(final_output)
+        return (out != '' and err == '')
+
+    def _start_test_app(self):
+        """Start Test Application on Windows."""
+        # start GUI exe via ssh
+        start_app_cmd = self.SSH_START_GUI_APP_CMD_FORMAT.format(
+            exe_path=self.ta_exe_path)
+        stdin, stdout, stderr = self.ssh_client.exec_command(start_app_cmd)
+        self.log.info(f'Command sent to {self.uxm_ip}: {start_app_cmd}')
+        stdin.close()
+        err = ''.join(stderr.readlines())
+        out = ''.join(stdout.readlines())
+        # psexec return process ID as part of the exit code
+        exit_status = stderr.channel.recv_exit_status()
+        is_started = re.search(
+            self.PSEXEC_PROC_STARTED_REGEX_FORMAT.format(proc_id=exit_status),
+            err[-1])
+        if is_started:
+            raise RuntimeError('Fail to start TA: ' + out + err)
+        # wait for ta completely boot up
+        self.log.info('TA is starting')
+        time.sleep(self.TA_BOOT_TIME)
+
+    def recovery_ta(self):
+        """Start TA if it is not running."""
+        if not self.is_ta_running():
+            self._start_test_app()
+            # checking if ta booting process complete
+            # by checking socket connection
+            s = None
+            retries = 12
+            for _ in range(retries):
+                try:
+                    s = self._socket_connect(self.uxm_ip, self.UXM_PORT)
+                    s.close()
+                    return
+                except ConnectionRefusedError as cre:
+                    self.log.info(
+                        'Connection refused, wait 10s for TA to boot')
+                    time.sleep(10)
+            raise RuntimeError('TA does not start on time')
 
     def set_rockbottom_script_path(self, path):
         """Set path to rockbottom script.
@@ -84,6 +174,22 @@ class UXMCellularSimulator(AbstractCellularSimulator):
         if not cell_info:
             raise ValueError('Missing cell info from configurations file')
         self.cells = cell_info
+
+    def deregister_ue_ims(self):
+        """Remove UE IMS profile from UXM."""
+        self._socket_send_SCPI_command(
+                self.SCPI_DEREGISTER_UE_IMS)
+
+    def create_dedicated_bearer(self):
+        """Create a dedicated bearer setup for ims call.
+
+        After UE connected and register on UXM IMS tab.
+        It is required to create a dedicated bearer setup
+        with EPS bearer ID 10.
+        """
+        cell_number = self.cells[0][self.KEY_CELL_NUMBER]
+        self._socket_send_SCPI_command(
+                self.SCPI_CREATE_DEDICATED_BEARER.format(cell_number))
 
     def turn_cell_on(self, cell_type, cell_number):
         """Turn UXM's cell on.
@@ -247,8 +353,7 @@ class UXMCellularSimulator(AbstractCellularSimulator):
                                      cell_number,
                                      dut,
                                      wait_for_camp_interval,
-                                     attach_retries,
-                                     change_dut_setting_allow=True):
+                                     attach_retries):
         """Wait until connect to given UXM cell.
 
         After turn off airplane mode, sleep for
@@ -260,52 +365,79 @@ class UXMCellularSimulator(AbstractCellularSimulator):
                 which we are trying to connect to.
             cell_number: ordinal number of a cell
                 which we are trying to connect to.
-            dut: a CellularAndroid controller.
+            dut: a AndroidCellular controller.
             wait_for_camp_interval: sleep interval,
                 wait for device to camp.
             attach_retries: number of retry
                 to wait for device
                 to connect to 1 basestation.
-            change_dut_setting_allow: turn on/off APM
-                or reboot device helps with device camp time.
-                However, if we are trying to connect to second cell
-                changing APM status or reboot is not allowed.
         Raise:
-            AbstractCellularSimulator.CellularSimulatorError:
-                device unable to connect to cell.
+            RuntimeError: device unable to connect to cell.
         """
-        # airplane mode off
-        dut.toggle_airplane_mode(False)
+        change_key_NR_cmd = 'BSE:CONFig:NR5G:CELL1:SECurity:AUTHenticate:KEY:TYPE TEST3GPP'
+        change_key_LTE_cmd = 'BSE:CONFig:LTE:SECurity:AUTHenticate:KEY TEST3GPP'
+        self._socket_send_SCPI_command(change_key_LTE_cmd)
         time.sleep(5)
+        self._socket_send_SCPI_command(change_key_NR_cmd)
+        time.sleep(5)
+
+        # airplane mode on
+        dut.toggle_airplane_mode(True)
+        time.sleep(5)
+
         # turn cell on
         self.turn_cell_on(cell_type, cell_number)
         time.sleep(5)
 
+        # airplane mode off
+        dut.toggle_airplane_mode(False)
+        time.sleep(5)
+
+        polling_interval = 5
         # waits for connect
         for index in range(1, attach_retries):
-            # airplane mode on
-            time.sleep(wait_for_camp_interval)
-            cell_state = self.get_cell_status(cell_type, cell_number)
-            self.log.info(f'cell state: {cell_state}')
-            if cell_state == 'CONN\n':
-                return True
-            if change_dut_setting_allow:
-                if (index % 4) == 0:
-                    dut.ad.reboot()
-                    if self.rockbottom_script:
-                        self.dut_rockbottom(dut)
-                    else:
-                        self.log.warning(
-                            f'Rockbottom script {self} was not executed after reboot')
-                else:
-                    # airplane mode on
-                    dut.toggle_airplane_mode(True)
+            count = 0
+            # check connection in small interval
+            while count < wait_for_camp_interval:
+                time.sleep(5)
+                cell_state = self.get_cell_status(cell_type, cell_number)
+                self.log.info(f'cell state: {cell_state}')
+                if cell_state == 'CONN\n':
+                    # wait for connection stable
+                    time.sleep(10)
+                    return True
+                if cell_state == 'OFF\n':
+                    self.turn_cell_on(cell_type, cell_number)
                     time.sleep(5)
-                    # airplane mode off
-                    dut.toggle_airplane_mode(False)
+                count += polling_interval
+
+            # reboot device on every fifth try
+            if (index % 4) == 0:
+                dut.ad.reboot()
+                if self.rockbottom_script:
+                    self.dut_rockbottom(dut)
+                else:
+                    self.log.warning(
+                        f'Rockbottom script {self} was not executed after reboot'
+                    )
+            else:
+                # Toggle APM on
+                dut.toggle_airplane_mode(True)
+                time.sleep(5)
+
+                # Toggle simulator cell
+                self.turn_cell_off(cell_type, cell_number)
+                time.sleep(5)
+                self.turn_cell_on(cell_type, cell_number)
+                time.sleep(5)
+
+                # Toggle APM off
+                dut.toggle_airplane_mode(False)
+                time.sleep(5)
+            polling_interval += 5
 
         # Phone cannot connected to basestation of callbox
-        raise AbstractCellularSimulator.CellularSimulatorError(
+        raise RuntimeError(
             f'Phone was unable to connect to cell: {cell_type}-{cell_number}')
 
     def wait_until_attached(self, dut, timeout, attach_retries):
@@ -327,37 +459,39 @@ class UXMCellularSimulator(AbstractCellularSimulator):
             second_cell_number = self.cells[1][self.KEY_CELL_NUMBER]
 
         # connect to 1st cell
-        try:
-            self.wait_until_attached_one_cell(first_cell_type,
-                                              first_cell_number, dut, timeout,
-                                              attach_retries)
-        except Exception as exc:
-            raise RuntimeError(f'Cannot connect to first cell') from exc
+        self.wait_until_attached_one_cell(first_cell_type,
+                                          first_cell_number, dut, timeout,
+                                          attach_retries)
 
-        # connect to 2nd cell
+        # aggregation to NR
         if len(self.cells) == 2:
             self.turn_cell_on(
                 second_cell_type,
                 second_cell_number,
             )
-            self._socket_send_SCPI_command(
-                'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:DL None')
-            self._socket_send_SCPI_command(
-                'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:UL None')
-            self._socket_send_SCPI_command(
-                'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:DL CELL1')
-            self._socket_send_SCPI_command(
-                'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:DL CELL1')
-            time.sleep(1)
-            self._socket_send_SCPI_command(
-                "BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:APPly")
-            try:
-                self.wait_until_attached_one_cell(second_cell_type,
-                                                  second_cell_number, dut,
-                                                  timeout, attach_retries,
-                                                  False)
-            except Exception as exc:
-                raise RuntimeError(f'Cannot connect to second cell') from exc
+
+            for _ in range(1, attach_retries):
+                self.log.info('Try to aggregate to NR.')
+                self._socket_send_SCPI_command(
+                    'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:DL None')
+                self._socket_send_SCPI_command(
+                    'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:UL None')
+                self._socket_send_SCPI_command(
+                    'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:DL CELL1')
+                self._socket_send_SCPI_command(
+                    'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:DL CELL1')
+                time.sleep(1)
+                self._socket_send_SCPI_command(
+                    "BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:APPly")
+                time.sleep(10)
+                cell_state = self.get_cell_status(second_cell_type, second_cell_number)
+                self.log.info(f'cell state: {cell_state}')
+                if cell_state == 'CONN\n':
+                    return
+                # wait for LTE cell to connect again
+                time.sleep(30)
+
+            raise RuntimeError(f'Fail to aggregate to NR from LTE.')
 
     def set_lte_rrc_state_change_timer(self, enabled, time=10):
         """Configures the LTE RRC state change timer.
@@ -586,16 +720,50 @@ class UXMCellularSimulator(AbstractCellularSimulator):
             timeout: after this amount of time the method will raise a
                 CellularSimulatorError exception. Default is 120 seconds.
         """
-        raise NotImplementedError(
-            'This UXM callbox simulator does not support this feature.')
+        # turn on RRC release
+        cell_type = self.cells[0][self.KEY_CELL_TYPE]
+        cell_number = self.cells[0][self.KEY_CELL_NUMBER]
+
+        # choose cmd base on cell type
+        cmd = None
+        if cell_type == 'LTE':
+            cmd = self.SCPI_RRC_RELEASE_LTE_CMD
+        else:
+            cmd = self.SCPI_RRC_RELEASE_NR_CMD
+
+        if not cmd:
+            raise RuntimeError('Can choose IDLE cmd base on cell type.')
+
+        # RRC release
+        self._socket_send_SCPI_command(cmd.format(cell_type, cell_number))
+        # wait for SCPI RRC cmd complete
+        time.sleep(5)
+
+        # checking status
+        count = 0
+        wait_interval = 5
+        self.log.info('Wait for IDLE state.')
+        while count < timeout:
+            cell_state = self.get_cell_status(cell_type, cell_number)
+            self.log.info(f'cell state: {cell_state}')
+            if cell_state == 'IDLE\n':
+                return
+            elif cell_state == 'CONN\n':
+                # RRC release
+                self._socket_send_SCPI_command(cmd.format(cell_type, cell_number))
+            time.sleep(wait_interval)
+            count += wait_interval
+
+        if cell_state != 'IDLE\n':
+            raise RuntimeError('RRC release fail.')
 
     def detach(self):
         """ Turns off all the base stations so the DUT loose connection."""
         for cell in self.cells:
             cell_type = cell[self.KEY_CELL_TYPE]
             cell_number = cell[self.KEY_CELL_NUMBER]
-            self._socket_send_SCPI_command(
-                self.SCPI_CELL_OFF_CMD.format(cell_type, cell_number))
+            self.turn_cell_off(cell_type, cell_number)
+            time.sleep(5)
 
     def stop(self):
         """Stops current simulation.
@@ -614,3 +782,4 @@ class UXMCellularSimulator(AbstractCellularSimulator):
         """Stops transmitting data from the instrument to the DUT. """
         raise NotImplementedError(
             'This UXM callbox simulator does not support this feature.')
+

@@ -504,9 +504,10 @@ class WifiRvrTest(base_test.BaseTestClass):
             if zero_counter == self.MAX_CONSECUTIVE_ZEROS:
                 self.log.info(
                     'Throughput stable at 0 Mbps. Stopping test now.')
-                throughput.extend(
-                    [0] *
-                    (len(testcase_params['atten_range']) - len(throughput)))
+                zero_padding = len(testcase_params['atten_range']) - len(throughput)
+                throughput.extend([0] * zero_padding)
+                rx_phy_rate.extend([0] * zero_padding)
+                tx_phy_rate.extend([0] * zero_padding)
                 break
         for attenuator in self.attenuators:
             attenuator.set_atten(0, strict=False, retry=True)
@@ -1017,6 +1018,7 @@ class WifiOtaRvrTest(WifiRvrTest):
                                     test_data['median_rvr'],
                                     legend='Median Throughput',
                                     marker='square')
+            test_id_phy = test_id + tuple('PHY')
             plots[test_id_phy].add_line(test_data['total_attenuation'],
                                         test_data['avg_rx_phy_rate'],
                                         legend='Average Rx Rate',

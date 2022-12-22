@@ -18,8 +18,9 @@ import collections
 import pyvisa
 import time
 from acts import logger
-from acts_contrib.test_utils.cellular import cellular_performance_test_utils as cputils
+from acts_contrib.test_utils.cellular.performance import cellular_performance_test_utils as cputils
 
+SHORT_SLEEP = 1
 VERY_SHORT_SLEEP = 0.1
 SUBFRAME_DURATION = 0.001
 VISA_QUERY_DELAY = 0.01
@@ -47,6 +48,7 @@ class Keysight5GTestApp(object):
         self.test_app.write_termination = '\n'
         self.test_app.read_termination = '\n'
         self.test_app.query_delay = VISA_QUERY_DELAY
+        self.last_loaded_scpi = None
 
         inst_id = self.send_cmd('*IDN?', 1)
         if 'Keysight' not in inst_id[0]:
@@ -112,19 +114,27 @@ class Keysight5GTestApp(object):
             try:
                 self.test_app.write(command)
                 time.sleep(VISA_QUERY_DELAY)
-                self.send_cmd('*OPC?', 1)
-                time.sleep(VISA_QUERY_DELAY)
                 if check_errors:
                     error = self.test_app.query('SYSTem:ERRor?')
                     if 'No error' not in error:
                         self.log.warning("Command: {}. Error: {}".format(
                             command, error))
+                self.send_cmd('*OPC?', 1)
+                time.sleep(VISA_QUERY_DELAY)
             except:
                 raise RuntimeError('Lost connection to test app.')
             return None
 
-    def import_scpi_file(self, file_name):
-        "Function to import SCPI file specified in file_name."
+    def import_scpi_file(self, file_name, check_last_loaded=0):
+        """Function to import SCPI file specified in file_name.
+
+        Args:
+            file_name: name of SCPI file to run
+            check_last_loaded: flag to check last loaded scpi and
+            only load if different.
+        """
+        if file_name == self.last_loaded_scpi and check_last_loaded:
+            self.log.info('Skipping SCPI import.')
         self.send_cmd("SYSTem:SCPI:IMPort '{}'".format(file_name))
         while int(self.send_cmd('SYSTem:SCPI:IMPort:STATus?', 1)):
             self.send_cmd('*OPC?', 1)
@@ -179,9 +189,7 @@ class Keysight5GTestApp(object):
             'BTHR': ['SUMMARY', 'OTAGRAPH', 'ULOTA', 'DLOTA'],
             'CSI': []
         }
-        if tab not in supported_tabs:
-            return
-        if subtab not in supported_tabs[tab]:
+        if (tab not in supported_tabs) or (subtab not in supported_tabs[tab]):
             return
         self.select_cell(cell_type, cell)
         self.send_cmd('DISPlay:{} {},{}'.format(cell_type, tab, subtab))
@@ -201,7 +209,12 @@ class Keysight5GTestApp(object):
                     cell_type, Keysight5GTestApp._format_cells(cell)), 1))
         return cell_state
 
-    def wait_for_cell_status(self, cell_type, cell, states, timeout):
+    def wait_for_cell_status(self,
+                             cell_type,
+                             cell,
+                             states,
+                             timeout,
+                             polling_interval=SHORT_SLEEP):
         """Function to wait for a specific cell status
 
         Args:
@@ -211,18 +224,17 @@ class Keysight5GTestApp(object):
             timeout: amount of time to wait for requested status
         Returns:
             True if one of the listed states is achieved
-        Raises:
-            Error if timed out waiting for acceptable state.
+            False if timed out waiting for acceptable state.
         """
         states = [states] if isinstance(states, str) else states
-        for i in range(int(timeout / VERY_SHORT_SLEEP)):
+        for i in range(int(timeout / polling_interval)):
             current_state = self.send_cmd(
                 'BSE:STATus:{}:{}?'.format(
                     cell_type, Keysight5GTestApp._format_cells(cell)), 1)
             if current_state in states:
                 return True
-            time.sleep(VERY_SHORT_SLEEP)
-        self.log.error('Timout waiting for {} {} {}'.format(
+            time.sleep(polling_interval)
+        self.log.warning('Timeout waiting for {} {} {}'.format(
             cell_type, Keysight5GTestApp._format_cells(cell), states))
         return False
 
@@ -237,9 +249,32 @@ class Keysight5GTestApp(object):
         self.send_cmd('BSE:CONFig:{}:{}:ACTive:STATe {}'.format(
             cell_type, Keysight5GTestApp._format_cells(cell), state))
 
-    #@assert_cell_off_decorator
+    def set_cell_type(self, cell_type, cell, sa_or_nsa):
+        """Function to set cell duplex mode
+
+        Args:
+            cell_type: LTE or NR5G cell
+            cell: cell/carrier number
+            sa_or_nsa: SA or NSA
+        """
+        self.assert_cell_off(cell_type, cell)
+        self.send_cmd('BSE: CONFig:NR5G:{}:TYPE {}'.format(
+            Keysight5GTestApp._format_cells(cell), sa_or_nsa))
+
+    def set_cell_duplex_mode(self, cell_type, cell, duplex_mode):
+        """Function to set cell duplex mode
+
+        Args:
+            cell_type: LTE or NR5G cell
+            cell: cell/carrier number
+            duplex_mode: TDD or FDD
+        """
+        self.assert_cell_off(cell_type, cell)
+        self.send_cmd('BSE:CONFig:{}:{}:DUPLEX:MODe {}'.format(
+            cell_type, Keysight5GTestApp._format_cells(cell), duplex_mode))
+
     def set_cell_band(self, cell_type, cell, band):
-        """Function to set cell power
+        """Function to set cell band
 
         Args:
             cell_type: LTE or NR5G cell
@@ -250,17 +285,20 @@ class Keysight5GTestApp(object):
         self.send_cmd('BSE:CONFig:{}:{}:BAND {}'.format(
             cell_type, Keysight5GTestApp._format_cells(cell), band))
 
-    #@assert_cell_off_decorator
     def set_cell_channel(self, cell_type, cell, channel, arfcn=1):
         """Function to set cell frequency/channel
 
         Args:
             cell_type: LTE or NR5G cell
             cell: cell/carrier number
-            channel: requested channel (ARFCN) in frequency in MHz
+            channel: requested channel (ARFCN) or frequency in MHz
         """
         self.assert_cell_off(cell_type, cell)
-        if arfcn == 1:
+        if cell_type == 'NR5G' and isinstance(
+                channel, str) and channel.lower() in ['low', 'mid', 'high']:
+            self.send_cmd('BSE:CONFig:{}:{}:TESTChanLoc {}'.format(
+                cell_type, Keysight5GTestApp._format_cells(cell), channel))
+        elif arfcn == 1:
             self.send_cmd('BSE:CONFig:{}:{}:DL:CHANnel {}'.format(
                 cell_type, Keysight5GTestApp._format_cells(cell), channel))
         else:
@@ -268,7 +306,6 @@ class Keysight5GTestApp(object):
                 cell_type, Keysight5GTestApp._format_cells(cell),
                 channel * 1e6))
 
-    #@assert_cell_off_decorator
     def configure_contiguous_nr_channels(self, cell, band, channel):
         """Function to set cell frequency/channel
 
@@ -286,14 +323,13 @@ class Keysight5GTestApp(object):
             self.set_cell_channel('NR5G', cell, channel, 0)
         self.send_cmd('BSE:CONFig:NR5G:PHY:OPTimize:CONTiguous:STATe 1')
 
-    #@assert_cell_off_decorator
     def configure_noncontiguous_nr_channels(self, cells, band, channels):
         """Function to set cell frequency/channel
 
         Args:
             cell: cell/carrier number
             band: band number
-            channel: frequency in MHz or preset in [low, mid, or high]
+            channel: frequency in MHz
         """
         for cell in cells:
             self.assert_cell_off('NR5G', cell)
@@ -301,7 +337,6 @@ class Keysight5GTestApp(object):
         for cell, channel in zip(cells, channels):
             self.set_cell_channel('NR5G', cell, channel, arfcn=0)
 
-    #@assert_cell_off_decorator
     def set_cell_bandwidth(self, cell_type, cell, bandwidth):
         """Function to set cell bandwidth
 
@@ -314,13 +349,19 @@ class Keysight5GTestApp(object):
         self.send_cmd('BSE:CONFig:{}:{}:DL:BW {}'.format(
             cell_type, Keysight5GTestApp._format_cells(cell), bandwidth))
 
-    #@assert_cell_off_decorator
+    def set_nr_subcarrier_spacing(self, cell, subcarrier_spacing):
+        """Function to set cell bandwidth
+
+        Args:
+            cell: cell/carrier number
+            subcarrier_spacing: requested SCS
+        """
+        self.assert_cell_off('NR5G', cell)
+        self.send_cmd('BSE:CONFig:NR5G:{}:SUBCarrier:SPACing:COMMon {}'.format(
+            Keysight5GTestApp._format_cells(cell), subcarrier_spacing))
+
     def set_cell_mimo_config(self, cell_type, cell, link, mimo_config):
         """Function to set cell mimo config.
-
-        Allows setting mimo config. This field only appears for an FR1 cell
-        with a DL MIMO Configuration of 1x1, or for an FR2 cell in a single
-        RRH system.
 
         Args:
             cell_type: LTE or NR5G cell
@@ -330,9 +371,24 @@ class Keysight5GTestApp(object):
                          documentation for allowed range of values)
         """
         self.assert_cell_off(cell_type, cell)
-        self.send_cmd('BSE:CONFig:{}:{}:{}:MIMO:CONFig {}'.format(
-            cell_type, Keysight5GTestApp._format_cells(cell), link,
-            mimo_config))
+        if cell_type == 'NR5G':
+            self.send_cmd('BSE:CONFig:{}:{}:{}:MIMO:CONFig {}'.format(
+                cell_type, Keysight5GTestApp._format_cells(cell), link,
+                mimo_config))
+        else:
+            self.send_cmd('BSE:CONFig:{}:{}:PHY:DL:ANTenna:CONFig {}'.format(
+                cell_type, Keysight5GTestApp._format_cells(cell), mimo_config))
+
+    def set_lte_cell_transmission_mode(self, cell, transmission_mode):
+        """Function to set LTE cell transmission mode.
+
+        Args:
+            cell: cell/carrier number
+            transmission_mode: one of TM1, TM2, TM3, TM4 ...
+        """
+        self.assert_cell_off('LTE', cell)
+        self.send_cmd('BSE:CONFig:LTE:{}:RRC:TMODe {}'.format(
+            Keysight5GTestApp._format_cells(cell), transmission_mode))
 
     def set_cell_dl_power(self, cell_type, cell, power, full_bw):
         """Function to set cell power
@@ -352,7 +408,6 @@ class Keysight5GTestApp(object):
                 cell_type, Keysight5GTestApp._format_cells(cell), power))
         self.send_cmd('BSE:CONFig:{}:APPLY'.format(cell_type))
 
-    #@assert_cell_off_decorator
     def set_cell_duplex_mode(self, cell_type, cell, duplex_mode):
         """Function to set cell power
 
@@ -383,7 +438,6 @@ class Keysight5GTestApp(object):
         self.send_cmd('BSE:CONFig:NR5G:CELL1:CAGGregation:NRCC:UL {}'.format(
             Keysight5GTestApp._format_cells(cells)))
 
-    #@assert_cell_off_decorator
     def set_nr_cell_schedule_scenario(self, cell, scenario):
         """Function to set NR schedule to one of predefince quick configs.
 
@@ -398,7 +452,6 @@ class Keysight5GTestApp(object):
                 Keysight5GTestApp._format_cells(cell), scenario))
         self.send_cmd('BSE:CONFig:NR5G:SCHeduling:QCONFig:APPLy:ALL')
 
-    #@assert_cell_off_decorator
     def set_nr_cell_mcs(self, cell, dl_mcs, ul_mcs):
         """Function to set NR cell DL & UL MCS
 
@@ -408,11 +461,54 @@ class Keysight5GTestApp(object):
             ul_mcs: mcs index to use on UL
         """
         self.assert_cell_off('NR5G', cell)
-        self.send_cmd('BSE:CONFig:NR5G:{}:SCHeduling:QCONFig:DL:MCS {}'.format(
-            Keysight5GTestApp._format_cells(cell), dl_mcs))
-        self.send_cmd('BSE:CONFig:NR5G:{}:SCHeduling:QCONFig:UL:MCS {}'.format(
-            Keysight5GTestApp._format_cells(cell), ul_mcs))
-        self.send_cmd('BSE:CONFig:NR5G:SCHeduling:QCONFig:APPLy:ALL')
+        self.send_cmd(
+            'BSE:CONFig:NR5G:SCHeduling:SETParameter "CELLALL:BWPALL:FCALL:SCALL", "DL:IMCS", "{}"'
+            .format(dl_mcs))
+        self.send_cmd(
+            'BSE:CONFig:NR5G:SCHeduling:SETParameter "CELLALL:BWPALL:FCALL:SCALL", "UL:IMCS", "{}"'
+            .format(ul_mcs))
+
+    def set_lte_cell_mcs(
+        self,
+        cell,
+        dl_mcs_table,
+        dl_mcs,
+        ul_mcs_table,
+        ul_mcs,
+    ):
+        """Function to set NR cell DL & UL MCS
+
+        Args:
+            cell: cell number to address. MCS will apply to all cells
+            dl_mcs: mcs index to use on DL
+            ul_mcs: mcs index to use on UL
+        """
+        if dl_mcs_table == 'QAM256':
+            dl_mcs_table_formatted = 'ASUBframe'
+        elif dl_mcs_table == 'QAM1024':
+            dl_mcs_table_formatted = 'ASUB1024'
+        elif dl_mcs_table == 'QAM64':
+            dl_mcs_table_formatted = 'DISabled'
+        self.assert_cell_off('LTE', cell)
+        self.send_cmd(
+            'BSE:CONFig:LTE:SCHeduling:SETParameter "CELLALL", "DL:MCS:TABle", "{}"'
+            .format(dl_mcs_table_formatted))
+        self.send_cmd(
+            'BSE:CONFig:LTE:SCHeduling:SETParameter "CELLALL:SFALL:CWALL", "DL:IMCS", "{}"'
+            .format(dl_mcs))
+        self.send_cmd(
+            'BSE:CONFig:LTE:SCHeduling:SETParameter "CELLALL", "UL:MCS:TABle", "{}"'
+            .format(ul_mcs_table))
+        self.send_cmd(
+            'BSE:CONFig:LTE:SCHeduling:SETParameter "CELLALL:SFALL", "UL:IMCS", "{}"'
+            .format(ul_mcs))
+
+    def set_lte_ul_mac_padding(self, mac_padding):
+        self.assert_cell_off('LTE', 'CELL1')
+        padding_str = 'TRUE' if mac_padding else 'FALSE'
+        self.send_cmd(
+            'BSE:CONFig:LTE:SCHeduling:SETParameter "CELLALL", "UL:MAC:PADDING", "{}"'
+            .format(padding_str))
 
     def set_nr_ul_dft_precoding(self, cell, precoding):
         """Function to configure DFT-precoding on uplink.
@@ -426,6 +522,10 @@ class Keysight5GTestApp(object):
         self.send_cmd(
             'BSE:CONFig:NR5G:{}:SCHeduling:QCONFig:UL:TRANsform:PRECoding {}'.
             format(Keysight5GTestApp._format_cells(cell), precoding_str))
+        precoding_str = "True" if precoding else "False"
+        self.send_cmd(
+            'BSE:CONFig:NR5G:SCHeduling:SETParameter "CELLALL:BWPALL", "UL:TPEnabled", "{}"'
+            .format(precoding_str))
 
     def configure_ul_clpc(self, channel, mode, target):
         """Function to configure UL power control on all cells/carriers
@@ -441,6 +541,16 @@ class Keysight5GTestApp(object):
             self.send_cmd(
                 'BSE:CONFig:NR5G:UL:{}:CLPControl:TARGet:POWer:ALL {}'.format(
                     channel, target))
+
+    def apply_lte_carrier_agg(self, cells):
+        """Function to start LTE carrier aggregation on already configured cells"""
+        if self.wait_for_cell_status('LTE', 'CELL1', 'CONN', 60):
+            self.send_cmd(
+                'BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:SCC {}'.format(
+                    Keysight5GTestApp._format_cells(cells)))
+            self.send_cmd(
+                'BSE:CONFig:LTE:CELL1:CAGGregation:ACTivate:SCC {}'.format(
+                    Keysight5GTestApp._format_cells(cells)))
 
     def apply_carrier_agg(self):
         """Function to start carrier aggregation on already configured cells"""
@@ -458,6 +568,7 @@ class Keysight5GTestApp(object):
         Returns:
             dict containing DL and UL IP-layer throughput
         """
+        #Tester reply format
         #{ report-count, total-bytes, current transfer-rate, average transfer-rate, peak transfer-rate }
         dl_tput = self.send_cmd(
             'BSE:MEASure:{}:BTHRoughput:DL:THRoughput:IP?'.format(cell_type),
@@ -475,17 +586,18 @@ class Keysight5GTestApp(object):
                     Keysight5GTestApp._format_cells(cell), link,
                     Keysight5GTestApp._format_cells(cell)), 1)
         elif cell_type == 'NR5G':
+            # Tester reply format
             #progress-count, ack-count, ack-ratio, nack-count, nack-ratio,  statdtx-count,  statdtx-ratio,  pdschBlerCount,  pdschBlerRatio,  pdschTputRatio.
             tput_response = self.send_cmd(
                 'BSE:MEASure:NR5G:BTHRoughput:{}:THRoughput:OTA:{}?'.format(
                     link, Keysight5GTestApp._format_cells(cell)), 1)
         tput_result = {
-            'frame_count': tput_response[0],
-            'current_tput': tput_response[1],
-            'min_tput': tput_response[2],
-            'max_tput': tput_response[3],
-            'average_tput': tput_response[4],
-            'theoretical_tput': tput_response[5]
+            'frame_count': tput_response[0] / 1e6,
+            'current_tput': tput_response[1] / 1e6,
+            'min_tput': tput_response[2] / 1e6,
+            'max_tput': tput_response[3] / 1e6,
+            'average_tput': tput_response[4] / 1e6,
+            'theoretical_tput': tput_response[5] / 1e6,
         }
         return tput_result
 
@@ -500,7 +612,7 @@ class Keysight5GTestApp(object):
             cell_type: LTE or NR5G
             cells: list of cells to query for throughput data
         Returns:
-            tput_result: dict containing all throughput statistics
+            tput_result: dict containing all throughput statistics in Mbps
         """
         if not isinstance(cells, list):
             cells = [cells]
@@ -578,13 +690,12 @@ class Keysight5GTestApp(object):
             cell_type: LTE or NR5G
             length: integer length of BLER measurements in subframes
         """
-        self._clear_bler_measurement('NR5G')
-        self._clear_bler_measurement('LTE')
+        self._clear_bler_measurement(cell_type)
         self._set_bler_measurement_state(cell_type, 0)
         self._configure_bler_measurement(cell_type, 0, length)
         self._set_bler_measurement_state(cell_type, 1)
-        bler_check = self.get_bler_result(cell_type, cells, length)
         time.sleep(0.1)
+        bler_check = self.get_bler_result(cell_type, cells, length, 0)
         if bler_check['total']['DL']['frame_count'] == 0:
             self.log.warning('BLER measurement did not start. Retrying')
             self.start_bler_measurement(cell_type, cells, length)
@@ -596,7 +707,6 @@ class Keysight5GTestApp(object):
                 'BSE:MEASure:LTE:CELL1:BTHRoughput:{}:BLER:CELL1?'.format(
                     link), 1)
         elif cell_type == 'NR5G':
-            #progress-count, ack-count, ack-ratio, nack-count, nack-ratio,  statdtx-count,  statdtx-ratio,  pdschBlerCount,  pdschBlerRatio,  pdschTputRatio.
             bler_response = self.send_cmd(
                 'BSE:MEASure:NR5G:BTHRoughput:{}:BLER:{}?'.format(
                     link, Keysight5GTestApp._format_cells(cell)), 1)
@@ -609,7 +719,12 @@ class Keysight5GTestApp(object):
         }
         return bler_result
 
-    def get_bler_result(self, cell_type, cells, length, wait_for_length=1):
+    def get_bler_result(self,
+                        cell_type,
+                        cells,
+                        length,
+                        wait_for_length=1,
+                        polling_interval=SHORT_SLEEP):
         """Function to get BLER results.
 
         This function gets the BLER measurements results on one or more
@@ -630,10 +745,10 @@ class Keysight5GTestApp(object):
 
         if not isinstance(cells, list):
             cells = [cells]
-        while True:
+        while wait_for_length:
             dl_bler = self._get_bler(cell_type, 'DL', cells[0])
             if dl_bler['frame_count'] < length:
-                time.sleep(VERY_SHORT_SLEEP)
+                time.sleep(polling_interval)
             else:
                 break
 
@@ -677,10 +792,10 @@ class Keysight5GTestApp(object):
                 'nack_ratio'] = agg_bler['UL']['nack_count'] / ul_ack_nack
         except:
             self.log.debug(bler_result)
-            agg_bler['DL']['ack_ratio'] = float('nan')
-            agg_bler['DL']['nack_ratio'] = float('nan')
-            agg_bler['UL']['ack_ratio'] = float('nan')
-            agg_bler['UL']['nack_ratio'] = float('nan')
+            agg_bler['DL']['ack_ratio'] = 0
+            agg_bler['DL']['nack_ratio'] = 1
+            agg_bler['UL']['ack_ratio'] = 0
+            agg_bler['UL']['nack_ratio'] = 1
         bler_result['total'] = agg_bler
         return bler_result
 
