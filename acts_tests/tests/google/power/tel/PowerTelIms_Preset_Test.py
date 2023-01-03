@@ -19,8 +19,10 @@ from acts_contrib.test_utils.power.cellular.ims_api_connector_utils import ImsAp
 import acts_contrib.test_utils.power.cellular.cellular_power_base_test as PWCEL
 from acts_contrib.test_utils.tel.tel_test_utils import set_phone_silent_mode
 from acts_contrib.test_utils.tel.tel_voice_utils import hangup_call
+import acts_contrib.test_utils.power.cellular.cellular_power_preset_base_test as PB
 
-class PowerTelImsPresetTest(PWCEL.PowerCellularLabBaseTest):
+
+class PowerTelImsPresetTest(PB.PowerCellularPresetLabBaseTest):
     ADB_CMD_ENABLE_IMS = ('am broadcast '
         '-a com.google.android.carrier.action.LOCAL_OVERRIDE '
         '-n com.google.android.carrier/.ConfigOverridingReceiver '
@@ -30,6 +32,16 @@ class PowerTelImsPresetTest(PWCEL.PowerCellularLabBaseTest):
         '--ez carrier_supports_ss_over_ut_bool true '
         '--ez vonr_setting_visibility_bool true '
         '--ez vonr_enabled_bool true')
+
+    ADB_CMD_DISABLE_IMS = ('am broadcast '
+        '-a com.google.android.carrier.action.LOCAL_OVERRIDE '
+        '-n com.google.android.carrier/.ConfigOverridingReceiver '
+        '--ez carrier_volte_available_bool false '
+        '--ez carrier_wfc_ims_available_bool false '
+        '--ez carrier_vt_available_bool false '
+        '--ez carrier_supports_ss_over_ut_bool false '
+        '--ez vonr_setting_visibility_bool false '
+        '--ez vonr_enabled_bool false')
 
     # set NV command
     # !NRCAPA.Gen.VoiceOverNr, 0, 01
@@ -48,9 +60,7 @@ class PowerTelImsPresetTest(PWCEL.PowerCellularLabBaseTest):
         """ Executed only once when initializing the class. """
         super().setup_class()
 
-        # switch to HCCU correct settings.
-        self.cellular_simulator.switch_HCCU_settings(is_fr2=False)
-
+        # disable mobile data
         self.log.info('Disable mobile data.')
         self.dut.adb.shell('svc data disable')
 
@@ -94,61 +104,6 @@ class PowerTelImsPresetTest(PWCEL.PowerCellularLabBaseTest):
             self.enable_ims_nr()
         super().setup_test()
 
-    def set_nv(self, nv_name, index, value):
-        self.log.info(f'Set NV: [{nv_name}] at index [{index}] to [{value}].')
-        cmd = self.ADB_SET_GOOG_NV.format(
-            nv_name = nv_name,
-            index = index,
-            value = value
-        )
-        self.cellular_dut.ad.adb.shell(cmd)
-        time.sleep(2)
-
-    def enable_ims_nr(self):
-        # TODO: set value for registries (hex byte)
-        # set PSS.AIMS.Enable.NRSACONTROL
-        self.set_nv(
-            nv_name = '!NRCAPA.Gen.VoiceOverNr',
-            index = '0',
-            value = '01'
-        )
-        # set PSS.AIMS.Enable.NRSACONTROL
-        self.set_nv(
-            nv_name = 'PSS.AIMS.Enable.NRSACONTROL',
-            index = '0',
-            value = '00'
-        )
-        # set DS.PSS.AIMS.Enable.NRSACONTROL
-        self.set_nv(
-            nv_name = 'DS.PSS.AIMS.Enable.NRSACONTROL',
-            index = '0',
-            value = '00'
-        )
-        if self.cellular_dut.ad.model == 'oriole':
-            # For P21, NR.CONFIG.MODE/DS.NR.CONFIG.MODE to 11
-            self.set_nv(
-                nv_name = 'NR.CONFIG.MODE',
-                index = '0',
-                value = '11'
-            )
-            # set DS.NR.CONFIG.MODE
-            self.set_nv(
-                nv_name = 'DS.NR.CONFIG.MODE',
-                index = '0',
-                value = '11'
-            )
-        elif self.cellular_dut.ad.model == 'cheetah':
-            # For P22, NASU.NR.CONFIG.MODE to 11
-            self.set_nv(
-                nv_name = 'NASU.NR.CONFIG.MODE',
-                index = '0',
-                value = '11'
-            )
-
-        self.dut.reboot()
-
-        #TODO(hmtuan): confirm all registries are expected
-
     def power_ims_call_test(self):
         """ Measures power during a VoLTE call.
 
@@ -191,19 +146,14 @@ class PowerTelImsPresetTest(PWCEL.PowerCellularLabBaseTest):
         super().teardown_test()
         #self.cellular_simulator.deregister_ue_ims()
         self.ims_client.remove_ims_app_link()
-        self.cellular_dut.toggle_airplane_mode(True)
-        self.cellular_simulator.detach()
+
+    def teardown_class(self):
+        super().teardown_class()
+        self.log.info('Disable IMS.')
+        self.dut.adb.shell(self.ADB_CMD_DISABLE_IMS)
 
 
 class PowerTelIms_Preset_Test(PowerTelImsPresetTest):
-    def teardown_test(self):
-        super().teardown_test()
-        self.log.info('Enable mobile data.')
-        self.dut.adb.shell('svc data enable')
-        self.cellular_simulator.detach()
-        self.cellular_dut.toggle_airplane_mode(True)
-        self.sponge_upload()
-
     def test_preset_LTE_voice(self):
         self.power_ims_call_test()
 
