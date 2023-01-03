@@ -144,7 +144,8 @@ def reboot(ad):
         ad: An AndroidDevice object.
     """
     ad.log.info("Reboot device to make changes take effect.")
-    ad.reboot()
+    # TODO(diegowchung): remove the timeout setting after p23 back to normal
+    ad.reboot(timeout=600)
     ad.unlock_screen(password=None)
     if not is_mobile_data_on(ad):
         set_mobile_data(ad, True)
@@ -2814,7 +2815,6 @@ def disable_ramdump(ad):
     ad.start_adb_logcat()
 
 
-@retry(Exception, tries=3, delay=30)
 def deep_suspend_device(ad):
     """Force DUT to enter deep suspend mode
 
