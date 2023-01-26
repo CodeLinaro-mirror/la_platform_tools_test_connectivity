@@ -12,11 +12,15 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-from acts import context
+
 import acts_contrib.test_utils.power.cellular.cellular_pdcch_power_test as cppt
 
 
 class PowerTelPdcch_Preset_Test(cppt.PowerTelPDCCHTest):
+    def setup_class(self):
+        super().setup_class()
+        self.cellular_simulator.switch_HCCU_settings(is_fr2=False)
+
     def teardown_test(self):
         super().teardown_test()
         self.sponge_upload()
@@ -40,3 +44,4 @@ class PowerTelPdcch_Preset_Test(cppt.PowerTelPDCCHTest):
 
     def test_preset_LTE_cdrx(self):
         self.power_pdcch_test()
+

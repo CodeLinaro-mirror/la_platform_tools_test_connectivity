@@ -11,14 +11,81 @@
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
+import re
+import logging
 import os
+import paramiko
 import socket
 import time
-import paramiko
-import re
 
 from acts.controllers.cellular_simulator import AbstractCellularSimulator
 
+class SocketWrapper():
+    """A wrapper for socket communicate with test equipment.
+
+    Attributes:
+        _socket: a socket object.
+        _ip: a string value for ip address
+            which we want to connect.
+        _port: an integer for port
+            which we want to connect.
+        _connecting_timeout: an integer for socket connecting timeout.
+        _encode_format: a string specify encoding format.
+        _cmd_terminator: a character indicates the end of command/data
+            which need to be sent.
+    """
+
+    def __init__(self, ip, port,
+                 connecting_timeout=120,
+                 cmd_terminator='\n',
+                 encode_format='utf-8',
+                 buff_size=1024):
+        self._socket = None
+        self._ip = ip
+        self._port = port
+        self._connecting_timeout = connecting_timeout
+        self._cmd_terminator = cmd_terminator
+        self._encode_format = encode_format
+        self._buff_size = buff_size
+        self._logger = logging.getLogger(__name__)
+
+    def _connect(self):
+        self._socket = socket.create_connection(
+            (self._ip, self._port), timeout=self._connecting_timeout
+        )
+
+    def send_command(self, cmd: str):
+        if not self._socket:
+            self._connect()
+        if cmd and cmd[-1] != self._cmd_terminator:
+            cmd = cmd + self._cmd_terminator
+        self._socket.sendall(cmd.encode(self._encode_format))
+
+    def send_command_recv(self, cmd: str) -> str:
+        """Send data and wait for response
+
+        Args:
+            cmd: a string command to be sent.
+
+        Returns:
+            a string response.
+        """
+        self.send_command(cmd)
+        response = ''
+        try:
+            response = self._socket.recv(self._buff_size).decode(
+                self._encode_format
+            )
+        except socket.timeout as e:
+            self._logger('Socket timeout while receiving response.')
+            self.close()
+            raise
+
+        return response
+
+    def close(self):
+        self._socket.close()
+        self._socket = None
 
 class UXMCellularSimulator(AbstractCellularSimulator):
     """A cellular simulator for UXM callbox."""
@@ -28,7 +95,7 @@ class UXMCellularSimulator(AbstractCellularSimulator):
     KEY_CELL_TYPE = "cell_type"
 
     # UXM socket port
-    UXM_PORT = 5125
+    UXM_SOCKET_PORT = 5125
 
     # UXM SCPI COMMAND
     SCPI_IMPORT_STATUS_QUERY_CMD = 'SYSTem:SCPI:IMPort:STATus?'
@@ -45,6 +112,9 @@ class UXMCellularSimulator(AbstractCellularSimulator):
     SCPI_RRC_RELEASE_NR_CMD = 'BSE:CONFig:{}:{}:RCONtrol:RRC:STARt RRELease'
     # require cell number
     SCPI_CREATE_DEDICATED_BEARER = 'BSE:FUNCtion:LTE:{}:NAS:EBID10:DEDicated:CREate'
+    SCPI_CHANGE_SIM_NR_CMD = 'BSE:CONFig:NR5G:CELL1:SECurity:AUTHenticate:KEY:TYPE {}'
+    SCPI_CHANGE_SIM_LTE_CMD = 'BSE:CONFig:LTE:SECurity:AUTHenticate:KEY {}'
+    SCPI_SETTINGS_PRESET_CMD = 'SYSTem:PRESet:FULL'
 
     # UXM's Test Application recovery
     TA_BOOT_TIME = 100
@@ -56,7 +126,23 @@ class UXMCellularSimulator(AbstractCellularSimulator):
     # start process success regex
     PSEXEC_PROC_STARTED_REGEX_FORMAT = 'started on * with process ID {proc_id}'
 
-    def __init__(self, ip_address, custom_files, uxm_user,
+    # HCCU default value
+    HHCU_SOCKET_PORT = 4882
+    HHCU_FR1_SETUP_NAME = ''
+    # number of digit of the length of setup name
+    HHCU_SCPI_CHANGE_SETUP_CMD = ':SYSTem:SETup:CONFig #{number_of_digit}{setup_name_len}{setup_name}'
+    HCCU_SCPI_CHANGE_SCENARIO_CMD = ':SETup:SCENe "((NE_1, {scenario_name}))"'
+    HCCU_STATUS_CHECK_CMD = ':SETup:INSTrument:STATus? 0\n'
+    HCCU_FR2_SETUP_NAME = '{Name:"TSPC_1UXM5G_HF_2RRH_M1740A"}'
+    HCCU_FR1_SETUP_NAME = '{Name:"TSPC_1UXM5G_LF"}'
+    HCCU_GET_INSTRUMENT_COUNT_CMD = ':SETup:INSTrument:COUNt?'
+    HCCU_FR2_INSTRUMENT_COUNT = 5
+    HCCU_FR1_INSTRUMENT_COUNT = 2
+    HCCU_FR2_SCENARIO = 'NR_4DL2x2_2UL2x2_LTE_4CC'
+    HCCU_FR1_SCENARIO = 'NR_1DL4x4_1UL2x2_LTE_4CC'
+
+
+    def __init__(self, ip_address, custom_files,uxm_user,
                  ssh_private_key_to_uxm, ta_exe_path, ta_exe_name):
         """Initializes the cellular simulator.
 
@@ -89,9 +175,114 @@ class UXMCellularSimulator(AbstractCellularSimulator):
 
         # connect to Keysight Test Application via socket
         self.recovery_ta()
-        self.socket = self._socket_connect(self.uxm_ip, self.UXM_PORT)
+        self.socket = self._socket_connect(self.uxm_ip, self.UXM_SOCKET_PORT)
         self.check_socket_connection()
         self.timeout = 120
+
+        # hccu socket
+        self.hccu_socket_port = self.HHCU_SOCKET_PORT
+        self.hccu_socket = SocketWrapper(self.uxm_ip, self.hccu_socket_port)
+
+    def switch_HCCU_scenario(self, scenario_name: str):
+        cmd = self.HCCU_SCPI_CHANGE_SCENARIO_CMD.format(
+            scenario_name=scenario_name)
+        self.hccu_socket.send_command(cmd)
+        self.log.debug(f'Sent command: {cmd}')
+        # this is require for the command to take effect
+        # because hccu's port need to be free.
+        self.hccu_socket.close()
+
+    def switch_HCCU_setup(self, setup_name: str):
+        """Change HHCU system setup.
+
+        Args:
+            setup_name: a string name
+                of the system setup will be changed to.
+        """
+        setup_name_len = str(len(setup_name))
+        number_of_digit = str(len(setup_name_len))
+        cmd = self.HHCU_SCPI_CHANGE_SETUP_CMD.format(
+            number_of_digit=number_of_digit,
+            setup_name_len=setup_name_len,
+            setup_name=setup_name
+        )
+        self.hccu_socket.send_command(cmd)
+        self.log.debug(f'Sent command: {cmd}')
+        # this is require for the command to take effect
+        # because hccu's port need to be free.
+        self.hccu_socket.close
+
+    def wait_until_hccu_operational(self, timeout=1200):
+        """ Wait for hccu is ready to operate for a specified timeout.
+
+        Args:
+            timeout: time we are waiting for
+                hccu in opertional status.
+
+        Returns:
+            True if HCCU status is operational within timeout.
+            False otherwise.
+        """
+        # check status
+        self.log.info('Waiting for HCCU to ready to operate.')
+        cmd = self.HCCU_STATUS_CHECK_CMD
+        t = 0
+        interval = 10
+        while t < timeout:
+            response = self.hccu_socket.send_command_recv(cmd)
+            if response == 'OPER\n':
+                return True
+            time.sleep(interval)
+            t += interval
+        return False
+
+    def switch_HCCU_settings(self, is_fr2: bool):
+        """Set HCCU setup configuration.
+
+        HCCU stands for Hardware Configuration Control Utility,
+        an interface allows us to control Keysight Test Equipment.
+
+        Args:
+            is_fr2: a bool value.
+        """
+        # change HCCU configration
+        data = ''
+        scenario_name = ''
+        instrument_count_res = self.hccu_socket.send_command_recv(
+            self.HCCU_GET_INSTRUMENT_COUNT_CMD)
+        instrument_count = int(instrument_count_res)
+        # if hccu setup is correct, no need to change.
+        if is_fr2 and instrument_count == self.HCCU_FR2_INSTRUMENT_COUNT:
+            self.log.info('UXM has correct HCCU setup.')
+            return
+        if not is_fr2 and instrument_count == self.HCCU_FR1_INSTRUMENT_COUNT:
+            self.log.info('UXM has correct HCCU setup.')
+            return
+
+        self.log.info('UXM has incorrect HCCU setup, start changing setup.')
+        # close socket to TA
+        self.socket.close()
+
+        # change hccu setup
+        if is_fr2:
+            data = self.HCCU_FR2_SETUP_NAME
+            scenario_name = self.HCCU_FR2_SCENARIO
+        else:
+            data = self.HCCU_FR1_SETUP_NAME
+            scenario_name = self.HCCU_FR1_SCENARIO
+        self.switch_HCCU_setup(data)
+        time.sleep(10)
+        if not self.wait_until_hccu_operational():
+            raise RuntimeError('Fail to switch HCCU setup.')
+
+        # change scenario
+        self.switch_HCCU_scenario(scenario_name)
+        time.sleep(40)
+        if not self.wait_until_hccu_operational():
+            raise RuntimeError('Fail to switch HCCU scenario.')
+
+        self.recovery_ta()
+        self.socket = self._socket_connect(self.uxm_ip, self.UXM_SOCKET_PORT)
 
     def create_ssh_client(self):
         """Create a ssh client to host."""
@@ -145,7 +336,7 @@ class UXMCellularSimulator(AbstractCellularSimulator):
             retries = 12
             for _ in range(retries):
                 try:
-                    s = self._socket_connect(self.uxm_ip, self.UXM_PORT)
+                    s = self._socket_connect(self.uxm_ip, self.UXM_SOCKET_PORT)
                     s.close()
                     return
                 except ConnectionRefusedError as cre:
@@ -257,7 +448,7 @@ class UXMCellularSimulator(AbstractCellularSimulator):
             host: IP address of desktop where Keysight Test Application resides.
             port: port that Keysight Test Application is listening for socket
                 communication.
-        Return:
+        Returns:
             s: socket object.
         """
         self.log.info('Establishing connection to callbox via socket')
@@ -299,7 +490,7 @@ class UXMCellularSimulator(AbstractCellularSimulator):
     def check_system_error(self):
         """Query system error from Keysight Test Application.
 
-        Return:
+        Returns:
             status: a message indicate the number of errors
                 and detail of errors if any.
                 a string `0,"No error"` indicates no error.
@@ -315,6 +506,9 @@ class UXMCellularSimulator(AbstractCellularSimulator):
         Args:
             path: path to SCPI file.
         """
+        self._socket_send_SCPI_command(
+            self.SCPI_SETTINGS_PRESET_CMD)
+        time.sleep(10)
         self._socket_send_SCPI_command(
             self.SCPI_IMPORT_SCPI_FILE_CMD.format(path))
         time.sleep(45)
@@ -374,12 +568,13 @@ class UXMCellularSimulator(AbstractCellularSimulator):
         Raise:
             RuntimeError: device unable to connect to cell.
         """
-        change_key_NR_cmd = 'BSE:CONFig:NR5G:CELL1:SECurity:AUTHenticate:KEY:TYPE TEST3GPP'
-        change_key_LTE_cmd = 'BSE:CONFig:LTE:SECurity:AUTHenticate:KEY TEST3GPP'
-        self._socket_send_SCPI_command(change_key_LTE_cmd)
-        time.sleep(5)
-        self._socket_send_SCPI_command(change_key_NR_cmd)
-        time.sleep(5)
+        sim_type = 'TEST3GPP'
+        self._socket_send_SCPI_command(
+            self.SCPI_CHANGE_SIM_NR_CMD.format(sim_type))
+        time.sleep(2)
+        self._socket_send_SCPI_command(
+            self.SCPI_CHANGE_SIM_LTE_CMD.format(sim_type))
+        time.sleep(2)
 
         # airplane mode on
         dut.toggle_airplane_mode(True)
@@ -393,34 +588,39 @@ class UXMCellularSimulator(AbstractCellularSimulator):
         dut.toggle_airplane_mode(False)
         time.sleep(5)
 
-        polling_interval = 5
-        # waits for connect
+        interval = 10
+        # waits for device to camp
         for index in range(1, attach_retries):
             count = 0
             # check connection in small interval
             while count < wait_for_camp_interval:
-                time.sleep(5)
+                time.sleep(interval)
                 cell_state = self.get_cell_status(cell_type, cell_number)
                 self.log.info(f'cell state: {cell_state}')
                 if cell_state == 'CONN\n':
                     # wait for connection stable
-                    time.sleep(10)
-                    return True
+                    time.sleep(15)
+                    # check connection status again
+                    cell_state = self.get_cell_status(cell_type, cell_number)
+                    self.log.info(f'cell state: {cell_state}')
+                    if cell_state == 'CONN\n':
+                        return True
                 if cell_state == 'OFF\n':
                     self.turn_cell_on(cell_type, cell_number)
                     time.sleep(5)
-                count += polling_interval
+                count += interval
 
-            # reboot device on every fifth try
-            if (index % 4) == 0:
+            # reboot device on every fourth try
+            if (index % 3) == 0:
                 dut.ad.reboot()
                 if self.rockbottom_script:
                     self.dut_rockbottom(dut)
                 else:
                     self.log.warning(
-                        f'Rockbottom script {self} was not executed after reboot'
+                        f'Rockbottom script was not executed after reboot.'
                     )
-            else:
+            # toggle APM and cell on/off
+            elif (index % 2) == 0:
                 # Toggle APM on
                 dut.toggle_airplane_mode(True)
                 time.sleep(5)
@@ -434,7 +634,8 @@ class UXMCellularSimulator(AbstractCellularSimulator):
                 # Toggle APM off
                 dut.toggle_airplane_mode(False)
                 time.sleep(5)
-            polling_interval += 5
+            # increase length of small waiting interval
+            interval += 5
 
         # Phone cannot connected to basestation of callbox
         raise RuntimeError(
@@ -483,13 +684,18 @@ class UXMCellularSimulator(AbstractCellularSimulator):
                 time.sleep(1)
                 self._socket_send_SCPI_command(
                     "BSE:CONFig:LTE:CELL1:CAGGregation:AGGRegate:NRCC:APPly")
+                # wait for status stable
                 time.sleep(10)
                 cell_state = self.get_cell_status(second_cell_type, second_cell_number)
                 self.log.info(f'cell state: {cell_state}')
                 if cell_state == 'CONN\n':
                     return
-                # wait for LTE cell to connect again
-                time.sleep(30)
+                else:
+                    self.turn_cell_off(second_cell_type, second_cell_number)
+                    # wait for LTE cell to connect again
+                    self.wait_until_attached_one_cell(first_cell_type,
+                                            first_cell_number, dut, 120,
+                                            2)
 
             raise RuntimeError(f'Fail to aggregate to NR from LTE.')
 
@@ -732,30 +938,22 @@ class UXMCellularSimulator(AbstractCellularSimulator):
             cmd = self.SCPI_RRC_RELEASE_NR_CMD
 
         if not cmd:
-            raise RuntimeError('Can choose IDLE cmd base on cell type.')
-
-        # RRC release
-        self._socket_send_SCPI_command(cmd.format(cell_type, cell_number))
-        # wait for SCPI RRC cmd complete
-        time.sleep(5)
+            raise RuntimeError(f'Cell type [{cell_type}] is not supporting IDLE.')
 
         # checking status
-        count = 0
-        wait_interval = 5
         self.log.info('Wait for IDLE state.')
-        while count < timeout:
+        for _ in range(5):
             cell_state = self.get_cell_status(cell_type, cell_number)
             self.log.info(f'cell state: {cell_state}')
-            if cell_state == 'IDLE\n':
-                return
-            elif cell_state == 'CONN\n':
+            if cell_state == 'CONN\n':
                 # RRC release
                 self._socket_send_SCPI_command(cmd.format(cell_type, cell_number))
-            time.sleep(wait_interval)
-            count += wait_interval
+                # wait for status stable
+                time.sleep(60)
+            elif cell_state == 'IDLE\n':
+                return
 
-        if cell_state != 'IDLE\n':
-            raise RuntimeError('RRC release fail.')
+        raise RuntimeError('RRC release fail.')
 
     def detach(self):
         """ Turns off all the base stations so the DUT loose connection."""
@@ -782,4 +980,3 @@ class UXMCellularSimulator(AbstractCellularSimulator):
         """Stops transmitting data from the instrument to the DUT. """
         raise NotImplementedError(
             'This UXM callbox simulator does not support this feature.')
-
