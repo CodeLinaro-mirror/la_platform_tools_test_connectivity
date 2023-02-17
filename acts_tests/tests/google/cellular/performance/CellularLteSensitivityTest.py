@@ -47,7 +47,6 @@ class CellularLteSensitivityTest(CellularLteSingleCellPeakThroughputTest):
                                               lte_dl_mcs_table='QAM256',
                                               lte_ul_mcs_table='QAM256',
                                               lte_ul_mcs=4,
-                                              schedule_scenario='FULL_TPUT',
                                               transform_precoding=0)
 
     def process_testclass_results(self):
@@ -186,7 +185,7 @@ class CellularLteSensitivityTest(CellularLteSingleCellPeakThroughputTest):
                     'cell_list'][0]['band'] == current_band:
                 reference_test = testcase_name
                 reference_sensitivity = testcase_data['sensitivity']
-        if reference_test and reference_sensitivity:
+        if reference_test and reference_sensitivity and not self.retry_flag:
             start_atten = reference_sensitivity + self.testclass_params[
                 'adjacent_mcs_gap']
             self.log.info(
