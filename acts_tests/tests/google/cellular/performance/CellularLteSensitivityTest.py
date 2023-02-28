@@ -47,7 +47,6 @@ class CellularLteSensitivityTest(CellularLteSingleCellPeakThroughputTest):
                                               lte_dl_mcs_table='QAM256',
                                               lte_ul_mcs_table='QAM256',
                                               lte_ul_mcs=4,
-                                              schedule_scenario='FULL_TPUT',
                                               transform_precoding=0)
 
     def process_testclass_results(self):
