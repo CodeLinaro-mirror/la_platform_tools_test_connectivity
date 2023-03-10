@@ -251,13 +251,15 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
 
         self.unpack_userparams(is_mdstest_supported=True)
         self.log.info(f'Supports mdstest: {self.is_mdstest_supported}')
-        if self.is_mdstest_supported == 'True':
+        if self.is_mdstest_supported:
             # UE preset
             self.log.info('Disable antenna switch.')
             self.at_util.disable_txas()
             time.sleep(10)
 
             self.at_util.lock_band()
+
+        self.unpack_userparams(is_wifi_only_device=False)
 
         # get sdim type
         self.unpack_userparams(has_3gpp_sim=True)
@@ -513,12 +515,11 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
     def teardown_test(self):
         super().teardown_test()
         # restore device to ready state for next test
-        self.log.info('Enable mobile data.')
-        self.cellular_dut.ad.adb.shell('svc data enable')
+        if not self.is_wifi_only_device:
+            self.log.info('Enable mobile data.')
+            self.cellular_dut.ad.adb.shell('svc data enable')
         self.cellular_simulator.detach()
         self.cellular_dut.toggle_airplane_mode(True)
 
         # processing result
         self.sponge_upload()
-        if 'LTE' in self.test_name:
-            self.at_util.disable_lock_band_lte()
