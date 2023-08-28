@@ -289,6 +289,8 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
         self.unpack_userparams(collect_log_only=False)
         # get sdim type
         self.unpack_userparams(has_3gpp_sim=True)
+        # extract time to take log after test
+        self.unpack_userparams(post_test_log_duration=30)
 
         # toggle on/off APM for all devices
         self.log.info('Toggle APM on/off for all devices.')
@@ -298,8 +300,18 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
             telutils.toggle_airplane_mode(self.log, ad, True)
             time.sleep(2)
 
+        # clear modem logs
+        modem_logs.clear_modem_logging(self.cellular_dut.ad)
+
     def collect_power_data_and_validate(self):
+        time.sleep(120)
+        cells_status_before = sorted(self.cellular_simulator.get_all_cell_status())
+        self.log.info('UXM cell status before collect power: %s', cells_status_before)
+
         super().collect_power_data()
+        cells_status_after = sorted(self.cellular_simulator.get_all_cell_status())
+        self.log.info('UXM cell status after collect power: %s', cells_status_after)
+
         # power measurement results
         odpm_power_results = self.get_odpm_values()
         self.odpm_power = odpm_power_results.get(
@@ -307,6 +319,10 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
         if hasattr(self, 'bitses'):
             self.parse_power_rails_csv()
 
+        asserts.assert_true(cells_status_before == cells_status_after,
+            'Cell status before {} and after {} the test run are not the same.'.format(
+                cells_status_before, cells_status_after
+            ))
         self.threshold_check()
 
     def setup_test(self):
@@ -344,7 +360,7 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
                     return
             raise RuntimeError(f'Fail to set modem logging to {new_state}.')
 
-    def collect_modem_log(self, out_path, duration: int=15):
+    def collect_modem_log(self, out_path, duration: int=30):
         # set log mask
         modem_logs.set_modem_log_profle(self.cellular_dut.ad, modem_logs.ModemLogProfile.LASSEN_TCP_DSP)
 
@@ -596,7 +612,7 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
         else:
             if self.is_mdstest_supported:
                 try:
-                    self.collect_modem_log(self.modem_log_path)
+                    self.collect_modem_log(self.modem_log_path, self.post_test_log_duration)
                 except RuntimeError:
                     self.log.warning('Fail to collect log before test end.')
         self.log.info('===>Before test end info.<====')
