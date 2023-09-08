@@ -185,6 +185,9 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
     ODPM_ENERGY_TABLE_NAME = 'PowerStats HAL 2.0 energy meter'
     ODPM_MODEM_CHANNEL_NAME = '[VSYS_PWR_MODEM]:Modem'
 
+    # Pass fail threshold lower bound
+    THRESHOLD_TOLERANCE_LOWER_BOUND_DEFAULT = 0.3
+
     # Key for custom_property in Sponge
     CUSTOM_PROP_KEY_BUILD_ID = 'build_id'
     CUSTOM_PROP_KEY_INCR_BUILD_ID = 'incremental_build_id'
@@ -200,6 +203,7 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
     CUSTOM_PROP_KEY_MODEM_KIBBLE_PCIE_POWER = 'modem_kibble_pcie_power'
     CUSTOM_PROP_KEY_RFFE_POWER = 'rffe_power'
     CUSTOM_PROP_KEY_MMWAVE_POWER = 'mmwave_power'
+    CUSTOM_PROP_KEY_CURRENT_REFERENCE_TARGET = 'reference_target'
     # kibble report
     KIBBLE_SYSTEM_RECORD_NAME = '- name: default_device.C10_EVT_1_1.Monsoon:mA'
     MODEM_PCIE_RAIL_NAME_LIST = [
@@ -211,6 +215,8 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
     MODEM_RFFE_RAIL_NAME = 'VSYS_PWR_RFFE'
 
     MODEM_POWER_RAIL_NAME = 'VSYS_PWR_MODEM'
+
+    MODEM_POWER_RAIL_WO_PCIE_NAME = 'VSYS_PWR_MODEM_W_O_PCIE'
 
     WEARABLE_POWER_RAIL = 'LTE_DC'
 
@@ -277,6 +283,14 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
             self.log.info('Disable antenna switch.')
             self.at_util.disable_txas()
             time.sleep(10)
+
+            # set device to be data centric
+            nv_result = self.at_util.set_nv(
+                nv_name = '!SAEL3.SAE_UE_OPERATION_MODE',
+                index = '0',
+                value = '03'
+            )
+            self.log.info(nv_result)
 
             self.at_util.lock_band()
             self.log.info('Band lock info: \n%s',self.at_util.get_band_lock_info())
@@ -533,6 +547,11 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
         else:
             self.system_power = self.power_results.get(self.test_name, 0)
 
+        # record reference target, if it exists
+        self.reference_target = ''
+        if self.threshold and self.test_name in self.threshold:
+            self.reference_target = self.threshold[self.test_name]
+
         self.record_data({
             'Test Name': self.test_name,
             'sponge_properties': {
@@ -549,7 +568,8 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
                 self.CUSTOM_PROP_KEY_MODEM_KIBBLE_WO_PCIE_POWER: modem_kibble_power_wo_pcie,
                 self.CUSTOM_PROP_KEY_MODEM_KIBBLE_PCIE_POWER: self.pcie_power,
                 self.CUSTOM_PROP_KEY_RFFE_POWER: self.rffe_power,
-                self.CUSTOM_PROP_KEY_MMWAVE_POWER: self.mmwave_power
+                self.CUSTOM_PROP_KEY_MMWAVE_POWER: self.mmwave_power,
+                self.CUSTOM_PROP_KEY_CURRENT_REFERENCE_TARGET: self.reference_target
             },
         })
 
@@ -564,28 +584,49 @@ class PowerCellularPresetLabBaseTest(PWCEL.PowerCellularLabBaseTest):
             self.log.error("No threshold is provided for the test '{}' in "
                            "the configuration file.".format(self.test_name))
             return
-        voltage = self.cellular_test_params['mon_voltage']
-        average_power = self.system_power
-        if hasattr(self, 'bitses'):
-            average_power = self.modem_power - self.pcie_power
-        average_current = average_power / voltage
+
+        if not hasattr(self, 'bitses'):
+            self.log.error("No bitses attribute found, threshold cannot be"
+                           "checked against system power.")
+            return
+
+        average_current = self.modem_power
+        if ('modem_rail' in self.threshold.keys() and self.threshold['modem_rail'] == self.MODEM_POWER_RAIL_WO_PCIE_NAME):
+            average_current = average_current - self.pcie_power
         current_threshold = self.threshold[self.test_name]
-        acceptable_difference = max(
+
+        acceptable_upper_difference = max(
             self.threshold[self.test_name] * self.pass_fail_tolerance,
             self.kibble_error_range
         )
+        self.log.info('acceptable upper difference' + str(acceptable_upper_difference))
+
+        self.unpack_userparams(pass_fail_tolerance_lower_bound=self.THRESHOLD_TOLERANCE_LOWER_BOUND_DEFAULT)
+        acceptable_lower_difference = max(
+            self.threshold[self.test_name] * self.pass_fail_tolerance_lower_bound,
+            self.kibble_error_range)
+        self.log.info('acceptable lower diff ' + str(acceptable_lower_difference))
+
         if average_current:
             asserts.assert_true(
-                abs(average_current - current_threshold) < acceptable_difference,
-                'Measured average current in [{}]: {:.2f}mA, which is '
-                'out of the acceptable range {:.2f}±{:.2f}mA'.format(
+                average_current < current_threshold + acceptable_upper_difference,
+                'Measured average current in [{}]: {:.2f}mW, which is '
+                'out of the acceptable upper range {:.2f}+{:.2f}mW'.format(
                     self.test_name, average_current, current_threshold,
-                    acceptable_difference))
+                    acceptable_upper_difference))
+
+            asserts.assert_true(
+                average_current > current_threshold - acceptable_lower_difference,
+                'Measured average current in [{}]: {:.2f}mW, which is '
+                'out of the acceptable lower range {:.2f}-{:.2f}mW'.format(
+                    self.test_name, average_current, current_threshold,
+                    acceptable_lower_difference))
+
             asserts.explicit_pass(
-                'Measurement finished for [{}]: {:.2f}mA, which is '
-                'within the acceptable range {:.2f}±{:.2f}'.format(
+                'Measured average current in [{}]: {:.2f}mW, which is '
+                'within the acceptable range of {:.2f}-{:.2f} and {:.2f}+{:.2f}'.format(
                     self.test_name, average_current, current_threshold,
-                    acceptable_difference))
+                    acceptable_lower_difference, current_threshold, acceptable_upper_difference))
         else:
             asserts.fail(
                 'Something happened, measurement is not complete, test failed')

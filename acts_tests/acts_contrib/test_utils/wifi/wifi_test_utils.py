@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import time
 
 from retry import retry
@@ -369,6 +370,9 @@ class WifiEnums():
         5795: 159,
         5805: 161,
         5825: 165,
+        5845: 169,
+        5865: 173,
+        5885: 177
     }
 
     # All Wifi channels to frequencies lookup.
@@ -435,7 +439,10 @@ class WifiEnums():
         157: 5785,
         159: 5795,
         161: 5805,
-        165: 5825
+        165: 5825,
+        169: 5845,
+        173: 5865,
+        177: 5885
     }
 
     channel_6G_to_freq = {4 * x + 1: 5955 + 20 * x for x in range(59)}
@@ -493,7 +500,7 @@ class WifiChannelUS(WifiChannelBase):
                 ]
         self.DFS_5G_FREQUENCIES = [
             5260, 5280, 5300, 5320, 5500, 5520, 5540, 5560, 5580, 5600, 5620,
-            5640, 5660, 5680, 5700, 5720
+            5640, 5660, 5680, 5700, 5720, 5845, 5865, 5885
             ]
         self.ALL_5G_FREQUENCIES = self.DFS_5G_FREQUENCIES + self.NONE_DFS_5G_FREQUENCIES
 
@@ -903,7 +910,8 @@ def start_wifi_connection_scan_and_return_status(ad):
 
 def start_wifi_connection_scan_and_check_for_network(ad,
                                                      network_ssid,
-                                                     max_tries=3):
+                                                     max_tries=3,
+                                                     found=True):
     """
     Start connectivity scans & checks if the |network_ssid| is seen in
     scan results. The method performs a max of |max_tries| connectivity scans
@@ -913,9 +921,10 @@ def start_wifi_connection_scan_and_check_for_network(ad,
         ad: An AndroidDevice object.
         network_ssid: SSID of the network we are looking for.
         max_tries: Number of scans to try.
+        found: True if expected a given SSID to be found; False otherwise.
     Returns:
-        True: if network_ssid is found in scan results.
-        False: if network_ssid is not found in scan results.
+        True: if network_ssid status is expected in scan results.
+        False: if network_ssid status is expected in scan results.
     """
     start_time = time.time()
     for num_tries in range(max_tries):
@@ -923,12 +932,14 @@ def start_wifi_connection_scan_and_check_for_network(ad,
             scan_results = ad.droid.wifiGetScanResults()
             match_results = match_networks({WifiEnums.SSID_KEY: network_ssid},
                                            scan_results)
-            if len(match_results) > 0:
-                ad.log.debug("Found network in %s seconds." %
-                             (time.time() - start_time))
+            if found == (len(match_results) > 0):
+                if len(match_results) > 0:
+                    ad.log.debug("Found network in %s seconds." %
+                                 (time.time() - start_time))
+                else:
+                    ad.log.debug("Did not find network in %s seconds." %
+                                 (time.time() - start_time))
                 return True
-    ad.log.debug("Did not find network in %s seconds." %
-                 (time.time() - start_time))
     return False
 
 
@@ -950,7 +961,7 @@ def start_wifi_connection_scan_and_ensure_network_found(
         " after " + str(max_tries) + " tries"
     asserts.assert_true(
         start_wifi_connection_scan_and_check_for_network(
-            ad, network_ssid, max_tries), assert_msg)
+            ad, network_ssid, max_tries, True), assert_msg)
 
 
 def start_wifi_connection_scan_and_ensure_network_not_found(
@@ -969,9 +980,9 @@ def start_wifi_connection_scan_and_ensure_network_not_found(
     ad.log.info("Starting scans to ensure %s is not present", network_ssid)
     assert_msg = "Found " + network_ssid + " in scan results" \
         " after " + str(max_tries) + " tries"
-    asserts.assert_false(
+    asserts.assert_true(
         start_wifi_connection_scan_and_check_for_network(
-            ad, network_ssid, max_tries), assert_msg)
+            ad, network_ssid, max_tries, False), assert_msg)
 
 
 def start_wifi_background_scan(ad, scan_setting):
@@ -2966,3 +2977,40 @@ def disable_wear_wifimediator(ad, state):
         ad.adb.shell("settings put global cw_disable_wifimediator 0")
         asserts.assert_false(get_wear_wifimediator_disable_status(ad),
                              "WearWifiMediator should be enabled")
+
+def list_scan_results(ad, wait_time=15):
+    """
+    Initiates an Android Wi-Fi scan and retrieves the available Wi-Fi networks'.
+
+    Args:
+        ad (AndroidDevice): The Android device on which the scan is performed.
+        wait_time (int, optional):
+          The time in seconds to wait for the scan to complete before fetching results.
+          Default is 10 seconds.
+    """
+    ad.log.info("Start scan for available Wi-Fi networks...")
+    ad.adb.shell("cmd wifi start-scan")
+    ad.log.info("Wait %ss for scan to complete.", wait_time)
+    time.sleep(wait_time)
+    scan_results = ad.adb.shell("cmd wifi list-scan-results")
+    ad.log.info("Available Wi-Fi networks: " + "\n" + scan_results + "\n")
+
+def kill_iperf3_server_by_port(port: str):
+    """
+        Kill an iperf3 server process running on the specified port.
+
+        Args:
+            port: The port number on which the iperf3 server is running.
+    """
+    try:
+        ps_output = subprocess.check_output(["ps", "aux"], universal_newlines=True)
+        lines = ps_output.split('\n')
+        for line in lines:
+            if "iperf3" in line and str(port) in line:
+                columns = line.split()
+                pid = columns[1]
+                subprocess.run(["kill", "-15", pid])
+                logging.warning(f"iperf3 server on port {port} already in use,"
+                              f"kill it with PID {pid}")
+    except subprocess.CalledProcessError:
+        logging.info("Error executing shell command with subprocess.")
