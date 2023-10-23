@@ -28,7 +28,7 @@ BROWSER_WAIT_EXTRA_LONG = 60
 
 
 class NetgearRS700AP(WifiRetailAP):
-    """Class that implements Netgear RAXE500 AP.
+    """Class that implements Netgear RS700 AP.
 
     Since most of the class' implementation is shared with the R7000, this
     class inherits from NetgearR7000AP and simply redefines config parameters
@@ -84,17 +84,9 @@ class NetgearRS700AP(WifiRetailAP):
                 '6G': ['6g' + str(ch) for ch in numpy.arange(37, 222, 16)]
             },
             'modes': {
-                '2G': ['VHT20', 'VHT40', 'HE20', 'HE40', 'EHT20', 'EHT40'],
-                '5G_1': [
-                    'VHT20', 'VHT40', 'VHT80', 'VHT160', 'HE20', 'HE40',
-                    'HE80', 'HE160', 'EHT20', 'EHT40',
-                    'EHT80', 'EHT160'
-                ],
-                '6G': [
-                    'VHT20', 'VHT40', 'VHT80', 'VHT160', 'HE20', 'HE40',
-                    'HE80', 'HE160', 'EHT20', 'EHT40',
-                    'EHT80', 'EHT160', 'EHT320'
-                ]
+                '2G': ['EHT20', 'EHT40'],
+                '5G_1': ['EHT40', 'EHT80', 'EHT160'],
+                '6G': ['EHT40', 'EHT80', 'EHT160', 'EHT320']
             },
             'default_mode': 'EHT'
         }
@@ -134,17 +126,16 @@ class NetgearRS700AP(WifiRetailAP):
             }
         }
         self.bw_mode_values = {
-                'HT20': 'EHT20',
-                'HT40': 'EHT40',
-                'HT80': 'EHT80',
-                'HT160': 'EHT160',
-                'HT320': 'EHT320'
+            'HT20': 'EHT20',
+            'HT40': 'EHT40',
+            'HT80': 'EHT80',
+            'HT160': 'EHT160',
+            'HT320': 'EHT320'
         }
 
         # Config ordering intentional to avoid GUI bugs
         self.config_page_fields = collections.OrderedDict([
-            ('region', 'WRegion'),
-            (('2G', 'ssid'), 'ssid'),
+            ('region', 'WRegion'), (('2G', 'ssid'), 'ssid'),
             (('5G_1', 'ssid'), 'ssid_an'), (('6G', 'ssid'), 'ssid_an_2'),
             (('2G', 'channel'), 'w_channel'),
             (('5G_1', 'channel'), 'w_channel_an'),
@@ -175,7 +166,7 @@ class NetgearRS700AP(WifiRetailAP):
         setting_to_update = {network: {}}
         if channel:
             if channel not in self.capabilities['channels'][network]:
-                self.log.error('Ch{} is not supported on {} interface.'.format(
+                raise RuntimeError('Ch{} is not supported on {} interface.'.format(
                     channel, network))
             if isinstance(channel, str) and '6g' in channel:
                 channel = int(channel[2:])
@@ -188,7 +179,7 @@ class NetgearRS700AP(WifiRetailAP):
             bandwidth = bandwidth.replace('bw',
                                           self.capabilities['default_mode'])
         if bandwidth not in self.capabilities['modes'][network]:
-            self.log.error('{} mode is not supported on {} interface.'.format(
+            raise RuntimeError('{} mode is not supported on {} interface.'.format(
                 bandwidth, network))
         setting_to_update[network]['bandwidth'] = str(bandwidth)
         return setting_to_update
@@ -259,17 +250,14 @@ class NetgearRS700AP(WifiRetailAP):
                     self.ap_settings[field_key[0]][
                         field_key[1]] = self.bw_mode_values[field_value]
                 elif 'region' in field_key:
-                    self.ap_settings['region'] = self.region_map[
-                        field_value]
+                    self.ap_settings['region'] = self.region_map[field_value]
                 elif 'security_type' in field_key:
-                    self.ap_settings[field_key[0]][
-                        field_key[1]] = field_value
+                    self.ap_settings[field_key[0]][field_key[1]] = field_value
                 elif 'channel' in field_key:
                     self.ap_settings[field_key[0]][field_key[1]] = int(
                         field_value)
                 else:
-                    self.ap_settings[field_key[0]][
-                        field_key[1]] = field_value
+                    self.ap_settings[field_key[0]][field_key[1]] = field_value
         return self.ap_settings.copy()
 
     def configure_ap(self, **config_flags):
