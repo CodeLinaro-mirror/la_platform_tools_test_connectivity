@@ -1,6 +1,7 @@
 import logging
 import os
 import paramiko
+import scp
 import subprocess
 
 
@@ -31,8 +32,9 @@ class OpenWrtAuth:
     self.password = password
     self.port = port
     self.public_key = None
-    self.public_key_file = None
-    self.private_key_file = None
+    self.key_dir = '/tmp/openwrt/'
+    self.public_key_file = f'{self.key_dir}id_rsa_{self.hostname}.pub'
+    self.private_key_file = f'{self.key_dir}id_rsa_{self.hostname}'
 
   def generate_rsa_key(self):
     """
@@ -45,27 +47,30 @@ class OpenWrtAuth:
       PermissionError: If there is a permission error while creating the directory for saving the keys.
       Exception: If an unexpected error occurs while generating the RSA key pair.
     """
+    # Checks if the private and public key files already exist.
+    if os.path.exists(self.private_key_file) and os.path.exists(self.public_key_file):
+      logging.warning("RSA key pair already exists, skipping key generation.")
+      return
+
     try:
       # Generates an RSA key pair in /tmp/openwrt/ directory.
       logging.info("Generating RSA key pair...")
       key = paramiko.RSAKey.generate(bits=2048)
       self.public_key = f"ssh-rsa {key.get_base64()}"
-      logging.info(f"Public key: {self.public_key}")
+      logging.debug(f"Public key: {self.public_key}")
 
       # Create /tmp/openwrt/ directory if it doesn't exist.
-      logging.info("Creating /tmp/openwrt/ directory...")
-      os.makedirs('/tmp/openwrt/', exist_ok=True)
+      logging.info(f"Creating {self.key_dir} directory...")
+      os.makedirs(self.key_dir, exist_ok=True)
 
       # Saves the private key to a file.
-      self.private_key_file = '/tmp/openwrt/id_rsa_%s' % (self.hostname)
       key.write_private_key_file(self.private_key_file)
-      logging.info(f"Saved private key to file: {self.private_key_file}")
+      logging.debug(f"Saved private key to file: {self.private_key_file}")
 
       # Saves the public key to a file.
-      self.public_key_file = '/tmp/openwrt/id_rsa_%s.pub' % (self.hostname)
       with open(self.public_key_file, "w") as f:
           f.write(self.public_key)
-      logging.info(f"Saved public key to file: {self.public_key_file}")
+      logging.debug(f"Saved public key to file: {self.public_key_file}")
     except (ValueError, paramiko.SSHException, PermissionError) as e:
       logging.error(f"An error occurred while generating the RSA key pair: {e}")
     except Exception as e:
@@ -81,19 +86,6 @@ class OpenWrtAuth:
       FileNotFoundError: If the public key file or the private key file does not exist.
       Exception: If an unexpected error occurs while sending the public key.
     """
-    try:
-      import scp
-      logging.info("scp package is already installed.")
-    except ImportError:
-      logging.info("scp package is not installed. Installing...")
-      try:
-        subprocess.check_call(['pip3', 'install', 'scp'])
-        logging.info("scp package installed successfully.")
-        # Import the 'scp' module after installation.
-        import scp
-      except subprocess.CalledProcessError:
-        logging.info("Error installing scp package.")
-
     try:
       # Connects to the remote host and uploads the public key.
       logging.info(f"Uploading public key to remote host {self.hostname}...")

@@ -141,12 +141,14 @@ class CellularLteSensitivityTest(CellularLteSingleCellPeakThroughputTest):
         cell_power_list = testcase_data['testcase_params']['cell_power_sweep'][
             0]
         for result in testcase_data['results']:
-            bler_list.append(
-                result['lte_bler_result']['total']['DL']['nack_ratio'])
+            bler_list.append(result['throughput_measurements']
+                             ['lte_bler_result']['total']['DL']['nack_ratio'])
             average_throughput_list.append(
-                result['lte_tput_result']['total']['DL']['average_tput'])
+                result['throughput_measurements']['lte_tput_result']['total']
+                ['DL']['average_tput'])
             theoretical_throughput_list.append(
-                result['lte_tput_result']['total']['DL']['theoretical_tput'])
+                result['throughput_measurements']['lte_tput_result']['total']
+                ['DL']['theoretical_tput'])
         padding_len = len(cell_power_list) - len(average_throughput_list)
         average_throughput_list.extend([0] * padding_len)
         theoretical_throughput_list.extend([0] * padding_len)
