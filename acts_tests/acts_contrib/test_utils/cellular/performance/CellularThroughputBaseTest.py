@@ -32,6 +32,7 @@ from acts.controllers.utils_lib import ssh
 from acts.controllers.android_lib.tel import tel_utils
 from acts.controllers import iperf_server as ipf
 from acts_contrib.test_utils.cellular.keysight_5g_testapp import Keysight5GTestApp
+from acts_contrib.test_utils.cellular.keysight_chamber import KeysightChamber
 from acts_contrib.test_utils.cellular.performance import cellular_performance_test_utils as cputils
 from acts_contrib.test_utils.wifi import wifi_performance_test_utils as wputils
 from functools import partial
@@ -71,6 +72,9 @@ class CellularThroughputBaseTest(base_test.BaseTestClass):
         self.dut = self.android_devices[-1]
         self.keysight_test_app = Keysight5GTestApp(
             self.user_params['Keysight5GTestApp'])
+        if 'KeysightChamber' in self.user_params:
+            self.keysight_chamber = KeysightChamber(
+                self.user_params['KeysightChamber'])
         self.iperf_server = self.iperf_servers[0]
         self.iperf_client = self.iperf_clients[0]
         self.remote_server = ssh.connection.SshConnection(
@@ -362,6 +366,10 @@ class CellularThroughputBaseTest(base_test.BaseTestClass):
                 self.keysight_test_app.set_cell_mimo_config(
                     cell['cell_type'], cell['cell_number'], 'UL',
                     cell['ul_mimo_config'])
+            if 'fading_scenario' in self.testclass_params:
+                self.keysight_test_app.configure_channel_emulator(
+                    cell['cell_type'], cell['cell_number'],
+                    self.testclass_params['fading_scenario'][cell['cell_type']])
 
         if testcase_params.get('force_contiguous_nr_channel', False):
             self.keysight_test_app.toggle_contiguous_nr_channels(1)
@@ -461,6 +469,12 @@ class CellularThroughputBaseTest(base_test.BaseTestClass):
                 else:
                     asserts.fail('DUT did not connect to NR.')
 
+        if 'fading_scenario' in self.testclass_params and self.testclass_params['fading_scenario']['enable']:
+            self.log.info('Enabling fading.')
+            self.keysight_test_app.set_channel_emulator_state(self.testclass_params['fading_scenario']['enable'])
+        else:
+            self.keysight_test_app.set_channel_emulator_state(0)
+
     def _test_throughput_bler(self, testcase_params):
         """Test function to run cellular throughput and BLER measurements.
 
@@ -478,6 +492,12 @@ class CellularThroughputBaseTest(base_test.BaseTestClass):
         testcase_results = collections.OrderedDict()
         testcase_results['testcase_params'] = testcase_params
         testcase_results['results'] = []
+
+        # Setup ota chamber if needed
+        if hasattr(self, 'keysight_chamber') and 'orientation' in testcase_params:
+            self.keysight_chamber.move_theta_phi_abs(
+                self.keysight_chamber.preset_orientations[testcase_params['orientation']]['theta'],
+                self.keysight_chamber.preset_orientations[testcase_params['orientation']]['phi'])
 
         # Setup tester and wait for DUT to connect
         self.setup_tester(testcase_params)
