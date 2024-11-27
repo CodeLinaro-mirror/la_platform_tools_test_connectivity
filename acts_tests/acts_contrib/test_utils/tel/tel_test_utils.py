@@ -645,19 +645,6 @@ def is_sim_ready_by_adb(log, ad):
 def wait_for_sim_ready_by_adb(log, ad, wait_time=90):
     return _wait_for_droid_in_state(log, ad, wait_time, is_sim_ready_by_adb)
 
-#added by Code Aurora
-def is_sims_ready_by_adb(log, ad):
-    states = list(ad.adb.getprop("gsm.sim.state").split(","))
-    ad.log.info("gsm.sim.state = %s", states)
-    for state in states:
-        if state != SIM_STATE_READY and state != SIM_STATE_LOADED:
-            return False
-    return True
-
-#added by Code Aurora
-def wait_for_sims_ready_by_adb(log, ad, wait_time=90):
-    return _wait_for_droid_in_state(log, ad, wait_time, is_sims_ready_by_adb)
-
 
 def is_sims_ready_by_adb(log, ad):
     states = list(ad.adb.getprop("gsm.sim.state").split(","))
@@ -1647,6 +1634,10 @@ def trigger_modem_crash(ad, timeout=120):
 
 def trigger_modem_crash_by_modem(ad, timeout=120):
     begin_time = get_device_epoch_time(ad)
+    ad.adb.shell(
+        "setprop persist.vendor.sys.modem.diag.mdlog false",
+        ignore_status=True)
+    # Legacy pixels use persist.sys.modem.diag.mdlog.
     ad.adb.shell(
         "setprop persist.sys.modem.diag.mdlog false", ignore_status=True)
     disable_qxdm_logger(ad)
