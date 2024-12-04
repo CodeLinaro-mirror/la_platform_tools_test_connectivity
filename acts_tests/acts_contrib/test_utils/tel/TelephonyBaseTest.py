@@ -258,16 +258,6 @@ class TelephonyBaseTest(BaseTestClass):
         ad.wakeup_screen()
         ad.adb.shell("input keyevent 82")
 
-    #added by Code Aurora
-    def wait_for_sim_ready(self,ad):
-
-        wait_for_sim_ready_on_sim_config = {
-                            SINGLE_SIM_CONFIG : lambda:wait_for_sim_ready_by_adb(self.log,ad),
-                            MULTI_SIM_CONFIG : lambda:wait_for_sims_ready_by_adb(self.log,ad)
-            }
-        if not wait_for_sim_ready_on_sim_config[self.sim_config["config"]]:
-            raise signals.TestAbortClass("unable to load the SIM")
-
     def wait_for_sim_ready(self,ad):
         wait_for_sim_ready_on_sim_config = {
               SINGLE_SIM_CONFIG : lambda:wait_for_sim_ready_by_adb(self.log,ad),
@@ -388,7 +378,6 @@ class TelephonyBaseTest(BaseTestClass):
             else:
                 setup_droid_properties(self.log, ad, sim_conf_file)
         else:
-            #added for dsds automation support
             self.wait_for_sim_ready(ad)
             ensure_phone_default_state(self.log, ad)
             if getattr(ad, 'mep', False):
